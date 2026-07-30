@@ -1,0 +1,5 @@
+# Never commit certificate or key material. Keep the directory structure only.
+*
+!.gitignore
+!*/
+!**/.gitkeep

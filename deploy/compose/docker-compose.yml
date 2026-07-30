@@ -1,0 +1,118 @@
+# LoxiLB management-plane bundle — single-node Docker Compose.
+#
+#   loxilb-ui (static SPA) + oam-loxilb (API) + MySQL, behind a Caddy edge.
+#
+# This is the BASE file. Always combine it with an environment overlay:
+#   dev :  docker compose -f docker-compose.yml -f docker-compose.dev.yml  up --build
+#   prod:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Configuration comes from a single .env file (copy .env.example). The same key
+# names carry over 1:1 to the Kubernetes ConfigMap/Secret in the k8s track.
+name: loxilb-mgmt
+
+services:
+  # ── Database ───────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:9.2.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${DB_NAME:-loxioam}
+      MYSQL_USER: ${DB_USER:-oamuser}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # Schema + seed rows are single-sourced from the OAM repo.
+      - ${DB_INIT_DIR:-../../database/init}:/docker-entrypoint-initdb.d:ro
+    networks: [ backend ]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 20s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  # ── OAM API ──────────────────────────────────────────────────────────────
+  oam-loxilb:
+    image: ${OAM_IMAGE:-ghcr.io/loxilb-io/loxilb-oam}:${OAM_TAG:-latest}
+    environment:
+      # Required secrets — the server refuses to start without these.
+      OAM_JWT_SECRET: ${OAM_JWT_SECRET:?set OAM_JWT_SECRET in .env}
+      OAM_DEFAULT_ADMIN_PASSWORD: ${OAM_DEFAULT_ADMIN_PASSWORD:?set OAM_DEFAULT_ADMIN_PASSWORD in .env}
+      # Strongly recommended: snapshots carry IPsec PSKs + cert private keys.
+      SNAPSHOT_ENC_KEY: ${SNAPSHOT_ENC_KEY:-}
+      OAM_ALLOWED_ORIGINS: ${OAM_ALLOWED_ORIGINS:-}
+      # Database connection.
+      DB_USER: ${DB_USER:-oamuser}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_HOST: ${DB_HOST:-mysql}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-loxioam}
+      SERVER_PORT: 8080
+      TOKEN_EXPIRATION: ${TOKEN_EXPIRATION:-480}
+      # TLS to managed LoxiLB instances (proxy + snapshots). See §5 of the plan.
+      # Point OAM_INSTANCE_CA_BUNDLE at the mounted CA to trust self-signed
+      # instance certs; OAM_INSTANCE_TLS_INSECURE=true skips verification (dev).
+      OAM_INSTANCE_CA_BUNDLE: ${OAM_INSTANCE_CA_BUNDLE:-}
+      OAM_INSTANCE_TLS_INSECURE: ${OAM_INSTANCE_TLS_INSECURE:-false}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      # Instance CA bundle lives here; OAM_INSTANCE_CA_BUNDLE points inside it.
+      - ./certs:/etc/loxilb-oam/certs:ro
+    # On frontend (egress to managed instances) + backend (reach MySQL).
+    networks: [ frontend, backend ]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:8080/oam/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── SPA asset publisher (one-shot) ───────────────────────────────────────
+  # Copies the built SPA out of the loxilb-ui image into a shared volume that
+  # Caddy serves. Runs to completion on every `up`, then exits.
+  ui-assets:
+    image: ${UI_IMAGE:-ghcr.io/loxilb-io/loxilb-ui}:${UI_TAG:-latest}
+    command: ["sh", "-c", "rm -rf /srv/* && cp -a /usr/share/nginx/html/. /srv/ && echo 'loxilb-ui SPA published to /srv'"]
+    volumes:
+      - ui_build:/srv
+    networks: [ backend ]
+    restart: "no"
+
+  # ── Edge: static SPA + /api/oam proxy + TLS termination ──────────────────
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      # Edge listen address + TLS mode (the single edge knob pair; see .env).
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      EDGE_TLS: ${EDGE_TLS:-}
+      OAM_UPSTREAM: ${OAM_UPSTREAM:-http://oam-loxilb:8080}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs/edge:/certs/edge:ro     # operator/self-signed edge cert (EDGE_TLS file mode)
+      - ui_build:/srv:ro                # SPA assets published by ui-assets
+      - caddy_data:/data                # ACME cert persistence
+      - caddy_config:/config
+    depends_on:
+      ui-assets:
+        condition: service_completed_successfully
+      oam-loxilb:
+        condition: service_started
+    networks: [ frontend ]
+    restart: unless-stopped
+
+networks:
+  frontend:      # normal bridge: publishes edge ports; gives OAM egress to instances
+  backend:       # isolated in prod (see docker-compose.prod.yml): DB + intra-stack
+
+volumes:
+  mysql_data:
+  ui_build:
+  caddy_data:
+  caddy_config:

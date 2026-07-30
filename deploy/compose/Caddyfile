@@ -1,0 +1,46 @@
+# LoxiLB edge — serves the SPA, proxies the OAM API, terminates edge TLS.
+#
+# Two env knobs drive every TLS mode (values come from compose → .env):
+#   SITE_ADDRESS : what to listen on   (":80" | "https://host" | "host")
+#   EDGE_TLS     : how to get the cert (""=ACME | "tls internal" | "tls <crt> <key>")
+# See the deployment plan §6.4 for the mode table.
+
+{
+	admin off
+}
+
+{$SITE_ADDRESS} {
+	# Empty → automatic HTTPS (ACME) when SITE_ADDRESS is a public domain, or
+	# plain HTTP when SITE_ADDRESS is ":80". Otherwise this line becomes
+	# "tls internal" (Caddy local CA) or "tls /certs/edge/cert.pem /certs/edge/key.pem".
+	{$EDGE_TLS}
+
+	encode gzip zstd
+
+	# OAM API: /api/oam/* → strip that prefix, forward as /oam/* to the API.
+	# (Matches the legacy nginx mapping: /api/oam/ → ${BACKEND}/oam/.)
+	handle_path /api/oam/* {
+		rewrite * /oam{uri}
+		reverse_proxy {$OAM_UPSTREAM} {
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# Edge liveness (distinct from OAM's /oam/health).
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# Bare root → the app's public prefix (React Router basename = /netlox).
+	redir / /netlox/ 302
+
+	# SPA: root-relative assets (/static, /favicon.ico, /manifest.json) are real
+	# files; everything else (e.g. /netlox/dashboard) falls back to index.html
+	# so client-side routing works.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

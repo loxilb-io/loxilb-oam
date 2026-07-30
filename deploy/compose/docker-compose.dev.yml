@@ -1,0 +1,30 @@
+# Development overlay — build images from local source, publish debug ports,
+# and default to insecure instance TLS.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Assumes the standard sibling checkout layout under go/src:
+#   oam-loxilb/  (this repo — OAM build context = ../..)
+#   loxilb-ui/   (SPA build context      = ../../../loxilb-ui)
+# Override OAM_SRC / UI_SRC in .env if your layout differs.
+services:
+  mysql:
+    ports:
+      - "${MYSQL_HOST_PORT:-3306}:3306"   # exposed for local DB inspection
+
+  oam-loxilb:
+    build:
+      context: ${OAM_SRC:-../..}
+      dockerfile: Dockerfile
+    image: loxilb-oam:dev
+    ports:
+      - "${OAM_HOST_PORT:-8080}:8080"     # exposed for direct API/Swagger access
+    environment:
+      # Dev default: skip instance-cert verification. Never do this in prod.
+      OAM_INSTANCE_TLS_INSECURE: ${OAM_INSTANCE_TLS_INSECURE:-true}
+
+  ui-assets:
+    build:
+      context: ${UI_SRC:-../../../loxilb-ui}
+      dockerfile: Dockerfile
+    image: loxilb-ui:dev

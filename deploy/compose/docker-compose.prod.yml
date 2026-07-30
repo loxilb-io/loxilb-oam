@@ -1,0 +1,18 @@
+# Production overlay — pinned pre-built images, isolated DB network, no host
+# exposure of the DB or API. Only the Caddy edge publishes ports.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Pin OAM_TAG and UI_TAG to immutable release versions in .env (never `latest`).
+services:
+  oam-loxilb:
+    image: ${OAM_IMAGE:-ghcr.io/loxilb-io/loxilb-oam}:${OAM_TAG:?pin OAM_TAG to a released version in .env}
+
+  ui-assets:
+    image: ${UI_IMAGE:-ghcr.io/loxilb-io/loxilb-ui}:${UI_TAG:?pin UI_TAG to a released version in .env}
+
+networks:
+  # Isolate the data tier: no host reachability, no external egress. MySQL is
+  # reachable only by OAM over this network. (OAM keeps egress via `frontend`.)
+  backend:
+    internal: true

@@ -36,13 +36,6 @@ AWS_DB_NAME=loxilb_db
 AWS_TOKEN_EXPIRATION=1440
 AWS_SERVER_PORT=8080
 
-# OAUTH2 parameters
-# GOOGLE_REDIRECT_URL=http://oam.loxilb.io:20365/oam/oauth/google/callback
-# GITHUB_REDIRECT_URL=http://oam.loxilb.io:20365/oam/oauth/github/callback
-GOOGLE_REDIRECT_URL=https://oam-1.loxilb.io/oam/oauth/google/callback
-GITHUB_REDIRECT_URL=https://oam-1.loxilb.io/oam/oauth/github/callback
-FACEBOOK_REDIRECT_URL=''
-
 # Docker parameters
 DOCKER_IMAGE_NAME=loxilb-oam
 
