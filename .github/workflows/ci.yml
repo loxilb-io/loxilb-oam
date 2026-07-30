@@ -1,10 +1,12 @@
 name: CI
 
+# Blocking PR gate: build, vet, unit tests, and golangci-lint.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,6 +15,7 @@ jobs:
   build-test:
     name: Build & Test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -36,20 +39,26 @@ jobs:
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: 'stable'
           cache: true
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
+      # Install a pinned golangci-lint v2 via `go install` so the linter is
+      # built with the same Go toolchain as the module. This avoids the
+      # linter-vs-toolchain version skew that makes `typecheck` fail on
+      # standard-library method sets (e.g. gin's ResponseWriter).
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+      - name: Run golangci-lint
+        run: $(go env GOPATH)/bin/golangci-lint run --timeout=5m ./...
 
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Advisory: standard-library advisories can be fixed only in a not-yet-released
     # Go patch, so this surfaces findings without blocking merges.
     continue-on-error: true

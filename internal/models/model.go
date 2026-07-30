@@ -5,8 +5,8 @@ import "time"
 // User represents a user in the system.
 // License management is handled through the ActiveLicense model.
 type User struct {
-	ID            int       `json:"id"`
-	Username      string    `json:"username"`
+	ID       int    `json:"id"`
+	Username string `json:"username"`
 	// Password hash is never serialized in API responses. Requests use
 	// dedicated DTOs (LoginRequest/CreateUserRequest), so `json:"-"` here only
 	// affects responses — it stops GetUsers/GetMe from leaking the hash.
@@ -77,10 +77,10 @@ type LoxiLBInstanceRequest struct {
 
 // CreateUserRequest represents a request to create a new user
 type CreateUserRequest struct {
-	Username   string `json:"username" binding:"required"`
-	Email      string `json:"email" binding:"required"`
-	Password   string `json:"password" binding:"required"`
-	Role       string `json:"role,omitempty"` // Optional: Admin can set role (defaults to "user")
+	Username string `json:"username" binding:"required"`
+	Email    string `json:"email" binding:"required"`
+	Password string `json:"password" binding:"required"`
+	Role     string `json:"role,omitempty"` // Optional: Admin can set role (defaults to "user")
 }
 
 type UserIdResponse struct {

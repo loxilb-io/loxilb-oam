@@ -9,7 +9,7 @@ import (
 // Environment variables controlling TLS for outbound connections to managed
 // LoxiLB instances (the gateway proxy and the snapshot client).
 const (
-	instanceCABundleEnv   = "OAM_INSTANCE_CA_BUNDLE"    // path to a PEM CA bundle to trust
+	instanceCABundleEnv    = "OAM_INSTANCE_CA_BUNDLE"    // path to a PEM CA bundle to trust
 	instanceTLSInsecureEnv = "OAM_INSTANCE_TLS_INSECURE" // "true" disables verification (dev only)
 )
 

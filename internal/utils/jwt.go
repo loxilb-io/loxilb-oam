@@ -54,7 +54,7 @@ func GenerateToken(username, role string, userID int, expirationMinutes int) (st
 // error if the signature, structure, or expiry is invalid.
 func ValidateToken(tokenString string) (*Claims, error) {
 	claims := &Claims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(_ *jwt.Token) (interface{}, error) {
 		return jwtKey, nil
 	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 

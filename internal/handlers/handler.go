@@ -29,10 +29,10 @@ var (
 
 // Handler struct holds the services and configuration needed for handling requests.
 type Handler struct {
-	userService   *services.UserService
-	loxilbService *services.LoxiLBService
-	logService    *services.LogService
-	alertService  *services.AlertService
+	userService     *services.UserService
+	loxilbService   *services.LoxiLBService
+	logService      *services.LogService
+	alertService    *services.AlertService
 	proxyService    *services.ProxyService
 	snapshotService *services.SnapshotService
 
@@ -1592,7 +1592,6 @@ func (h *Handler) ProxyToLoxiLB(c *gin.Context) {
 
 	// If we reach here, the response has already been written by the proxy service
 }
-
 
 // Admin Setup Handler Methods
 

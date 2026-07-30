@@ -98,7 +98,7 @@ func newService(t *testing.T, gw services.SnapshotGatewayClient, encKey []byte) 
 var instanceCols = []string{"id", "name", "host", "port", "protocol", "description",
 	"version", "api_endpoint", "cimage", "ctag", "is_active", "created_at"}
 
-func instanceRow(mock sqlmock.Sqlmock, id int) *sqlmock.Rows {
+func instanceRow(_ sqlmock.Sqlmock, id int) *sqlmock.Rows {
 	return sqlmock.NewRows(instanceCols).AddRow(id, fmt.Sprintf("inst-%d", id), "10.0.0.12", "11111",
 		"http", "", "v1", "http://10.0.0.12:11111/netlox/v1", "img", "tag", true, time.Now())
 }

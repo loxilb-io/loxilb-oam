@@ -8,6 +8,7 @@ import (
 	"github.com/loxilb-io/loxilb-oam/internal/services"
 	"sync"
 
+	// swagger-generated OpenAPI spec; blank import registers it for the docs route
 	_ "github.com/loxilb-io/loxilb-oam/docs"
 
 	"github.com/gin-gonic/gin"

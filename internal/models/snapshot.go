@@ -35,8 +35,8 @@ type InstanceSnapshot struct {
 	TriggerType       string     `json:"trigger_type"`
 	SchemaVersion     string     `json:"schema_version"`
 	GatewayVersion    string     `json:"gateway_version"`
-	SizeBytes         int64      `json:"size_bytes"` // uncompressed JSON size
-	Checksum          string     `json:"checksum"`   // "sha256:<hex>", gateway-computed (envelope)
+	SizeBytes         int64      `json:"size_bytes"`      // uncompressed JSON size
+	Checksum          string     `json:"checksum"`        // "sha256:<hex>", gateway-computed (envelope)
 	StoredChecksum    string     `json:"stored_checksum"` // "sha256:<hex>" over raw JSON bytes as received, OAM-computed
 	Blob              []byte     `json:"-"`
 	Encrypted         bool       `json:"encrypted"`

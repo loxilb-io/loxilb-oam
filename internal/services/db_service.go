@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	// registers the MySQL driver with database/sql
 	_ "github.com/go-sql-driver/mysql"
 )
 

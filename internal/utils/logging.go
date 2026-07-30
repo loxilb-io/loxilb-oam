@@ -16,7 +16,7 @@ var (
 func init() {
 	// Fall back to stderr when the log file is not writable (e.g. running
 	// tests or a dev build outside the container) instead of refusing to start.
-	var out *os.File = os.Stderr
+	var out = os.Stderr
 	logFile, err := os.OpenFile("/var/log/loxioam.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("Failed to open log file, logging to stderr: %s", err)

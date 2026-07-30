@@ -1,8 +1,43 @@
+version: "2"
+
 linters:
-  disable-all: true
+  default: none
   enable:
-    - gofmt
     - govet
     - ineffassign
     - misspell
     - revive
+  settings:
+    revive:
+      rules:
+        # Bug-catching / safe rules kept enabled.
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: if-return
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: var-declaration
+        - name: unused-parameter
+        # Deferred as tech-debt for the public launch: enforcing doc comments on
+        # every exported symbol and renaming exported API types (e.g. UserIdResponse,
+        # ApiEndpoint) would either block CI or risk JSON/API-compat changes. Tighten
+        # incrementally post-launch.
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
+        - name: var-naming
+          disabled: true
+
+formatters:
+  enable:
+    - gofmt

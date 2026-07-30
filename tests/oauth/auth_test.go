@@ -60,7 +60,7 @@ func mockValidateStateToken(state string) bool {
 	return state == "valid_state"
 }
 
-func mockGenerateToken(username, role string, userID int, expirationMinutes int) (string, error) {
+func mockGenerateToken(_, _ string, _, _ int) (string, error) {
 	return "mock_token", nil
 }
 

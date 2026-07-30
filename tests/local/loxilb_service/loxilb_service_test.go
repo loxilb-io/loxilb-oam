@@ -1,10 +1,10 @@
 package tests
 
 import (
-	"time"
 	"github.com/loxilb-io/loxilb-oam/internal/models"
 	"github.com/loxilb-io/loxilb-oam/internal/services"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
