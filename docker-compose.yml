@@ -1,0 +1,86 @@
+# loxilb-oam — default stack: MySQL + the OAM service over HTTP.
+#
+#   1. cp .env.example .env   and set the required secrets
+#   2. docker compose up -d
+#
+# Variants:
+#   HTTPS   : docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+#   DB only : docker compose up -d mysql   (e.g. when running the binary from source)
+
+services:
+  mysql:
+    image: mysql:9.2.0
+    container_name: oam-loxilb-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
+      MYSQL_DATABASE: loxioam
+      MYSQL_USER: ${MYSQL_USER:-oamuser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init:/docker-entrypoint-initdb.d
+      - ./database/config/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    networks:
+      - oam-loxilb-network
+    healthcheck:
+      test: ["CMD", "sh", "-c", "mysqladmin ping -h localhost -u root -p\"${MYSQL_ROOT_PASSWORD:?set in .env}\""]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 40s
+    restart: unless-stopped
+
+  oam-loxilb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: loxilb-oam:latest
+    container_name: oam-loxilb-app
+    environment:
+      # Required secrets (the server refuses to start without them).
+      OAM_JWT_SECRET: ${OAM_JWT_SECRET:?set in .env}
+      OAM_DEFAULT_ADMIN_PASSWORD: ${OAM_DEFAULT_ADMIN_PASSWORD:?set in .env}
+      # Database connection.
+      DB_USER: ${MYSQL_USER:-oamuser}
+      DB_PASSWORD: ${DB_PASSWORD:?set in .env}
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: loxioam
+      SERVER_PORT: 8080
+      TOKEN_EXPIRATION: ${TOKEN_EXPIRATION:-480}
+      # Snapshot at-rest encryption: base64-encoded 32-byte AES-256 key
+      # (openssl rand -base64 32). Snapshots carry IPsec PSKs and cert private
+      # keys — production MUST set this. Unset => snapshots stored unencrypted.
+      SNAPSHOT_ENC_KEY: ${SNAPSHOT_ENC_KEY:-}
+      # CORS allowlist (comma-separated). Unset => wildcard (development only).
+      OAM_ALLOWED_ORIGINS: ${OAM_ALLOWED_ORIGINS:-}
+      # OAuth is opt-in (experimental); set OAM_OAUTH_ENABLED=true to enable.
+      OAM_OAUTH_ENABLED: ${OAM_OAUTH_ENABLED:-false}
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - oam-loxilb-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/oam/health", "||", "exit", "1"]
+      timeout: 10s
+      retries: 3
+      interval: 30s
+      start_period: 30s
+    restart: unless-stopped
+    volumes:
+      - app_logs:/app/logs
+
+networks:
+  oam-loxilb-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+    driver: local
+  app_logs:
+    driver: local

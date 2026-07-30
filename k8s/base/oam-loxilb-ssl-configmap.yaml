@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oam-loxilb-ssl-config
+  namespace: oam-loxilb
+data:
+  DB_HOST: "mysql-service.oam-loxilb.svc.cluster.local"
+  DB_PORT: "3306"
+  DB_NAME: "loxioam"
+  TOKEN_EXPIRATION: "1440"
+  SERVER_PORT: "443"
+  SSL_CERT_FILE: "/app/ssl/server_certs/server.crt"
+  SSL_KEY_FILE: "/app/ssl/server_certs/server.key"
+  ENABLE_HTTPS: "true"
+  GOOGLE_REDIRECT_URL_HTTPS: "https://oam-loxilb.local/oam/oauth/google/callback"
+  GITHUB_REDIRECT_URL_HTTPS: "https://oam-loxilb.local/oam/oauth/github/callback"
+  FACEBOOK_REDIRECT_URL_HTTPS: "https://oam-loxilb.local/oam/oauth/facebook/callback"

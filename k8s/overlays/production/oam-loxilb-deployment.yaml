@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oam-loxilb
+  namespace: oam-loxilb
+  labels:
+    app: oam-loxilb
+    component: application
+    environment: production
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: oam-loxilb
+  template:
+    metadata:
+      labels:
+        app: oam-loxilb
+        component: application
+        environment: production
+    spec:
+      containers:
+      - name: oam-loxilb
+        image: oam-loxilb:v1.0.0
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 443
+          name: https
+        env:
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: mysql-user
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: mysql-password
+        - name: DB_HOST
+          value: "mysql-service"
+        - name: DB_PORT
+          value: "3306"
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: mysql-database
+        - name: TOKEN_EXPIRATION
+          valueFrom:
+            configMapKeyRef:
+              name: oam-loxilb-config
+              key: token-expiration
+        # Snapshot at-rest encryption key (base64 32 bytes, design §6).
+        # Snapshots carry IPsec PSKs / cert private keys — keep this set.
+        - name: SNAPSHOT_ENC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: oam-loxilb-secret
+              key: SNAPSHOT_ENC_KEY
+              optional: true
+        - name: SERVER_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: oam-loxilb-config
+              key: server-port
+        - name: GOOGLE_REDIRECT_URL
+          valueFrom:
+            secretKeyRef:
+              name: oam-loxilb-secret
+              key: google-redirect-url
+        - name: GITHUB_REDIRECT_URL
+          valueFrom:
+            secretKeyRef:
+              name: oam-loxilb-secret
+              key: github-redirect-url
+        - name: FACEBOOK_REDIRECT_URL
+          valueFrom:
+            secretKeyRef:
+              name: oam-loxilb-secret
+              key: facebook-redirect-url
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /oam/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /oam/health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      restartPolicy: Always

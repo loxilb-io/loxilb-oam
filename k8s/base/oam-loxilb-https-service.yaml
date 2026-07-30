@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: oam-loxilb-https-service
+  namespace: oam-loxilb
+  labels:
+    app: oam-loxilb-https
+    component: application
+    protocol: https
+spec:
+  selector:
+    app: oam-loxilb-https
+  ports:
+  - port: 443
+    targetPort: 443
+    protocol: TCP
+    name: https
+  type: ClusterIP

@@ -1,0 +1,2192 @@
+definitions:
+  models.AcknowledgeRequest:
+    properties:
+      user_id:
+        type: integer
+    required:
+    - user_id
+    type: object
+  models.AcknowledgeResponse:
+    properties:
+      ack_time:
+        type: string
+      alert_id:
+        type: integer
+      status:
+        type: string
+    type: object
+  models.AdminUpdateRequest:
+    properties:
+      confirmPassword:
+        type: string
+      currentPassword:
+        type: string
+      currentUsername:
+        type: string
+      newEmail:
+        type: string
+      newPassword:
+        minLength: 9
+        type: string
+      newUsername:
+        maxLength: 50
+        minLength: 3
+        type: string
+    required:
+    - confirmPassword
+    - currentPassword
+    - currentUsername
+    - newEmail
+    - newPassword
+    - newUsername
+    type: object
+  models.AdminUpdateResponse:
+    properties:
+      message:
+        type: string
+      newAccessToken:
+        type: string
+      success:
+        type: boolean
+    type: object
+  models.Alert:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      instance_id:
+        type: integer
+      message:
+        type: string
+      resolved_at:
+        description: Nullable if not resolved
+        type: string
+      severity:
+        description: INFO, WARNING, CRITICAL
+        type: string
+      type:
+        description: DB_DISCONNECT, API_UNREACHABLE, HIGH_CPU, MEMORY_LEAK.
+        type: string
+    type: object
+  models.CreateAlertRequest:
+    properties:
+      instance_id:
+        type: integer
+      message:
+        type: string
+      severity:
+        type: string
+      type:
+        type: string
+    required:
+    - instance_id
+    - message
+    - severity
+    - type
+    type: object
+  models.CreateAlertResponse:
+    properties:
+      alert_id:
+        type: integer
+      status:
+        type: string
+    type: object
+  models.CreateUserRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+      role:
+        description: 'Optional: Admin can set role (defaults to "user")'
+        type: string
+      username:
+        type: string
+    required:
+    - email
+    - password
+    - username
+    type: object
+  models.EnhancedLoginResponse:
+    properties:
+      id:
+        type: integer
+      token:
+        type: string
+    type: object
+  models.ErrorResponse:
+    properties:
+      code:
+        description: code
+        type: integer
+      details:
+        description: details
+        type: string
+      fields:
+        description: fields
+        items:
+          type: string
+        type: array
+      message:
+        description: message
+        type: string
+      result:
+        description: result
+        type: string
+      sub-code:
+        description: sub code
+        type: integer
+    type: object
+  models.HealthCheckResponse:
+    properties:
+      status:
+        type: string
+    type: object
+  models.InstanceSnapshot:
+    properties:
+      checksum:
+        description: '"sha256:<hex>", gateway-computed (envelope)'
+        type: string
+      checksum_ok:
+        description: integrity-sweep verdict
+        type: boolean
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      encrypted:
+        type: boolean
+      gateway_version:
+        type: string
+      id:
+        type: string
+      instance_id:
+        type: integer
+      last_restore_response:
+        description: |-
+          LastRestoreResponse is the full gateway response JSON of the most
+          recent restore attempt (the audit record). Only populated on the
+          single-snapshot GET, not in lists.
+        type: string
+      last_restore_result:
+        type: string
+      last_restored_at:
+        type: string
+      name:
+        type: string
+      pinned:
+        type: boolean
+      restore_count:
+        type: integer
+      schema_version:
+        type: string
+      size_bytes:
+        description: uncompressed JSON size
+        type: integer
+      stored_checksum:
+        description: '"sha256:<hex>" over raw JSON bytes as received, OAM-computed'
+        type: string
+      trigger_type:
+        type: string
+    type: object
+  models.InstanceSnapshotSchedule:
+    properties:
+      enabled:
+        type: boolean
+      instance_id:
+        type: integer
+      interval_hours:
+        type: integer
+      last_run_at:
+        type: string
+      last_run_result:
+        type: string
+      retain_count:
+        type: integer
+    type: object
+  models.LogArchivesResponse:
+    properties:
+      archives:
+        description: List of log archive filenames.
+        items:
+          type: string
+        type: array
+    type: object
+  models.LogResponse:
+    properties:
+      logs:
+        items:
+          type: string
+        type: array
+    type: object
+  models.LoginRequest:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  models.LoxiLBInstance:
+    properties:
+      api_endpoint:
+        type: string
+      cimage:
+        type: string
+      created_at:
+        type: string
+      ctag:
+        type: string
+      description:
+        type: string
+      host:
+        type: string
+      id:
+        type: integer
+      is_active:
+        type: boolean
+      name:
+        type: string
+      port:
+        type: string
+      protocol:
+        type: string
+      version:
+        type: string
+    type: object
+  models.LoxiLBInstanceRequest:
+    properties:
+      cimage:
+        type: string
+      ctag:
+        type: string
+      description:
+        type: string
+      host:
+        type: string
+      is_active:
+        description: Optional, defaults to true
+        type: boolean
+      name:
+        type: string
+      port:
+        type: string
+      protocol:
+        description: '"http" or "https"'
+        type: string
+      version:
+        type: string
+    required:
+    - cimage
+    - ctag
+    - host
+    - name
+    - port
+    - protocol
+    type: object
+  models.MessageResponse:
+    properties:
+      message:
+        type: string
+    type: object
+  models.PaginatedAlertsResponse:
+    properties:
+      data:
+        description: The alert data
+        items:
+          $ref: '#/definitions/models.Alert'
+        type: array
+      pagination:
+        allOf:
+        - $ref: '#/definitions/models.PaginationMeta'
+        description: Pagination metadata
+    type: object
+  models.PaginatedSnapshotsResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/models.InstanceSnapshot'
+        type: array
+      pagination:
+        $ref: '#/definitions/models.PaginationMeta'
+    type: object
+  models.PaginationMeta:
+    properties:
+      has_next:
+        description: Whether there's a next page
+        type: boolean
+      has_prev:
+        description: Whether there's a previous page
+        type: boolean
+      limit:
+        description: Number of items per page
+        type: integer
+      page:
+        description: Current page number
+        type: integer
+      total_count:
+        description: Total number of items
+        type: integer
+      total_pages:
+        description: Total number of pages
+        type: integer
+    type: object
+  models.RestoreOutcome:
+    properties:
+      cross_instance:
+        type: boolean
+      gateway_response:
+        type: object
+      gateway_status:
+        type: integer
+      instance_id:
+        description: restore target
+        type: integer
+      mode:
+        type: string
+      pre_restore_snapshot_id:
+        type: string
+      snapshot_id:
+        type: string
+    type: object
+  models.RestoreSnapshotRequest:
+    properties:
+      mode:
+        description: '"dry-run" (default) | "commit"'
+        type: string
+      target_instance_id:
+        description: |-
+          TargetInstanceID restores the snapshot onto a different instance than
+          the one it was taken from (cross-instance restore). Defaults to the
+          snapshot's own instance.
+        type: integer
+    type: object
+  models.SetupStatusResponse:
+    properties:
+      adminExists:
+        type: boolean
+      credentialsUpdated:
+        type: boolean
+      hasDefaultCredentials:
+        type: boolean
+      needsCredentialUpdate:
+        type: boolean
+      systemInfo:
+        $ref: '#/definitions/models.SystemInfo'
+    type: object
+  models.SnapshotScheduleRequest:
+    properties:
+      enabled:
+        type: boolean
+      interval_hours:
+        maximum: 8760
+        minimum: 1
+        type: integer
+      retain_count:
+        maximum: 1000
+        minimum: 1
+        type: integer
+    type: object
+  models.SuccessPostResponse:
+    properties:
+      code:
+        description: code
+        type: integer
+      message:
+        description: message
+        type: string
+    type: object
+  models.SuccessResponse:
+    properties:
+      message:
+        type: string
+    type: object
+  models.SystemInfo:
+    properties:
+      adminUserId:
+        type: integer
+      installationId:
+        type: string
+      version:
+        type: string
+    type: object
+  models.TakeSnapshotRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      trigger_type:
+        description: defaults to "manual"
+        type: string
+    type: object
+  models.UpdateFirmwareRequest:
+    properties:
+      cimage:
+        example: ghcr.io/loxilb-io/loxilb
+        type: string
+      ctag:
+        example: v0.9.8
+        type: string
+      description:
+        description: Optional fields
+        example: Updated firmware description
+        type: string
+      version:
+        example: v0.9.8
+        type: string
+    required:
+    - cimage
+    - ctag
+    type: object
+  models.UpdateSnapshotRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      pinned:
+        type: boolean
+    type: object
+  models.User:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: integer
+      oauth_id:
+        description: ID provided by the OAuth provider
+        type: string
+      oauth_provider:
+        description: e.g., "google", "facebook"
+        type: string
+      oauth_token:
+        description: Access token from the OAuth provider
+        type: string
+      role:
+        description: e.g., "admin", "user"
+        type: string
+      username:
+        type: string
+    type: object
+  models.UserIdResponse:
+    properties:
+      id:
+        type: integer
+    type: object
+info:
+  contact: {}
+paths:
+  /oam/alerts:
+    get:
+      description: Retrieves all active alerts from the database with pagination (always
+        returns paginated response)
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Number of items per page (default: 20, max: 100)'
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PaginatedAlertsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get active alerts
+      tags:
+      - alerts
+    post:
+      consumes:
+      - application/json
+      description: Creates a new alert in the system
+      parameters:
+      - description: Alert data
+        in: body
+        name: alert
+        required: true
+        schema:
+          $ref: '#/definitions/models.CreateAlertRequest'
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.CreateAlertResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create alert
+      tags:
+      - alerts
+  /oam/alerts/{id}/acknowledge:
+    put:
+      consumes:
+      - application/json
+      description: Acknowledges an alert by ID
+      parameters:
+      - description: Alert ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Acknowledgement data
+        in: body
+        name: ackRequest
+        required: true
+        schema:
+          $ref: '#/definitions/models.AcknowledgeRequest'
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.AcknowledgeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Acknowledge alert
+      tags:
+      - alerts
+  /oam/alerts/history:
+    get:
+      description: Retrieves alert history within a specified time range with pagination
+        (always returns paginated response)
+      parameters:
+      - description: Start time (RFC3339 format)
+        in: query
+        name: start
+        type: string
+      - description: End time (RFC3339 format)
+        in: query
+        name: end
+        type: string
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Number of items per page (default: 20, max: 100)'
+        in: query
+        name: limit
+        type: integer
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PaginatedAlertsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get alert history
+      tags:
+      - alerts
+  /oam/health:
+    get:
+      description: Checks the health of the application and database connection.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.HealthCheckResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.HealthCheckResponse'
+      summary: Health check
+      tags:
+      - health
+  /oam/instances/{id}/snapshot-schedule:
+    get:
+      description: Returns the scheduled-snapshot/retention settings; defaults (disabled,
+        every 24h, keep 10) when never configured.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.InstanceSnapshotSchedule'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Read an instance's snapshot schedule
+      tags:
+      - snapshots
+    put:
+      consumes:
+      - application/json
+      description: Enables/disables scheduled snapshots and sets interval and per-instance
+        retention (keep-N unpinned; pre_upgrade and pinned snapshots are exempt).
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Schedule settings
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.SnapshotScheduleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.InstanceSnapshotSchedule'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update an instance's snapshot schedule
+      tags:
+      - snapshots
+  /oam/instances/{id}/snapshots:
+    get:
+      description: Returns snapshot metadata (never blobs) for one instance, newest
+        first, paginated.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PaginatedSnapshotsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List snapshots of an instance
+      tags:
+      - snapshots
+    post:
+      consumes:
+      - application/json
+      description: Calls the gateway's GET /config/snapshot on the managed instance
+        and stores the document (gzip, AES-256-GCM at rest when SNAPSHOT_ENC_KEY is
+        set) in the OAM database. Returns metadata only, never the blob.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Snapshot name/description/trigger
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/models.TakeSnapshotRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.InstanceSnapshot'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "502":
+          description: Gateway unreachable (connection error passed through verbatim)
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Take an instance config snapshot now
+      tags:
+      - snapshots
+  /oam/instances/{id}/snapshots/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Accepts a previously downloaded snapshot document (multipart field
+        "file"). Only the envelope (schema_version, gateway_version, checksum) is
+        parsed — deep validation stays the gateway's job at restore time.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Snapshot document JSON
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: Snapshot name
+        in: formData
+        name: name
+        type: string
+      - description: Description
+        in: formData
+        name: description
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.InstanceSnapshot'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Re-import an off-box snapshot archive
+      tags:
+      - snapshots
+  /oam/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates a user and returns a JWT token with comprehensive
+        license information if the credentials are valid.
+      parameters:
+      - description: User credentials
+        in: body
+        name: loginRequest
+        required: true
+        schema:
+          $ref: '#/definitions/models.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.EnhancedLoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "429":
+          description: Too many failed login attempts
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: User login
+      tags:
+      - auth
+  /oam/logout:
+    post:
+      consumes:
+      - application/json
+      description: Invalidates the user's token and logs them out.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: User logout
+      tags:
+      - auth
+  /oam/logs:
+    get:
+      description: Retrieves logs from the log file within the specified time range.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Number of lines
+        in: query
+        name: lines
+        type: integer
+      - description: Log level
+        in: query
+        name: level
+        type: string
+      - description: Start time
+        in: query
+        name: startTime
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.LogResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Fetch logs
+      tags:
+      - logs
+  /oam/logs/archives:
+    get:
+      description: List available log archives
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.LogArchivesResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List log archives
+      tags:
+      - logs
+  /oam/logs/archives/{filename}:
+    get:
+      description: Download a log archive by filename
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Log archive filename
+        in: path
+        name: filename
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Download log archive
+      tags:
+      - logs
+  /oam/loxilbs:
+    get:
+      description: Retrieves LoxiLB instances and returns them as JSON.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.LoxiLBInstance'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Fetch LoxiLB instances
+      tags:
+      - instances
+    post:
+      consumes:
+      - application/json
+      description: Create a new LoxiLB instance.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance
+        in: body
+        name: instance
+        required: true
+        schema:
+          $ref: '#/definitions/models.LoxiLBInstanceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.LoxiLBInstance'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a new LoxiLB instance
+      tags:
+      - instances
+  /oam/loxilbs/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Deletes a LoxiLB instance by ID
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.MessageResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a LoxiLB instance
+      tags:
+      - instances
+    get:
+      description: Retrieves a LoxiLB instance by ID.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.LoxiLBInstance'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Fetch LoxiLB instance by ID
+      tags:
+      - instances
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing LoxiLB instance with the provided JSON payload
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: LoxiLB instance data
+        in: body
+        name: instance
+        required: true
+        schema:
+          $ref: '#/definitions/models.LoxiLBInstance'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.LoxiLBInstance'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update LoxiLB instance
+      tags:
+      - instances
+  /oam/loxilbs/{id}/firmware:
+    put:
+      consumes:
+      - application/json
+      description: Updates the firmware of a LoxiLB instance image.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Firmware update data
+        in: body
+        name: firmwareRequest
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateFirmwareRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.SuccessResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update LoxiLB instance firmware
+      tags:
+      - instances
+  /oam/loxilbs/{id}/firmware/start:
+    put:
+      description: Starts the firmware of a LoxiLB instance image using the instance
+        ID.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.SuccessResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Start LoxiLB instance firmware
+      tags:
+      - instances
+  /oam/loxilbs/{id}/firmware/stop:
+    put:
+      description: Stops the firmware of a LoxiLB instance image using the instance
+        ID.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.SuccessResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Stop LoxiLB instance firmware
+      tags:
+      - instances
+  /oam/loxilbs/{id}/netlox/:
+    delete:
+      consumes:
+      - application/json
+      description: Forwards HTTP requests to the specified LoxiLB instance
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Successful response from LoxiLB
+          schema:
+            $ref: '#/definitions/models.SuccessPostResponse'
+        "204":
+          description: Successful response from LoxiLB
+          schema: {}
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Proxy request to LoxiLB instance
+      tags:
+      - proxy
+    get:
+      consumes:
+      - application/json
+      description: Forwards HTTP requests to the specified LoxiLB instance
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Successful response from LoxiLB
+          schema:
+            $ref: '#/definitions/models.SuccessPostResponse'
+        "204":
+          description: Successful response from LoxiLB
+          schema: {}
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Proxy request to LoxiLB instance
+      tags:
+      - proxy
+    patch:
+      consumes:
+      - application/json
+      description: Forwards HTTP requests to the specified LoxiLB instance
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Successful response from LoxiLB
+          schema:
+            $ref: '#/definitions/models.SuccessPostResponse'
+        "204":
+          description: Successful response from LoxiLB
+          schema: {}
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Proxy request to LoxiLB instance
+      tags:
+      - proxy
+    post:
+      consumes:
+      - application/json
+      description: Forwards HTTP requests to the specified LoxiLB instance
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Successful response from LoxiLB
+          schema:
+            $ref: '#/definitions/models.SuccessPostResponse'
+        "204":
+          description: Successful response from LoxiLB
+          schema: {}
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Proxy request to LoxiLB instance
+      tags:
+      - proxy
+    put:
+      consumes:
+      - application/json
+      description: Forwards HTTP requests to the specified LoxiLB instance
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: LoxiLB Instance ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Successful response from LoxiLB
+          schema:
+            $ref: '#/definitions/models.SuccessPostResponse'
+        "204":
+          description: Successful response from LoxiLB
+          schema: {}
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Proxy request to LoxiLB instance
+      tags:
+      - proxy
+  /oam/oauth/{provider}:
+    get:
+      description: Initiates the OAuth login flow for the specified provider.
+      parameters:
+      - description: OAuth provider
+        in: path
+        name: provider
+        required: true
+        type: string
+      responses:
+        "302":
+          description: Found
+          schema:
+            $ref: '#/definitions/models.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: OAuth login
+      tags:
+      - auth
+  /oam/oauth/{provider}/callback:
+    get:
+      description: Handles the OAuth callback flow for the specified provider and
+        returns enhanced login response with license information.
+      parameters:
+      - description: OAuth provider
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: OAuth code
+        in: query
+        name: code
+        required: true
+        type: string
+      - description: OAuth state
+        in: query
+        name: state
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.EnhancedLoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: OAuth callback
+      tags:
+      - auth
+  /oam/setup/status:
+    get:
+      consumes:
+      - application/json
+      description: Check if admin credentials need to be updated from defaults
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.SetupStatusResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Get admin credential setup status
+      tags:
+      - Setup
+  /oam/setup/update-admin:
+    post:
+      consumes:
+      - application/json
+      description: Update admin credentials from default username/password to user-defined
+        values
+      parameters:
+      - description: Admin credential update request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.AdminUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.AdminUpdateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      summary: Update admin credentials
+      tags:
+      - Setup
+  /oam/snapshots/{sid}:
+    delete:
+      description: Deletes a stored snapshot. Pinned snapshots require force=true.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Snapshot ID (UUID)
+        in: path
+        name: sid
+        required: true
+        type: string
+      - description: Required to delete a pinned snapshot
+        in: query
+        name: force
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.MessageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "409":
+          description: Snapshot is pinned and force was not set
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete a snapshot
+      tags:
+      - snapshots
+    get:
+      description: Returns snapshot metadata including restore history and the full
+        gateway response of the last restore (the audit record).
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Snapshot ID (UUID)
+        in: path
+        name: sid
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.InstanceSnapshot'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get one snapshot's metadata
+      tags:
+      - snapshots
+    patch:
+      consumes:
+      - application/json
+      description: Updates name, description and/or pinned. Pinned snapshots are exempt
+        from retention.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Snapshot ID (UUID)
+        in: path
+        name: sid
+        required: true
+        type: string
+      - description: Fields to update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateSnapshotRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.InstanceSnapshot'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update snapshot metadata
+      tags:
+      - snapshots
+  /oam/snapshots/{sid}/download:
+    get:
+      description: Streams the decrypted, decompressed snapshot JSON. The document
+        contains IPsec PSKs and certificate private keys, so this is write-gated and
+        audit-logged. X-Snapshot-Checksum carries the gateway's document checksum;
+        X-Content-Checksum is sha256 over the exact bytes served.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Snapshot ID (UUID)
+        in: path
+        name: sid
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: snapshot document JSON
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "422":
+          description: Stored blob failed integrity verification
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Download a snapshot document
+      tags:
+      - snapshots
+  /oam/snapshots/{sid}/restore:
+    post:
+      consumes:
+      - application/json
+      description: 'Default mode is dry-run: the gateway validates and returns its
+        plan without mutating anything. Commit first takes an automatic pre_restore
+        safety snapshot of the target, then applies. The gateway''s response is returned
+        verbatim in gateway_response. Cross-instance restore is allowed and flagged
+        with cross_instance=true.'
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Snapshot ID (UUID)
+        in: path
+        name: sid
+        required: true
+        type: string
+      - description: 'mode: dry-run (default) | commit; optional target_instance_id'
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/models.RestoreSnapshotRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.RestoreOutcome'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "422":
+          description: Stored blob failed integrity verification (never sent to the
+            gateway)
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "502":
+          description: Gateway unreachable (connection error passed through verbatim)
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Restore a stored snapshot to a gateway
+      tags:
+      - snapshots
+  /oam/users:
+    get:
+      description: Retrieves all users from the database and returns them as a JSON
+        response.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.User'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Fetch all users
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user in the system with optional license key and
+        role
+      parameters:
+      - description: User data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/models.CreateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.UserIdResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a new user
+      tags:
+      - users
+  /oam/users/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Deletes a user by its ID
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.MessageResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete user
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Updates specific user fields (username, email, role, password)
+        based on provided JSON payload. Only non-empty fields are updated.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Fields to update (username, email, role, password)
+        in: body
+        name: updates
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.MessageResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update user fields
+      tags:
+      - users
+  /oam/users/me:
+    get:
+      description: Retrieves the authenticated user's profile information based on
+        the JWT token
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.User'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get current user profile
+      tags:
+      - users
+securityDefinitions:
+  BearerAuth:
+    description: JWT bearer token from POST /oam/login, sent as "Bearer <token>".
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

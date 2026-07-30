@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oam-loxilb
+  labels:
+    app: oam-loxilb
+    version: v1.0.0

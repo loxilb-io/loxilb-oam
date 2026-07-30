@@ -1,0 +1,35 @@
+# Binaries & build output
+/loxilb-oam
+/go-rest-api
+*.exe
+*.test
+*.out
+
+# Go
+vendor/
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Local environment / secrets
+.env
+*.log
+
+# Local scratch TLS material at repo root only (NOT scripts/ssl/ cert-gen helpers)
+/ssl/
+
+# OS / editor cruft
+.DS_Store
+.vscode/
+.idea/
+
+# AI-assistant context & tooling (any directory)
+CLAUDE.md
+**/CLAUDE.md
+.claude/
+.serena/
+.codegraph/
+
+# Internal-only documentation (design specs, migration/audit notes — not part of the public release)
+docs/internal/

@@ -1,0 +1,12 @@
+# Code owners for loxilb-oam. Handles are taken from MAINTAINERS.md.
+#
+# Every pull request requires an approving review from these maintainers before it can be
+# merged. This is enforced by the branch-protection rule on `main`
+# ("Require review from Code Owners" + at least 1 approval) — see docs/internal/MIGRATION_PLAN.md.
+#
+# Every listed owner must have write access to the repository once it is created under the
+# loxilb-io org, otherwise GitHub ignores them and warns. Confirm the roster for loxilb-oam before
+# enabling required review. A team (e.g. @loxilb-io/loxilb-oam-maintainers) may be used instead of
+# individual handles so membership can change without editing this file.
+
+*       @TrekkieCoder @UltraInstinct14 @backguynn @inhogog2

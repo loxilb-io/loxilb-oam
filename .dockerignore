@@ -1,0 +1,36 @@
+# Version control and CI
+.git
+.github
+.gitignore
+.gitleaks.toml
+
+# Local environment and secrets
+.env
+ssl/
+
+# Internal-only documentation (never shipped)
+docs/internal/
+
+# AI-assistant tooling / editor
+.claude/
+.serena/
+.codegraph/
+.vscode/
+.idea/
+CLAUDE.md
+**/CLAUDE.md
+.DS_Store
+
+# Build artifacts and binaries
+loxilb-oam
+go-rest-api
+*.o
+*.a
+*.so
+*.test
+coverage.out
+coverage.html
+
+# Docs and tests not needed in the runtime image
+*.md
+tests/

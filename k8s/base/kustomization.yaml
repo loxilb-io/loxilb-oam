@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- namespace.yaml
+- mysql-secret.yaml
+- mysql-configmap.yaml
+- mysql-init-configmap.yaml
+- mysql-pvc.yaml  # Already exists, skip to avoid labeling conflicts
+- mysql-deployment.yaml
+- mysql-service.yaml
+- oam-loxilb-secret.yaml
+- oam-loxilb-ssl-configmap.yaml
+- oam-loxilb-https-deployment.yaml
+- oam-loxilb-https-service.yaml
+- oam-loxilb-https-ingress.yaml
+
+commonLabels:
+  app.kubernetes.io/name: oam-loxilb-https
+  app.kubernetes.io/version: v1.0.0
+  app.kubernetes.io/component: oam-system
+  app.kubernetes.io/protocol: https
+
+images:
+- name: oam-loxilb
+  newTag: latest

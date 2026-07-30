@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- namespace.yaml
+- mysql-secret.yaml
+- mysql-configmap.yaml
+- mysql-init-configmap.yaml
+- mysql-service.yaml
+- oam-loxilb-configmap.yaml
+- oam-loxilb-secret.yaml
+- ssl-secret.yaml
+- oam-loxilb-service.yaml
+- oam-loxilb-ingress.yaml
+- mysql-deployment.yaml
+- oam-loxilb-deployment.yaml
+- mysql-pvc.yaml
+
+images:
+- name: oam-loxilb
+  newTag: latest

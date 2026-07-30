@@ -1,0 +1,21 @@
+# HTTPS override for docker-compose.yml. Serves the OAM API over TLS on :443.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+#
+# Requires a certificate and key at ./ssl/server_certs/server.{crt,key}
+# (see `make generate-ssl-certs`). Port 8080 stays open for health checks.
+
+services:
+  oam-loxilb:
+    environment:
+      SERVER_PORT: 443
+      ENABLE_HTTPS: "true"
+      SSL_CERT_FILE: /app/ssl/server_certs/server.crt
+      SSL_KEY_FILE: /app/ssl/server_certs/server.key
+    ports:
+      - "443:443"
+    volumes:
+      - ./ssl:/app/ssl:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "--no-check-certificate", "https://localhost:443/oam/health", "||", "exit", "1"]
+    command: ["sh", "-c", "./loxilb-oam -db-user=$$DB_USER -db-password=$$DB_PASSWORD -db-host=$$DB_HOST -db-port=$$DB_PORT -db-name=$$DB_NAME -token-expiration=$$TOKEN_EXPIRATION -port=$$SERVER_PORT --enable-https=true --ssl-cert-file=$$SSL_CERT_FILE --ssl-key-file=$$SSL_KEY_FILE"]
