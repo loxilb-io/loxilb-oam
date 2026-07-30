@@ -1,4 +1,4 @@
-package snapshot_service_test
+package services_test
 
 // Unit tests for internal/services/snapshot_scheduler.go: schedule due-time
 // logic and retention math incl. the pinned/pre_upgrade exemptions (exercised via

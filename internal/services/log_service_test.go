@@ -1,4 +1,4 @@
-package tests
+package services_test
 
 import (
 	"github.com/loxilb-io/loxilb-oam/internal/services"

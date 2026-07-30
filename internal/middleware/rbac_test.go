@@ -1,4 +1,4 @@
-package tests
+package middleware_test
 
 import (
 	"net/http"
