@@ -1,4 +1,4 @@
-package snapshot_service_test
+package services_test
 
 // Unit tests for internal/services/snapshot_service.go:
 // checksum-mismatch rejection, encrypt/decrypt round trip, oversize (413)
