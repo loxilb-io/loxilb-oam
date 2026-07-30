@@ -25,6 +25,17 @@ jobs:
           go-version: 'stable'
           cache: true
 
+      - name: Check formatting
+        # gofmt -l lists files that are not properly formatted; any output fails.
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            echo "Run 'gofmt -w .' to fix."
+            exit 1
+          fi
+
       - name: Build
         run: go build ./...
 
@@ -33,8 +44,43 @@ jobs:
 
       - name: Unit tests
         # Integration suites under tests/rest_api and tests/e2e need a live
-        # server + database and are excluded from CI.
-        run: go test $(go list ./... | grep -v '/tests/rest_api' | grep -v '/tests/e2e')
+        # server + database and are excluded from CI. -race needs atomic mode.
+        run: |
+          go test -race -covermode=atomic -coverprofile=coverage.out \
+            $(go list ./... | grep -v '/tests/rest_api' | grep -v '/tests/e2e')
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  swagger-drift:
+    name: Swagger drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Backward-compat guard: the generated OpenAPI docs must stay in sync with
+    # the handler annotations. Regenerate and fail if anything changed.
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Regenerate Swagger docs
+        # swag version is pinned to match the one in go.mod so output is
+        # deterministic. Default args match how docs/ was generated:
+        # --generalInfo main.go --dir ./ --output ./docs.
+        run: go run github.com/swaggo/swag/cmd/swag@v1.16.6 init
+
+      - name: Check for drift
+        run: git diff --exit-code docs/docs.go docs/swagger.json docs/swagger.yaml
 
   lint:
     name: golangci-lint
