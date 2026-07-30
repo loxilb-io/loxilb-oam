@@ -5,6 +5,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    ignore:
+      # gin >=1.11 bundles HTTP/3 support, pulling in the quic-go stack
+      # (github.com/quic-go/quic-go, qpack) as indirect deps. This service is a
+      # plain net/http REST API and never opens an HTTP/3 listener, so that code
+      # would be linked-but-never-executed dead weight — and quic-go 0.59.0 trips
+      # govulncheck (GO-2026-5676). Stay on gin 1.10.x until HTTP/3 is actually
+      # needed; revisit this ignore then.
+      - dependency-name: "github.com/gin-gonic/gin"
+        versions: [">=1.11.0"]
 
   - package-ecosystem: github-actions
     directory: "/"
