@@ -3,14 +3,18 @@ name: Release
 # Tag-triggered release (push a tag like v1.2.3, or v1.2.3-rc.1 for a
 # prerelease). Produces:
 #   - a linux/amd64 binary tarball + SHA256SUMS attached to a GitHub Release
-#   - a container image pushed to GHCR (ghcr.io/<owner>/loxilb-oam)
+#   - a container image pushed to GHCR (ghcr.io/<owner>/loxilb-oam), which is
+#     Cosign-signed (keyless/OIDC), carries a SLSA build-provenance attestation,
+#     and an SPDX SBOM attestation.
 # A Trivy CRITICAL+fixable scan gates the image BEFORE it is pushed/published.
 # `-rc.` / `-alpha.` / `-beta.` tags publish as prereleases and do NOT move
 # the `:latest` image tag.
 #
-# NOTE: pushing to GHCR requires the org to grant this repo `packages: write`
-# (Settings → Actions → Workflow permissions, or org package settings). Until
-# then the build/scan/tarball/release steps still run; only the push needs it.
+# AUTHORIZATION: this job targets the `release` Environment, so publishing
+# waits for a required-reviewer approval even after a tag is pushed — a tag
+# alone cannot ship a release.
+#
+# NOTE: pushing to GHCR requires the org to grant this repo `packages: write`.
 on:
   push:
     tags: ['v*']
@@ -21,8 +25,7 @@ on:
         required: true
 
 permissions:
-  contents: write # create the GitHub Release
-  packages: write # push the image to GHCR
+  contents: read
 
 env:
   REGISTRY: ghcr.io
@@ -33,8 +36,16 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Gated deployment target: publishing requires an approval from a
+    # required reviewer configured on the `release` environment.
+    environment: release
+    permissions:
+      contents: write # create the GitHub Release
+      packages: write # push the image to GHCR
+      id-token: write # keyless Cosign signing + attestation OIDC
+      attestations: write # record build-provenance / SBOM attestations
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Resolve version
         id: ver
@@ -69,7 +80,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: 'stable'
           cache: true
@@ -94,17 +105,17 @@ jobs:
           ( cd dist && sha256sum "${DIST}.tar.gz" > SHA256SUMS )
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build image (load for scan)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64
@@ -113,7 +124,7 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
 
       - name: Trivy gate (CRITICAL + fixable) — blocks publish
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
           format: table
@@ -122,15 +133,46 @@ jobs:
           exit-code: '1'
 
       - name: Push image
-        uses: docker/build-push-action@v6
+        id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64
           push: true
           tags: ${{ steps.tags.outputs.list }}
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes "${REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate SBOM (SPDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attest SBOM
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ steps.ver.outputs.version }}
           prerelease: ${{ steps.ver.outputs.prerelease }}
@@ -138,3 +180,4 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
+            sbom.spdx.json
