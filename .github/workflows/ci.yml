@@ -52,6 +52,14 @@ jobs:
       - name: Coverage summary
         run: go tool cover -func=coverage.out
 
+      - name: Coverage floor
+        # Blocking ratchet: fail if total statement coverage drops below the
+        # floor. Raise the second arg as tests land (see coverage-gate.sh).
+        # CI's covdata merge folds test-less packages into the denominator, so
+        # this total runs a few points below a per-package view — the floor is
+        # calibrated to it.
+        run: bash .github/scripts/coverage-gate.sh coverage.out 18
+
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
