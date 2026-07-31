@@ -60,6 +60,10 @@ docs/internal/
 /loxilb-kv-agent
 /aictrl-ttft-fit
 
+# Python bytecode from the CI hygiene / govulncheck-gate scripts
+__pycache__/
+*.pyc
+
 # Maintainer-only release tooling (references private infrastructure; not published)
 /scripts/bootstrap-repos.sh
 .tmp_versions/

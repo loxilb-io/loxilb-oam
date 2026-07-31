@@ -12,8 +12,9 @@ import (
 
 // Test the proxy functionality
 func TestProxyToLoxiLB(t *testing.T) {
-	// First, we need to create a user and get a token
-	userID, err := createUser("proxyuser", "proxypass")
+	// First, we need to create a user and get a token. Instance creation below
+	// needs the instance-write capability, so the user is created as an admin.
+	userID, err := createUser("proxyuser", "proxyuser@example.com", testPassword(), "admin")
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -22,7 +23,7 @@ func TestProxyToLoxiLB(t *testing.T) {
 	// Login to get token
 	loginData := map[string]string{
 		"username": "proxyuser",
-		"password": "proxypass",
+		"password": testPassword(),
 	}
 	jsonValue, _ := json.Marshal(loginData)
 	req, _ := http.NewRequest("POST", baseURL+"/login", bytes.NewBuffer(jsonValue))
