@@ -2,7 +2,7 @@
 #
 # Every pull request requires an approving review from these maintainers before it can be
 # merged. This is enforced by the branch-protection rule on `main`
-# ("Require review from Code Owners" + at least 1 approval) — see docs/internal/MIGRATION_PLAN.md.
+# ("Require review from Code Owners" + at least 1 approval).
 #
 # Every listed owner must have write access to the repository once it is created under the
 # loxilb-io org, otherwise GitHub ignores them and warns. Confirm the roster for loxilb-oam before

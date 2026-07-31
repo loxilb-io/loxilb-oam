@@ -58,7 +58,7 @@ func TestRunOnceTakesDueSnapshotAndTrims(t *testing.T) {
 	svc, mock := newService(t, gw, nil)
 	sched := services.NewSnapshotScheduler(svc)
 
-	// Phase 1 — due schedules: instance 1 enabled, never ran => due.
+	// Case 1 — due schedules: instance 1 enabled, never ran => due.
 	mock.ExpectQuery(regexp.QuoteMeta("FROM instance_snapshot_schedules")).
 		WillReturnRows(sqlmock.NewRows(schedCols).AddRow(1, true, 24, 2, nil, nil))
 	expectInstanceFetch(mock, 1) // TakeSnapshot resolves the instance
@@ -71,7 +71,7 @@ func TestRunOnceTakesDueSnapshotAndTrims(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE instance_snapshot_schedules")).
 		WithArgs("ok", 1).WillReturnResult(sqlmock.NewResult(0, 1))
 
-	// Phase 2 — retention: schedule row says retain 2; 3 candidates => 1 delete.
+	// Case 2 — retention: schedule row says retain 2; 3 candidates => 1 delete.
 	mock.ExpectQuery(regexp.QuoteMeta("FROM instance_snapshot_schedules")).
 		WillReturnRows(sqlmock.NewRows(schedCols).AddRow(1, true, 24, 2, nil, nil))
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT DISTINCT instance_id FROM instance_snapshots")).
@@ -82,7 +82,7 @@ func TestRunOnceTakesDueSnapshotAndTrims(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM instance_snapshots WHERE id = ?")).
 		WithArgs("old-id").WillReturnResult(sqlmock.NewResult(0, 1))
 
-	// Phase 3 — integrity sweep runs on the first tick (lastSweep is zero).
+	// Case 3 — integrity sweep runs on the first tick (lastSweep is zero).
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM instance_snapshots")).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 

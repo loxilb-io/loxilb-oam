@@ -101,20 +101,5 @@ jobs:
       - name: Run golangci-lint
         run: $(go env GOPATH)/bin/golangci-lint run --timeout=5m ./...
 
-  govulncheck:
-    name: govulncheck
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Advisory: standard-library advisories can be fixed only in a not-yet-released
-    # Go patch, so this surfaces findings without blocking merges.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: 'stable'
-          cache: true
-      - name: Run govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+  # Note: the Go vulnerability scan lives in its own workflow (govulncheck.yml)
+  # as a reachable+fixable gate, replacing the former advisory job here.
