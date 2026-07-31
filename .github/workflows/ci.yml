@@ -58,6 +58,79 @@ jobs:
           name: coverage
           path: coverage.out
 
+  integration:
+    name: Integration (MySQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Boots the real binary against a MySQL service and runs the env-driven
+    # tests/rest_api suite — this is what protects the HTTP API contract.
+    services:
+      mysql:
+        image: mysql:9.2.0  # pinned to match deploy/compose/docker-compose.yml
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: loxioam
+          MYSQL_USER: oamuser
+          MYSQL_PASSWORD: oampass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Load database schema
+        # Run the client inside the service container (unix socket) so MySQL 9's
+        # caching_sha2 auth needs no TLS / public-key exchange over TCP.
+        run: |
+          docker exec -i "${{ job.services.mysql.id }}" \
+            mysql -uroot -proot loxioam < database/init/00-init-complete.sql
+
+      - name: Build server
+        run: go build -o oam-server .
+
+      - name: Boot server
+        env:
+          OAM_JWT_SECRET: ci-integration-jwt-secret
+          OAM_DEFAULT_ADMIN_PASSWORD: ChangeMe-Admin1!
+          OAM_DB_PASSWORD: oampass
+        run: |
+          ./oam-server -db-host 127.0.0.1 -db-port 3306 -db-user oamuser \
+            -db-name loxioam -port 8080 > server.log 2>&1 &
+          echo $! > server.pid
+          # Wait until /oam/health responds (server + DB ready).
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/oam/health || true)
+            if [ "$code" != "000" ]; then echo "server ready (HTTP $code)"; break; fi
+            sleep 1
+          done
+
+      - name: Run integration tests
+        # OAM_TEST_ADMIN_PASSWORD must match OAM_DEFAULT_ADMIN_PASSWORD above so
+        # the suite can log in as the bootstrap admin. Firmware tests self-skip
+        # (no reachable LoxiLB instance) unless OAM_TEST_LIVE_INSTANCE is set.
+        env:
+          OAM_TEST_PASSWORD: ChangeMe-Test1!
+          OAM_TEST_ADMIN_PASSWORD: ChangeMe-Admin1!
+        run: go test -count=1 -v ./tests/rest_api/...
+
+      - name: Server log (on failure)
+        if: failure()
+        run: cat server.log || true
+
+      - name: Stop server
+        if: always()
+        run: kill "$(cat server.pid)" 2>/dev/null || true
+
   swagger-drift:
     name: Swagger drift
     runs-on: ubuntu-latest
