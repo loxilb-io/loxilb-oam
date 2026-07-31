@@ -3,6 +3,12 @@ name: CodeQL
 # Static analysis of the Go code. Advisory at launch (not a required status
 # check); findings land in the repository's Security tab. This module is pure
 # Go with no cgo or submodules, so CodeQL's autobuild drives the build.
+#
+# NOTE: uploading results to the Security tab needs GitHub Advanced Security,
+# which is unavailable on a private org repo (free once the repo is public).
+# The analyze step is continue-on-error so the expected upload failure does not
+# show red while private; once the repo is public + GHAS on, the upload simply
+# succeeds and findings flow to the Security tab (no change needed).
 
 on:
   pull_request:
@@ -38,6 +44,9 @@ jobs:
           build-mode: autobuild
 
       - name: Perform CodeQL analysis
+        # Swallow the expected upload failure while private (needs GHAS); the
+        # analysis itself still runs. Green once public + GHAS, upload works.
+        continue-on-error: true
         uses: github/codeql-action/analyze@v3
         with:
           category: '/language:go'
