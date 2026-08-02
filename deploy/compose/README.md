@@ -11,7 +11,8 @@ browser ──HTTP/HTTPS──▶ caddy (edge)
 
 Three long-running services — **caddy**, **oam-loxilb**, **mysql** — plus a
 one-shot **ui-assets** job that publishes the SPA build into the volume Caddy
-serves. See `../../docs/` and the design plan for the full rationale.
+serves. **Full step-by-step operator guide:**
+[`docs/deployment-compose.md`](../../docs/deployment-compose.md).
 
 ## Quick start
 
@@ -21,14 +22,29 @@ cp .env.example .env      # fill in the required secrets
 #            OAM_DEFAULT_ADMIN_PASSWORD, SNAPSHOT_ENC_KEY
 ```
 
-**Development** (builds images from the local `oam-loxilb` + `loxilb-ui` checkouts):
+The bundle has **two first-class modes** — everything else is a variant
+(see "Edge TLS modes" below).
+
+**Mode 1 — Development, end-to-end HTTP.** Builds images from the local
+`loxilb-oam` + `loxilb-ui` checkouts; edge on plain HTTP (`SITE_ADDRESS=:80`,
+the shipped default); instance-cert verification off:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-**Production** (pinned pre-built images; isolated DB; only the edge is exposed):
+**Mode 2 — Production, end-to-end HTTPS.** Pinned pre-built images; HTTPS on
+every wire that leaves the host (browser→edge, OAM→instances); DB isolated on
+an internal network; only the Caddy edge is exposed:
 ```bash
-# pin OAM_TAG / UI_TAG in .env first
+# 1. pin OAM_TAG / UI_TAG in .env to released versions (never `latest`)
+# 2. edge cert — generate self-signed (or drop your CA's files in certs/edge/):
+scripts/generate-edge-certs.sh oam.example.internal
+#    then set in .env:
+#      SITE_ADDRESS=https://oam.example.internal
+#      EDGE_TLS=tls /certs/edge/cert.pem /certs/edge/key.pem
+# 3. verified TLS to managed instances ("TLS to managed LoxiLB instances" below):
+#      OAM_INSTANCE_CA_BUNDLE=/etc/loxilb-oam/certs/instance-ca.pem
+#      OAM_INSTANCE_TLS_INSECURE=false
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
@@ -49,12 +65,13 @@ ConfigMap/Secret. Full reference: `.env.example`. Highlights:
 
 ## Edge TLS modes
 
-Set two knobs in `.env`. **Self-signed is the default path.**
+Set two knobs in `.env`. The ★ rows are the two first-class modes; the rest
+are supported variants.
 
 | Mode | `SITE_ADDRESS` | `EDGE_TLS` |
 |------|----------------|-----------|
-| HTTP (dev/internal) | `:80` | *(empty)* |
-| **★ Self-signed, your key** | `https://your.host` | `tls /certs/edge/cert.pem /certs/edge/key.pem` |
+| **★ HTTP (dev mode)** | `:80` | *(empty)* |
+| **★ Self-signed, your key (prod default)** | `https://your.host` | `tls /certs/edge/cert.pem /certs/edge/key.pem` |
 | Self-signed, zero-file | `https://localhost` | `tls internal` |
 | Automatic HTTPS (public DNS) | `your.domain` | *(empty)* |
 | Official / commercial cert | `https://your.domain` | `tls /certs/edge/cert.pem /certs/edge/key.pem` |
@@ -89,5 +106,5 @@ docker compose ... down -v            # stop + destroy DB/volumes
 
 > **Layout note:** this bundle lives in the `loxilb-oam` repo so the MySQL schema
 > (`../../database/init`) and the future k8s overlays stay single-sourced. The
-> dev overlay expects `loxilb-ui` checked out as a sibling of `oam-loxilb`;
+> dev overlay expects `loxilb-ui` checked out as a sibling of `loxilb-oam`;
 > override `UI_SRC` / `OAM_SRC` in `.env` if your layout differs.
