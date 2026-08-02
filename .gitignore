@@ -24,9 +24,6 @@ coverage.html
 .vscode/
 .idea/
 
-# Internal-only documentation (design specs, migration/audit notes — not part of the public release)
-docs/internal/
-
 # AI-assistant tooling artifacts (must never be published)
 CLAUDE.md
 **/CLAUDE.md
