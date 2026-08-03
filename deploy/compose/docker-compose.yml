@@ -76,7 +76,11 @@ services:
   # Caddy serves. Runs to completion on every `up`, then exits.
   ui-assets:
     image: ${UI_IMAGE:-ghcr.io/loxilb-io/loxilb-ui}:${UI_TAG:-latest}
-    command: ["sh", "-c", "rm -rf /srv/* && cp -a /usr/share/nginx/html/. /srv/ && echo 'loxilb-ui SPA published to /srv'"]
+    # The loxilb-ui image ships a custom ENTRYPOINT (nginx config templating +
+    # self-signed cert + `nginx -t`) meant for standalone serving. We only want
+    # the built SPA, so bypass that entrypoint and just copy assets out.
+    entrypoint: ["sh", "-c"]
+    command: ["rm -rf /srv/* && cp -a /usr/share/nginx/html/. /srv/ && echo 'loxilb-ui SPA published to /srv'"]
     volumes:
       - ui_build:/srv
     networks: [ backend ]
