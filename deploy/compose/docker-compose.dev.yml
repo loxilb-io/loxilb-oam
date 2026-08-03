@@ -4,7 +4,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 #
 # Assumes the standard sibling checkout layout under go/src:
-#   oam-loxilb/  (this repo — OAM build context = ../..)
+#   loxilb-oam/  (this repo — OAM build context = ../..)
 #   loxilb-ui/   (SPA build context      = ../../../loxilb-ui)
 # Override OAM_SRC / UI_SRC in .env if your layout differs.
 services:

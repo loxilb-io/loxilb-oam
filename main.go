@@ -150,10 +150,13 @@ func main() {
 	}
 	handler := handlers.NewHandler(userService, loxiLBService, logService, alertService, proxyService, snapshotService, config.TokenExpirationMinutes)
 
-	// Check for first-time setup and create the bootstrap admin if needed
+	// First-time setup: create the bootstrap admin if needed. A fresh
+	// installation without an admin account is unusable (every login fails),
+	// so abort startup instead of running in that state — most commonly hit
+	// when OAM_DEFAULT_ADMIN_PASSWORD does not meet the password policy.
 	if err := setupInitialAdminIfNeeded(userService); err != nil {
-		utils.LogError(fmt.Sprintf("Failed to setup initial admin: %s", err))
-		// Continue anyway - don't fail startup for this
+		utils.LogError(fmt.Sprintf("SECURITY: failed to set up the initial admin account: %s. Fix the configuration (typically OAM_DEFAULT_ADMIN_PASSWORD — it must meet the account password policy) and restart.", err))
+		os.Exit(1)
 	}
 
 	// Start polling in a separate goroutine

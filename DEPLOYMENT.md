@@ -2,6 +2,11 @@
 
 This guide covers deploying OAM-LoxiLB with Docker Compose and Kubernetes.
 
+> **Deploying the full management plane (UI + API + DB)?** Use the
+> single-node Compose bundle instead — step-by-step operator guide:
+> [docs/deployment-compose.md](docs/deployment-compose.md). This document
+> remains the configuration reference for the OAM service itself.
+
 ## Table of Contents
 
 1. [Configuration Reference](#configuration-reference)
