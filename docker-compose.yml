@@ -14,7 +14,7 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
       MYSQL_DATABASE: loxioam
-      MYSQL_USER: ${MYSQL_USER:-oamuser}
+      MYSQL_USER: ${DB_USER:-oamuser}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env}
     ports:
       - "3306:3306"
@@ -43,7 +43,7 @@ services:
       OAM_JWT_SECRET: ${OAM_JWT_SECRET:?set in .env}
       OAM_DEFAULT_ADMIN_PASSWORD: ${OAM_DEFAULT_ADMIN_PASSWORD:?set in .env}
       # Database connection.
-      DB_USER: ${MYSQL_USER:-oamuser}
+      DB_USER: ${DB_USER:-oamuser}
       DB_PASSWORD: ${DB_PASSWORD:?set in .env}
       DB_HOST: mysql
       DB_PORT: 3306
