@@ -13,9 +13,11 @@ services:
     container_name: oam-loxilb-mysql
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
-      MYSQL_DATABASE: loxioam
+      MYSQL_DATABASE: ${DB_NAME:-loxioam}
       MYSQL_USER: ${DB_USER:-oamuser}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in .env}
+      # Single-sourced from DB_PASSWORD (same key the bundle uses) — provisions
+      # the oamuser account and is what OAM connects with. No separate MYSQL_PASSWORD.
+      MYSQL_PASSWORD: ${DB_PASSWORD:?set in .env}
     ports:
       - "3306:3306"
     volumes:
@@ -45,9 +47,9 @@ services:
       # Database connection.
       DB_USER: ${DB_USER:-oamuser}
       DB_PASSWORD: ${DB_PASSWORD:?set in .env}
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_NAME: loxioam
+      DB_HOST: ${DB_HOST:-mysql}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-loxioam}
       SERVER_PORT: 8080
       TOKEN_EXPIRATION: ${TOKEN_EXPIRATION:-480}
       # Snapshot at-rest encryption: base64-encoded 32-byte AES-256 key
