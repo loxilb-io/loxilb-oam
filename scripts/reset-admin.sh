@@ -1,15 +1,10 @@
-#!/bin/bash
+#!/bin/sh
 
 # Admin Reset Helper Script
-# This script provides a convenient way to reset admin credentials
+# This script provides a convenient way to reset admin credentials.
+# POSIX sh (no bashisms): the OAM runtime image is Alpine, which has no bash.
 
 set -e
-
-# Color codes for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
 
 # DB connection — sourced from the canonical DB_* env family (the same surface
 # the reset_admin binary reads). No credential defaults ship here: DB_PASSWORD
@@ -21,17 +16,17 @@ DB_PORT="${DB_PORT:-3306}"
 DB_NAME="${DB_NAME:-loxioam}"
 SSL_OPTION="${SSL_OPTION:-false}"
 
-# Function to print colored messages
+# Status message helpers (plain output — portable across sh implementations).
 print_info() {
-    echo -e "${GREEN}ℹ️  $1${NC}"
+    echo "ℹ️  $1"
 }
 
 print_warning() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
+    echo "⚠️  $1"
 }
 
 print_error() {
-    echo -e "${RED}❌ $1${NC}"
+    echo "❌ $1"
 }
 
 # Print header
@@ -53,7 +48,7 @@ else
         RESET_ADMIN_CMD="$(dirname "$0")/../reset_admin"
     else
         # Try using go run
-        if command -v go &> /dev/null; then
+        if command -v go >/dev/null 2>&1; then
             RESET_ADMIN_CMD="go run cmd/reset_admin/main.go"
             print_info "Using 'go run' to execute reset tool"
         else
@@ -80,8 +75,9 @@ if [ -z "$CONFIRM_FLAG" ]; then
     echo ""
     print_warning "All existing admin sessions will be invalidated!"
     echo ""
-    read -p "Are you sure you want to continue? (yes/no): " confirmation
-    
+    printf "Are you sure you want to continue? (yes/no): "
+    read -r confirmation
+
     if [ "$confirmation" != "yes" ]; then
         print_info "Reset cancelled"
         exit 0
@@ -120,7 +116,7 @@ fi
 # Execute the reset command
 print_info "Executing reset..."
 echo ""
-eval $CMD
+eval "$CMD"
 
 echo ""
 print_info "Reset completed successfully!"
