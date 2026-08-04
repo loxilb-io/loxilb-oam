@@ -160,6 +160,12 @@ jobs:
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          # Auth forces syft's `registry:` source so it pulls the pushed digest
+          # straight from GHCR over HTTPS. Without it syft auto-detects and falls
+          # through docker daemon -> containerd (socket is non-root-inaccessible
+          # on GHA runners), which hard-fails the scan.
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
           format: spdx-json
           output-file: sbom.spdx.json
 
