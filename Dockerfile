@@ -35,5 +35,19 @@ RUN mkdir -p /var/log/oam /var/log && \
 # Expose ports (HTTP and HTTPS)
 EXPOSE 8080 443
 
+# Image version (set by `make docker-build`, defaults to the :latest tag).
+# Declared here — after the build steps — so changing the version only rebuilds
+# the label layer, not the whole image.
+ARG VERSION=latest
+
+# OCI labels: link the published GHCR package back to its source repo (so it
+# inherits the repo's visibility for public releases) and record its metadata.
+LABEL org.opencontainers.image.title="loxilb-oam" \
+      org.opencontainers.image.description="LoxiLB OAM — Operations, Administration & Maintenance service" \
+      org.opencontainers.image.source="https://github.com/loxilb-io/loxilb-oam" \
+      org.opencontainers.image.url="https://github.com/loxilb-io/loxilb-oam" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}"
+
 # Command to run the executable
 CMD ["sh", "-c", "./loxilb-oam -db-user=${DB_USER:-oamuser} -db-password=${DB_PASSWORD:?DB_PASSWORD must be set} -db-host=${DB_HOST:-127.0.0.1} -db-port=${DB_PORT:-3306} -db-name=${DB_NAME:-loxioam} -token-expiration=${TOKEN_EXPIRATION:-} -port=${SERVER_PORT:-8080}"]

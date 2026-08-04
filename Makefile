@@ -36,8 +36,17 @@ AWS_DB_NAME=loxilb_db
 AWS_TOKEN_EXPIRATION=1440
 AWS_SERVER_PORT=8080
 
-# Docker parameters
-DOCKER_IMAGE_NAME=loxilb-oam
+# ── Container image (public releases go to GHCR) ─────────────────────────────
+# The published image is $(IMAGE):$(TAG) == $(REGISTRY)/$(IMAGE_NAME):$(TAG).
+# Override any part on the command line, e.g.
+#   make docker-build TAG=v1.4.0
+#   make docker-build IMAGE_NAME=myorg/loxilb-oam REGISTRY=docker.io
+#   make docker-build docker-push TAG=v1.4.0
+REGISTRY   ?= ghcr.io
+IMAGE_NAME ?= loxilb-io/loxilb-oam
+TAG        ?= latest
+IMAGE      ?= $(REGISTRY)/$(IMAGE_NAME)
+DOCKER_IMAGE ?= $(IMAGE):$(TAG)
 
 # All target
 all: test build
@@ -84,9 +93,14 @@ deps:
 	$(GOGET) -u github.com/DATA-DOG/go-sqlmock
 	$(GOGET) -u github.com/golang-jwt/jwt/v5
 
-# Build Docker image
+# Build the public container image: $(IMAGE):$(TAG)
 docker-build:
-	docker build -t $(DOCKER_IMAGE_NAME) .
+	docker build --build-arg VERSION=$(TAG) -t $(IMAGE):$(TAG) .
+
+# Push the public image. Requires a prior `docker login $(REGISTRY)`
+# (for GHCR: a token with write:packages).
+docker-push:
+	docker push $(IMAGE):$(TAG)
 
 # Run Docker container
 docker-run:
@@ -100,8 +114,8 @@ docker-run:
 		-e SERVER_PORT=$(SERVER_PORT) \
 		-e GOOGLE_REDIRECT_URL=$(GOOGLE_REDIRECT_URL) \
 		-e GITHUB_REDIRECT_URL=$(GITHUB_REDIRECT_URL) \
-		-e FACEBOOK_REDIRECT_URL=$(FACEBOOK_REDIRECT_URL)
-		$(DOCKER_IMAGE_NAME)
+		-e FACEBOOK_REDIRECT_URL=$(FACEBOOK_REDIRECT_URL) \
+		$(DOCKER_IMAGE)
 
 # Deployment targets
 deploy-docker-compose:
@@ -194,4 +208,4 @@ uninstall-all:
 	@make uninstall-docker-compose
 	@make uninstall-k8s
 
-.PHONY: all build clean run test build-linux deps docker-build docker-run deploy-docker-compose deploy-k8s-dev deploy-k8s-prod deploy-k8s-dev-https deploy-k8s-prod-https docker-compose-up docker-compose-down docker-compose-logs generate-ssl-certs generate-simple-ssl-certs update-k8s-ssl-secret fix-line-endings fix-database-init fix-database-init-safe fix-all build-image build-image-dev uninstall-docker-compose uninstall-k8s uninstall-all
+.PHONY: all build clean run test build-linux deps docker-build docker-push docker-run deploy-docker-compose deploy-k8s-dev deploy-k8s-prod deploy-k8s-dev-https deploy-k8s-prod-https docker-compose-up docker-compose-down docker-compose-logs generate-ssl-certs generate-simple-ssl-certs update-k8s-ssl-secret fix-line-endings fix-database-init fix-database-init-safe fix-all build-image build-image-dev uninstall-docker-compose uninstall-k8s uninstall-all
