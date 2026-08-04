@@ -99,8 +99,8 @@ Generate strong secrets with, e.g., `openssl rand -base64 48` (keys) and
 Multiple deployment paths are provided; see [DEPLOYMENT.md](DEPLOYMENT.md) for details.
 
 - **Docker Compose** — `docker compose up -d` runs the default HTTP stack
-  (MySQL + service). For TLS, add the override:
-  `docker compose -f docker-compose.yml -f docker-compose.https.yml up -d`.
+  (MySQL + service). For an HTTPS deployment with the UI behind a TLS edge, use
+  the management-plane bundle in [`deploy/compose/`](deploy/compose/).
 - **Kubernetes (Kustomize)** — `k8s/base`, `k8s/base-http`, and
   `k8s/overlays/{development,production}`. Populate the `CHANGE_ME` placeholders
   in the Secret manifests out-of-band (never commit real secrets).

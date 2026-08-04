@@ -69,15 +69,15 @@ to start** if the required secrets below are unset.
 
 ### Compose files
 
-Two files describe the whole stack:
-
 - **`docker-compose.yml`** — the default stack: MySQL + the OAM service over
   HTTP. It wires all required secrets from the environment (`.env`).
-- **`docker-compose.https.yml`** — a small override that serves the API over TLS
-  on `:443`; use it together with the base file.
+
+For an HTTPS deployment that also serves the UI behind a TLS edge, use the
+management-plane bundle in [`deploy/compose/`](deploy/compose/) (Caddy
+terminates TLS; see its README).
 
 Provide the required secrets (`OAM_JWT_SECRET`, `OAM_DEFAULT_ADMIN_PASSWORD`,
-`DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD`) and the recommended
+`DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`) and the recommended
 `SNAPSHOT_ENC_KEY` via a `.env` file (see `.env.example`) or your secret manager.
 The Kubernetes **production** overlay (`k8s/overlays/production/`) wires these
 from Kubernetes Secrets.
@@ -131,15 +131,14 @@ make generate-ssl-certs
 
 Use certificates from a trusted Certificate Authority (e.g. Let's Encrypt).
 
-### HTTPS Docker Compose Deployment
+### HTTPS on Docker
 
-```bash
-# HTTPS with automatic dev-certificate generation
-make deploy-docker-compose-https
-
-# Or manually — the base file plus the HTTPS override
-docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
-```
+The default `docker-compose.yml` serves plain HTTP. For an HTTPS deployment,
+use the management-plane bundle in [`deploy/compose/`](deploy/compose/), where a
+Caddy edge terminates TLS in front of the OAM API and the UI (see its README and
+`.env.example` for the `SITE_ADDRESS` / `EDGE_TLS` knobs). The `make generate-ssl-certs`
+certificates above are for the bare binary (`make run-https`) and the Kubernetes
+HTTPS track.
 
 ### Trust self-signed certificates (development)
 

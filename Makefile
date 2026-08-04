@@ -114,11 +114,6 @@ deploy-k8s:
 	@chmod +x scripts/deployment/deploy-kubernetes.sh
 	@scripts/deployment/deploy-kubernetes.sh -e development
 
-deploy-docker-compose-https:
-	@echo "Deploying with Docker Compose (HTTPS)..."
-	@chmod +x scripts/deployment/deploy-docker-compose-https.sh
-	@scripts/deployment/deploy-docker-compose-https.sh
-
 deploy-k8s-https:
 	@echo "Deploying to Kubernetes  with HTTPS..."
 	@chmod +x scripts/k8s-generate-simple-ssl-certs.sh
@@ -130,8 +125,6 @@ deploy-k8s-https:
 	@scripts/deployment/deploy-kubernetes.sh -e development --https 
 
 # Docker Compose management
-HTTPS_COMPOSE = -f docker-compose.yml -f docker-compose.https.yml
-
 docker-compose-up:
 	docker compose up -d
 
@@ -140,19 +133,6 @@ docker-compose-down:
 
 docker-compose-logs:
 	docker compose logs -f
-
-docker-compose-https-up:
-	docker compose $(HTTPS_COMPOSE) up -d
-
-docker-compose-https-down:
-	docker compose $(HTTPS_COMPOSE) down
-
-docker-compose-https-logs:
-	docker compose $(HTTPS_COMPOSE) logs -f
-
-docker-compose-https-clean:
-	docker compose $(HTTPS_COMPOSE) down -v
-	docker compose $(HTTPS_COMPOSE) up -d
 
 # SSL certificate management
 generate-ssl-certs:
@@ -214,4 +194,4 @@ uninstall-all:
 	@make uninstall-docker-compose
 	@make uninstall-k8s
 
-.PHONY: all build clean run test build-linux deps docker-build docker-run deploy-docker-compose deploy-k8s-dev deploy-k8s-prod deploy-docker-compose-https deploy-k8s-dev-https deploy-k8s-prod-https docker-compose-up docker-compose-down docker-compose-logs docker-compose-https-up docker-compose-https-down docker-compose-https-logs generate-ssl-certs generate-simple-ssl-certs update-k8s-ssl-secret fix-line-endings fix-database-init fix-database-init-safe fix-all build-image build-image-dev uninstall-docker-compose uninstall-k8s uninstall-all
+.PHONY: all build clean run test build-linux deps docker-build docker-run deploy-docker-compose deploy-k8s-dev deploy-k8s-prod deploy-k8s-dev-https deploy-k8s-prod-https docker-compose-up docker-compose-down docker-compose-logs generate-ssl-certs generate-simple-ssl-certs update-k8s-ssl-secret fix-line-endings fix-database-init fix-database-init-safe fix-all build-image build-image-dev uninstall-docker-compose uninstall-k8s uninstall-all

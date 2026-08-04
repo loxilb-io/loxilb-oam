@@ -24,8 +24,8 @@ print_header() {
 
 print_header "OAM-LoxiLB Docker Compose Uninstallation"
 
-print_status "Stopping and removing the deployment (HTTP and HTTPS)..."
-if docker compose -f docker-compose.yml -f docker-compose.https.yml down -v 2>/dev/null; then
+print_status "Stopping and removing the deployment..."
+if docker compose down -v 2>/dev/null; then
     print_status "Deployment stopped and removed"
 else
     print_warning "No deployment found or already stopped"
