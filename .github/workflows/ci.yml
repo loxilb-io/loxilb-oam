@@ -110,7 +110,7 @@ jobs:
         env:
           OAM_JWT_SECRET: ci-integration-jwt-secret
           OAM_DEFAULT_ADMIN_PASSWORD: ChangeMe-Admin1!
-          OAM_DB_PASSWORD: oampass
+          DB_PASSWORD: oampass
         run: |
           ./oam-server -db-host 127.0.0.1 -db-port 3306 -db-user oamuser \
             -db-name loxioam -port 8080 > server.log 2>&1 &

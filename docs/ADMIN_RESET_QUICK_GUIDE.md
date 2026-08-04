@@ -16,12 +16,15 @@ authenticated `POST /oam/setup/update-admin` flow shown below.
 
 ### 1. Docker Compose Deployment
 
+The bundled stack sets the `DB_*` connection vars in the container, so the reset
+runs with no extra flags (container name: `oam-loxilb-app`):
+
 ```bash
 # Option A: Using the helper script (inside the container)
-docker exec -it oam-loxilb sh -c "./scripts/reset-admin.sh --confirm"
+docker exec -it oam-loxilb-app sh -c "./scripts/reset-admin.sh --confirm"
 
 # Option B: Using the binary directly
-docker exec -it oam-loxilb ./reset_admin --confirm
+docker exec -it oam-loxilb-app ./reset_admin --confirm
 ```
 
 ### 2. Kubernetes Deployment
@@ -166,7 +169,7 @@ After a reset, verify the operation:
 
 ```bash
 # 1. Check logs
-docker logs oam-loxilb | grep "Admin reset"
+docker logs oam-loxilb-app | grep "Admin reset"
 
 # Or in Kubernetes
 kubectl logs -n oam-loxilb $POD_NAME | grep "Admin reset"
@@ -202,7 +205,7 @@ docker ps | grep mysql
 kubectl get pods -n oam-loxilb | grep mysql
 
 # Check database connectivity
-docker exec -it mysql-container mysql -u oamuser -p -e "SELECT 1"
+docker exec -it oam-loxilb-mysql mysql -u oamuser -p -e "SELECT 1"
 ```
 
 ### Binary not found in Docker

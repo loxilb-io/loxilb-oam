@@ -24,11 +24,21 @@ The account is flagged as "must change on next login".
 
 ## Usage
 
-Required secrets are read from the environment; the tool exits if they are unset.
+The tool defaults its `-db-*` flags from the same `DB_*` environment surface as
+the server. Inside a bundled Compose or Kubernetes deployment those vars
+(`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_PORT`, `DB_NAME`) are already set, so no
+extra flags are needed:
+
+```bash
+# Docker Compose (container name: oam-loxilb-app)
+docker exec -it oam-loxilb-app ./reset_admin --confirm
+```
+
+Running it standalone, supply the DB connection via env or flags:
 
 ```bash
 export OAM_DEFAULT_ADMIN_PASSWORD='<bootstrap-admin-password>'
-export OAM_DB_PASSWORD='<database-password>'
+export DB_PASSWORD='<database-password>'   # legacy alias: OAM_DB_PASSWORD
 
 go run ./cmd/reset_admin --confirm
 ```
@@ -44,7 +54,9 @@ go run ./cmd/reset_admin \
   --confirm
 ```
 
-The database password comes from `OAM_DB_PASSWORD` (or the `--db-password` flag).
+Each `-db-*` flag defaults from the matching `DB_*` env var; the password comes
+from `DB_PASSWORD` (legacy alias `OAM_DB_PASSWORD`) or `--db-password`. An
+explicit flag always wins.
 
 ### With TLS
 
@@ -69,11 +81,11 @@ go build -o reset_admin ./cmd/reset_admin
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--confirm` | **Required.** Confirm the reset operation | `false` |
-| `--db-user` | Database username | `oamuser` |
-| `--db-password` | Database password (or set `OAM_DB_PASSWORD`) | *(none)* |
-| `--db-host` | Database host | `127.0.0.1` |
-| `--db-port` | Database port | `3306` |
-| `--db-name` | Database name | `loxioam` |
+| `--db-user` | Database username | `DB_USER` env, else `oamuser` |
+| `--db-password` | Database password (legacy alias `OAM_DB_PASSWORD`) | `DB_PASSWORD` env |
+| `--db-host` | Database host | `DB_HOST` env, else `127.0.0.1` |
+| `--db-port` | Database port | `DB_PORT` env, else `3306` |
+| `--db-name` | Database name | `DB_NAME` env, else `loxioam` |
 | `--ssl-option` | Enable a TLS connection (`true`/`false`) | `false` |
 | `--ssl-ca-cert-file` | CA certificate path | `./ssl/certs/root-ca.pem` |
 | `--ssl-ca-client-cert-file` | Client certificate path | `./ssl/certs/client-cert.pem` |
@@ -115,7 +127,7 @@ curl -X POST http://localhost:8080/oam/setup/update-admin \
 ## Troubleshooting
 
 - **Database connection failed** — verify the database is running and the
-  connection parameters (host, port, user, `OAM_DB_PASSWORD`) are correct.
+  connection parameters (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`) are correct.
 - **Failed to reset admin account** — check that the database user has `UPDATE`
   privileges on the `users` table.
 - **Missing `--confirm`** — intentional; add `--confirm` to proceed.
