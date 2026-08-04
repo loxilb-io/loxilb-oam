@@ -29,7 +29,7 @@ to start** if the required secrets below are unset.
 |-----------------------------|-------------|
 | `OAM_JWT_SECRET`            | JWT signing key. |
 | `OAM_DEFAULT_ADMIN_PASSWORD`| Bootstrap admin password. |
-| `OAM_DB_PASSWORD`           | Database password. May instead be passed with the `-db-password` flag. |
+| `DB_PASSWORD`               | Database password. May instead be passed with the `-db-password` flag. Legacy alias: `OAM_DB_PASSWORD`. |
 
 ### Strongly recommended
 
@@ -50,7 +50,7 @@ to start** if the required secrets below are unset.
 | Flag                 | Description | Default |
 |----------------------|-------------|---------|
 | `-db-user`           | Database username | `oamuser` |
-| `-db-password`       | Database password (or `OAM_DB_PASSWORD`) | — |
+| `-db-password`       | Database password (default: `DB_PASSWORD` env; legacy alias `OAM_DB_PASSWORD`) | — |
 | `-db-host`           | Database host | `127.0.0.1` |
 | `-db-port`           | Database port | `3306` |
 | `-db-name`           | Database name | `loxioam` |
@@ -62,6 +62,12 @@ to start** if the required secrets below are unset.
 | `-ssl-option`        | Enable SSL for the database connection | `false` |
 | `-ssl-ca-cert-file`, `-ssl-ca-client-cert-file`, `-ssl-ca-client-key-file` | Database TLS certificate paths | see `main.go` |
 | `-google-redirect-url`, `-github-redirect-url`, `-facebook-redirect-url` | OAuth callback URLs (per deployment) | — |
+
+Each `-db-*` flag defaults from the matching `DB_*` environment variable
+(`DB_USER`/`DB_PASSWORD`/`DB_HOST`/`DB_PORT`/`DB_NAME`); an explicit flag wins.
+The bundled Compose and Kubernetes manifests set these as env and pass them on
+as `-db-*` flags, so the `reset_admin` tool — which reads the same `DB_*`
+surface — needs no extra flags inside those deployments.
 
 > **Note:** OAuth redirect URLs are CLI flags, not environment variables. Only
 > the OAuth **client credentials** (`OAM_OAUTH_*`) are read from the
@@ -266,7 +272,7 @@ kubectl get pods -n oam-loxilb
   base64-encoded 32-byte value. Leaving it unset (not recommended) only logs a
   warning.
 - **Database connection failed:** verify MySQL is healthy and the `-db-*` flags
-  / `OAM_DB_PASSWORD` are correct.
+  / `DB_*` env vars are correct.
   ```bash
   docker compose logs mysql
   kubectl logs -f deployment/mysql -n oam-loxilb

@@ -34,7 +34,7 @@ cd loxilb-oam
 
 # Configure required secrets (the server refuses to start without them)
 cp .env.example .env
-# edit .env and set OAM_JWT_SECRET, OAM_DEFAULT_ADMIN_PASSWORD, OAM_DB_PASSWORD, ...
+# edit .env and set OAM_JWT_SECRET, OAM_DEFAULT_ADMIN_PASSWORD, DB_PASSWORD, ...
 
 # Run with Docker Compose (brings up MySQL + the service)
 docker compose up -d
@@ -47,7 +47,8 @@ from `OAM_DEFAULT_ADMIN_PASSWORD`. **Change it on first login.**
 
 ```bash
 make build                 # produces the loxilb-oam binary
-export OAM_JWT_SECRET=... OAM_DEFAULT_ADMIN_PASSWORD=... OAM_DB_PASSWORD=...
+export OAM_JWT_SECRET=... OAM_DEFAULT_ADMIN_PASSWORD=... DB_PASSWORD=...
+# DB connection defaults from the DB_* env family; flags override it.
 ./loxilb-oam -db-user=oamuser -db-host=127.0.0.1 -db-port=3306 -db-name=loxioam -port=8080
 
 # or
@@ -65,7 +66,7 @@ startup if a required one is unset (there are no built-in fallback values).
 |----------|---------|
 | `OAM_JWT_SECRET` | JWT signing key (use a long random value) |
 | `OAM_DEFAULT_ADMIN_PASSWORD` | Bootstrap admin password (set on first run) |
-| `OAM_DB_PASSWORD` | Database password (or pass `-db-password`) |
+| `DB_PASSWORD` | Database password (or pass `-db-password`; legacy alias `OAM_DB_PASSWORD`) |
 
 ### Recommended
 
@@ -90,6 +91,10 @@ startup if a required one is unset (there are no built-in fallback values).
 `-db-port` (`3306`), `-db-name` (`loxioam`), `-port` (`8080`),
 `-token-expiration`, `-enable-https`, `-ssl-cert-file`, `-ssl-key-file`,
 `-ssl-option` and the associated CA/client-cert flags.
+
+The `-db-*` flags each default from the matching `DB_*` environment variable
+(`DB_USER`/`DB_PASSWORD`/`DB_HOST`/`DB_PORT`/`DB_NAME`); an explicit flag wins.
+The same surface is read by the `reset_admin` tool.
 
 Generate strong secrets with, e.g., `openssl rand -base64 48` (keys) and
 `openssl rand -base64 32` (`SNAPSHOT_ENC_KEY`).

@@ -1,11 +1,12 @@
 #!/bin/bash
 
-# Database credentials
-DB_USER="netlox"
-DB_PASSWORD="r00tr00t"
-DB_HOST="127.0.0.1"
-DB_PORT="3306"
-DB_NAME="loxioam"
+# Database credentials — from the canonical DB_* env family. No password ships
+# in source: DB_PASSWORD must be set in the environment.
+DB_USER="${DB_USER:-oamuser}"
+DB_PASSWORD="${DB_PASSWORD:?set DB_PASSWORD in the environment}"
+DB_HOST="${DB_HOST:-127.0.0.1}"
+DB_PORT="${DB_PORT:-3306}"
+DB_NAME="${DB_NAME:-loxioam}"
 
 # SQL commands to create the database and tables
 SQL_COMMANDS="

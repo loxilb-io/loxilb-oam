@@ -52,12 +52,14 @@ func requireSecrets() {
 }
 
 func main() {
-	// Define command-line flags for the database connection details
-	dbUser := flag.String("db-user", "oamuser", "Database username")
-	dbPassword := flag.String("db-password", "", "Database password (or set OAM_DB_PASSWORD)")
-	dbHost := flag.String("db-host", "127.0.0.1", "Database host")
-	dbPort := flag.String("db-port", "3306", "Database port")
-	dbName := flag.String("db-name", "loxioam", "Database name")
+	// Define command-line flags for the database connection details. Each flag
+	// defaults from the canonical DB_* environment family (an explicit flag
+	// still wins); OAM_DB_PASSWORD is accepted as a legacy alias for DB_PASSWORD.
+	dbUser := flag.String("db-user", config.EnvOr("oamuser", "DB_USER"), "Database username (default: DB_USER env)")
+	dbPassword := flag.String("db-password", config.EnvOr("", "DB_PASSWORD", "OAM_DB_PASSWORD"), "Database password (default: DB_PASSWORD env)")
+	dbHost := flag.String("db-host", config.EnvOr("127.0.0.1", "DB_HOST"), "Database host (default: DB_HOST env)")
+	dbPort := flag.String("db-port", config.EnvOr("3306", "DB_PORT"), "Database port (default: DB_PORT env)")
+	dbName := flag.String("db-name", config.EnvOr("loxioam", "DB_NAME"), "Database name (default: DB_NAME env)")
 	googleRedirectURL := flag.String("google-redirect-url", "", "Google OAuth Redirect URL")
 	githubRedirectURL := flag.String("github-redirect-url", "", "GitHub OAuth Redirect URL")
 	facebookRedirectURL := flag.String("facebook-redirect-url", "", "Facebook OAuth Redirect URL")
@@ -83,13 +85,11 @@ func main() {
 	// Abort startup if any mandatory secret is unset.
 	requireSecrets()
 
-	// The database password has no built-in default: require it via flag or env.
+	// The database password has no built-in default: require it via the
+	// -db-password flag or the DB_PASSWORD env var (OAM_DB_PASSWORD alias).
 	dbPass := *dbPassword
 	if dbPass == "" {
-		dbPass = os.Getenv("OAM_DB_PASSWORD")
-	}
-	if dbPass == "" {
-		utils.LogError("SECURITY: no database password provided. Set OAM_DB_PASSWORD or pass -db-password.")
+		utils.LogError("SECURITY: no database password provided. Set DB_PASSWORD or pass -db-password.")
 		os.Exit(1)
 	}
 

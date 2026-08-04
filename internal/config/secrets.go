@@ -28,6 +28,22 @@ func parseAllowedOrigins(v string) []string {
 // CORSUsingWildcard reports whether no origin allowlist is configured.
 func CORSUsingWildcard() bool { return len(AllowedOrigins) == 0 }
 
+// EnvOr returns the value of the first non-empty environment variable among
+// keys, or def if none is set. It is used to default the -db-* connection flags
+// from the canonical DB_* environment family (DB_USER/DB_PASSWORD/DB_HOST/
+// DB_PORT/DB_NAME) that every bundled deployment sets, so the server and the
+// reset_admin tool read an identical surface. An explicit flag still overrides
+// the environment. OAM_DB_PASSWORD is accepted as a legacy alias for
+// DB_PASSWORD.
+func EnvOr(def string, keys ...string) string {
+	for _, k := range keys {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+	}
+	return def
+}
+
 func getenvIntDefault(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

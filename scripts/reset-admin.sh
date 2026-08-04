@@ -11,9 +11,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Default values
-DB_USER="${DB_USER:-netlox}"
-DB_PASSWORD="${DB_PASSWORD:-r00tr00t}"
+# DB connection — sourced from the canonical DB_* env family (the same surface
+# the reset_admin binary reads). No credential defaults ship here: DB_PASSWORD
+# must come from the environment (the binary aborts if it is unset).
+DB_USER="${DB_USER:-oamuser}"
+DB_PASSWORD="${DB_PASSWORD:-}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-3306}"
 DB_NAME="${DB_NAME:-loxioam}"
@@ -71,9 +73,9 @@ done
 
 # If no confirmation flag, show warning and prompt
 if [ -z "$CONFIRM_FLAG" ]; then
-    print_warning "This will reset the admin account to default credentials:"
+    print_warning "This will reset the admin account to its bootstrap credentials:"
     echo "  Username: admin"
-    echo "  Password: AdminNetlox132!"
+    echo "  Password: (the value of OAM_DEFAULT_ADMIN_PASSWORD)"
     echo "  Email: admin@oam-loxilb.local"
     echo ""
     print_warning "All existing admin sessions will be invalidated!"
@@ -87,15 +89,20 @@ if [ -z "$CONFIRM_FLAG" ]; then
     CONFIRM_FLAG="--confirm"
 fi
 
-# Build command with database connection parameters
+# Build command with database connection parameters. Omit --db-password when it
+# is not set in the environment so the binary can read DB_PASSWORD (or its legacy
+# OAM_DB_PASSWORD alias) itself and abort with a clear error if neither is set.
 CMD="$RESET_ADMIN_CMD \
     --db-user=$DB_USER \
-    --db-password=$DB_PASSWORD \
     --db-host=$DB_HOST \
     --db-port=$DB_PORT \
     --db-name=$DB_NAME \
     --ssl-option=$SSL_OPTION \
     $CONFIRM_FLAG"
+
+if [ -n "$DB_PASSWORD" ]; then
+    CMD="$CMD --db-password=$DB_PASSWORD"
+fi
 
 # Add SSL parameters if SSL is enabled
 if [ "$SSL_OPTION" = "true" ]; then
