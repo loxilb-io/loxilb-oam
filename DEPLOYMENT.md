@@ -95,6 +95,10 @@ The repository ships two distinct Compose deployments — do not mix them:
 | `docker-compose.yml` (repository root) | MySQL + the OAM API over plain **HTTP**, built from local source | development, and API-only deployments |
 | [`deploy/compose/`](deploy/compose/) | the full management plane — UI + API + MySQL behind a **Caddy TLS edge** | **production** ([guide](docs/deployment-compose.md)) |
 
+Running the published image directly — `docker run`, image tags, signature and
+SBOM verification, building your own image, air-gapped installs — is covered in
+[docs/container-image.md](docs/container-image.md).
+
 Each has its own `.env.example`; the key names are shared, so a `.env` written
 for one is largely portable to the other. Provide the required secrets
 (`OAM_JWT_SECRET`, `OAM_DEFAULT_ADMIN_PASSWORD`, `DB_PASSWORD`,
@@ -184,7 +188,7 @@ sudo update-ca-certificates
 > `OAM_DEFAULT_ADMIN_PASSWORD`, both of which are mandatory (see
 > [Required environment variables](#required-environment-variables)) — the
 > container aborts at startup and the Pod enters `CrashLoopBackOff`. The
-> production overlay also pins an image tag (`oam-loxilb:v1.0.0`) that is not
+> production overlay also pins an image tag (`oam-loxilb:v0.9.8.7`) that is not
 > published.
 >
 > They are retained as the starting point for a converged Kubernetes deployment

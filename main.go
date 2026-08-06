@@ -1,5 +1,12 @@
 package main
 
+// @title LoxiLB OAM API
+// @description Operations, Administration and Management API for LoxiLB instances —
+// @description authentication, RBAC, user and instance management, configuration
+// @description snapshots, and a management proxy.
+// @license.name Apache 2.0
+// @license.url https://www.apache.org/licenses/LICENSE-2.0.html
+// (No @BasePath: the generated path keys already carry the /oam prefix.)
 // @securityDefinitions.apikey BearerAuth
 // @in header
 // @name Authorization
@@ -10,6 +17,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	swaggerdocs "github.com/loxilb-io/loxilb-oam/docs"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
 	"github.com/loxilb-io/loxilb-oam/internal/handlers"
 	"github.com/loxilb-io/loxilb-oam/internal/routes"
@@ -27,6 +35,17 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
 )
+
+// version is the release identifier, stamped at link time by the build:
+//
+//	go build -ldflags "-X main.version=v0.9.8.7"
+//
+// It follows loxilb-io/loxilb's vMAJOR.MINOR.PATCH.BUILD scheme, in lockstep
+// with the loxilb release this build targets. `make build` stamps the Makefile's
+// VERSION, the Dockerfile stamps its VERSION build-arg, and the release workflow
+// stamps the git tag. A plain `go build` leaves it as "dev", which is the honest
+// answer for an untagged local build.
+var version = "dev"
 
 // requireSecrets aborts startup when a mandatory secret is unset. There are no
 // built-in fallbacks, so a misconfigured deployment fails fast instead of
@@ -77,7 +96,23 @@ func main() {
 	sslCertFile := flag.String("ssl-cert-file", "./ssl/certs/server.crt", "Path to SSL certificate")
 	sslKeyFile := flag.String("ssl-key-file", "./ssl/certs/server.key", "Path to SSL private key")
 
+	showVersion := flag.Bool("version", false, "Print the version and exit")
+
 	flag.Parse()
+
+	// Answer -version before anything else: it must work without a database,
+	// secrets, or any other configuration.
+	if *showVersion {
+		fmt.Println("loxilb-oam " + version)
+		return
+	}
+
+	// Serve the running version in the OpenAPI spec rather than baking it into
+	// the generated docs — that keeps `swag init` output stable across releases
+	// (the Swagger drift CI gate diffs it) while the UI still shows the truth.
+	swaggerdocs.SwaggerInfo.Version = version
+
+	utils.LogInfo("Starting loxilb-oam " + version)
 
 	// Abort startup if any mandatory secret is unset.
 	requireSecrets()

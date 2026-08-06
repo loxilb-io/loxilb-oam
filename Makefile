@@ -36,24 +36,35 @@ AWS_DB_NAME=loxilb_db
 AWS_TOKEN_EXPIRATION=1440
 AWS_SERVER_PORT=8080
 
+# ── Version ──────────────────────────────────────────────────────────────────
+# loxilb-oam versions in lockstep with loxilb-io/loxilb and uses the same
+# vMAJOR.MINOR.PATCH.BUILD scheme: loxilb-oam vX ships against loxilb vX.
+# This is the single source of truth for a local build — it is stamped into the
+# binary (main.version), the OpenAPI spec, and the image's OCI version label.
+# A release build takes the version from the git tag instead (release.yml).
+#   make build VERSION=v0.9.8.8
+VERSION ?= v0.9.8.7
+LDFLAGS  = -X main.version=$(VERSION)
+
 # ── Container image (public releases go to GHCR) ─────────────────────────────
-# The published image is $(IMAGE):$(TAG) == $(REGISTRY)/$(IMAGE_NAME):$(TAG).
-# Override any part on the command line, e.g.
-#   make docker-build TAG=v1.4.0
+# The published image is $(IMAGE):$(TAG) == $(REGISTRY)/$(IMAGE_NAME):$(TAG),
+# and TAG defaults to the version above. Override any part on the command line:
+#   make docker-build VERSION=v0.9.8.8
 #   make docker-build IMAGE_NAME=myorg/loxilb-oam REGISTRY=docker.io
-#   make docker-build docker-push TAG=v1.4.0
+#   make docker-build docker-push TAG=latest
 REGISTRY   ?= ghcr.io
 IMAGE_NAME ?= loxilb-io/loxilb-oam
-TAG        ?= latest
+TAG        ?= $(VERSION)
 IMAGE      ?= $(REGISTRY)/$(IMAGE_NAME)
 DOCKER_IMAGE ?= $(IMAGE):$(TAG)
 
 # All target
 all: test build
 
-# Build the project
+# Build the project. -ldflags stamps $(VERSION) into main.version; without it
+# the binary honestly reports "dev".
 build:
-	$(GOBUILD) -o $(BINARY_NAME) -v
+	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) -v
 
 # Run the unit tests. Mirrors the CI gate: the suites under tests/rest_api and
 # tests/e2e need a live server + database, so they are excluded here and run
@@ -69,33 +80,34 @@ clean:
 
 # Run the application
 run:
-	$(GOBUILD) -o $(BINARY_NAME) -v
+	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) -v
 	./$(BINARY_NAME) -db-user=$(DB_USER) -db-password=$(DB_PASSWORD) -db-host=$(DB_HOST) -db-port=$(DB_PORT) -db-name=$(DB_NAME) -token-expiration=$(TOKEN_EXPIRATION) -port=$(SERVER_PORT)
 
 run-https:
-	$(GOBUILD) -o $(BINARY_NAME) -v
+	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) -v
 	nohup ./$(BINARY_NAME) -db-user=$(DB_USER) -db-password=$(DB_PASSWORD) -db-host=$(DB_HOST) -db-port=$(DB_PORT) -db-name=$(DB_NAME) -token-expiration=$(TOKEN_EXPIRATION) -port=$(SSL_SERVER_PORT) --enable-https=true --ssl-cert-file=./ssl/server_certs/server.crt --ssl-key-file=./ssl/server_certs/server.key > output.log 2>&1 &
 
 run-ssl:
-	$(GOBUILD) -o $(BINARY_NAME) -v
+	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) -v
 	./$(BINARY_NAME) -db-user=$(SSL_DB_USER) -db-password=$(SSL_DB_PASSWORD) -db-host=$(SSL_DB_HOST) -db-port=$(SSL_DB_PORT) -db-name=$(SSL_DB_NAME) -token-expiration=$(SSL_TOKEN_EXPIRATION) -port=$(SSL_SERVER_PORT) -ssl-option=$(SSL_OPTION)
 
 run-aws:
-	$(GOBUILD) -o $(BINARY_NAME) -v
+	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) -v
 	./$(BINARY_NAME) -db-user=$(AWS_DB_USER) -db-password=$(AWS_DB_PASSWORD) -db-host=$(AWS_DB_HOST) -db-port=$(AWS_DB_PORT) -db-name=$(AWS_DB_NAME) -token-expiration=$(AWS_TOKEN_EXPIRATION) -port=$(AWS_SERVER_PORT)
 
 # Cross compile for Linux
 build-linux:
-	GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(BINARY_UNIX) -v
+	GOOS=linux GOARCH=amd64 $(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_UNIX) -v
 
 # Download the dependencies pinned in go.mod/go.sum. This deliberately does not
 # upgrade anything: use `go get <module>@<version>` for a deliberate bump.
 deps:
 	$(GOCMD) mod download
 
-# Build the public container image: $(IMAGE):$(TAG)
+# Build the public container image: $(IMAGE):$(TAG). VERSION is stamped into
+# the binary and the OCI version label; TAG only names the image.
 docker-build:
-	docker build --build-arg VERSION=$(TAG) -t $(IMAGE):$(TAG) .
+	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(TAG) .
 
 # Push the public image. Requires a prior `docker login $(REGISTRY)`
 # (for GHCR: a token with write:packages).
@@ -148,9 +160,13 @@ update-k8s-ssl-secret:
 # Build the image under the local name the Kubernetes manifests expect.
 # (Public releases are built and pushed with docker-build / docker-push above.)
 build-image:
-	docker build -t oam-loxilb:latest .
+	docker build --build-arg VERSION=$(VERSION) -t oam-loxilb:latest .
+
+# Print the version this tree builds as (scripts and CI can consume it).
+version:
+	@echo $(VERSION)
 
 .PHONY: all build clean run run-https run-ssl run-aws test build-linux deps \
-	docker-build docker-push docker-run build-image \
+	version docker-build docker-push docker-run build-image \
 	docker-compose-up docker-compose-down docker-compose-logs \
 	generate-ssl-certs generate-simple-ssl-certs update-k8s-ssl-secret

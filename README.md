@@ -6,6 +6,12 @@ provides centralized authentication, role-based access control, user management,
 instance lifecycle operations, configuration snapshots, and a management proxy
 for one or more LoxiLB instances, backed by MySQL.
 
+**Version:** `v0.9.8.7`. loxilb-oam versions in lockstep with
+[loxilb](https://github.com/loxilb-io/loxilb) and uses the same
+`vMAJOR.MINOR.PATCH[.BUILD]` scheme — run loxilb-oam `v0.9.8.7` against loxilb
+`v0.9.8.7`. `loxilb-oam -version` reports the build's release identifier
+(`dev` for an unstamped local build); see [CHANGELOG.md](CHANGELOG.md).
+
 ## Features
 
 - **Authentication** — JWT-based username/password login against the local user
@@ -108,6 +114,12 @@ Generate strong secrets with, e.g., `openssl rand -base64 48` (keys) and
   the service over plain HTTP. See [DEPLOYMENT.md](DEPLOYMENT.md).
 - **From source, against your own database** — see
   [docs/database-installation.md](docs/database-installation.md).
+
+Released images are published to `ghcr.io/loxilb-io/loxilb-oam`, Cosign-signed
+with SLSA provenance and an SBOM. Image tags, the container environment
+surface, signature verification, building your own image and air-gapped
+installs are covered in
+[docs/container-image.md](docs/container-image.md).
 
 [DEPLOYMENT.md](DEPLOYMENT.md) is also the full configuration reference: every
 environment variable and CLI flag the service reads.

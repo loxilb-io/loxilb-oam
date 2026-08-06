@@ -16,6 +16,11 @@ services:
     build:
       context: ${OAM_SRC:-../..}
       dockerfile: Dockerfile
+      args:
+        # Release identifier compiled into the binary (`loxilb-oam -version`).
+        # A source build reports "dev" unless OAM_VERSION names the release the
+        # tree corresponds to (e.g. OAM_VERSION=v0.9.8.7).
+        VERSION: ${OAM_VERSION:-dev}
     image: loxilb-oam:dev
     ports:
       - "${OAM_HOST_PORT:-8080}:8080"     # exposed for direct API/Swagger access

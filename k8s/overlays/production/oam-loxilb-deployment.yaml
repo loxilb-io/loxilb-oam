@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
       - name: oam-loxilb
-        image: oam-loxilb:v1.0.0
+        image: oam-loxilb:v0.9.8.7
         ports:
         - containerPort: 8080
           name: http

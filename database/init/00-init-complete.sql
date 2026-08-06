@@ -114,7 +114,7 @@ ON DUPLICATE KEY UPDATE setting_value = setting_value;
 -- (this one said https:// while protocol was http) is a row the application
 -- itself could never produce.
 INSERT IGNORE INTO loxilb_instances (name, host, port, protocol, description, version, api_endpoint, cimage, ctag) VALUES
-('LoxiLB-Instance-1', 'loxilb-enterprise', '11111', 'http', 'Local LoxiLB instance', 'v1', 'http://loxilb-enterprise:11111/netlox/v1', 'ghcr.io/loxilb-io/loxilb', 'v0.9.8');
+('LoxiLB-Instance-1', 'loxilb-enterprise', '11111', 'http', 'Local LoxiLB instance', 'v1', 'http://loxilb-enterprise:11111/netlox/v1', 'ghcr.io/loxilb-io/loxilb', 'v0.9.8.7');
 
 -- Create indexes for performance (only if they don't exist)
 -- We'll use a different approach to avoid duplicate key errors
