@@ -104,6 +104,7 @@ Key reference (full comments in `.env.example`):
 | `SNAPSHOT_ENC_KEY` | snapshot encryption at rest (strongly recommended) |
 | `OAM_ALLOWED_ORIGINS` | CORS allowlist, e.g. `https://oam.example.internal` (production) |
 | `SITE_ADDRESS`, `EDGE_TLS` | edge listen address + TLS mode (§4/§5) |
+| `EDGE_SNI_FALLBACK` | site to serve clients that send no SNI — required only when the edge is reached by IP (see Troubleshooting) |
 | `OAM_INSTANCE_CA_BUNDLE`, `OAM_INSTANCE_TLS_INSECURE` | TLS to managed LoxiLB instances (§6) |
 | `OAM_TAG`, `UI_TAG` | pinned image versions (Mode 2) |
 | `DB_HOST` | `mysql` = bundled DB; set a hostname to use an external database |
@@ -345,6 +346,7 @@ All variants are the same two `.env` knobs; only the values differ.
 | Symptom | Cause / fix |
 |---------|-------------|
 | Browser shows a certificate warning | Self-signed cert not yet trusted on the client — import `certs/edge/cert.pem` (§5.2), and check the URL's hostname is in the cert SANs. |
+| HTTPS by IP fails outright (`curl` exit 35, browser "cannot establish a secure connection") while the hostname works | SNI cannot carry an IP literal, so those clients send none, and Caddy selects its TLS policy by SNI — an SNI-less handshake matches no site and is rejected with alert 80 before any HTTP. Listing the IP in `SITE_ADDRESS` does **not** help. Set `EDGE_SNI_FALLBACK=default_sni <your.host>` in `.env` and restart the edge (`docker compose restart caddy`). |
 | `up` fails with `set OAM_JWT_SECRET in .env` (or similar) | A required secret is empty in `.env` — see §3. This is fail-fast by design. |
 | `ui-assets` exits non-zero / UI shows Caddy 404 | The SPA was not published. Check `docker compose ... logs ui-assets`; re-run `up -d`. Ensure the bundle is at a version that includes the ui-assets `entrypoint` override. |
 | `Error response from daemon: … unauthorized` pulling images | The GHCR package isn't public from your network — `docker login ghcr.io` with a token that has `read:packages`, or mirror the images. |

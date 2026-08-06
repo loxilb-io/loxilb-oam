@@ -93,6 +93,9 @@ services:
       # Edge listen address + TLS mode (the single edge knob pair; see .env).
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
       EDGE_TLS: ${EDGE_TLS:-}
+      # Fallback site for clients that send no SNI (i.e. anyone browsing to a
+      # bare IP). Empty unless the edge is reached by address — see .env.example.
+      EDGE_SNI_FALLBACK: ${EDGE_SNI_FALLBACK:-}
       OAM_UPSTREAM: ${OAM_UPSTREAM:-http://oam-loxilb:8080}
     ports:
       - "${HTTP_PORT:-80}:80"
