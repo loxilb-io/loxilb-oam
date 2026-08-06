@@ -7,6 +7,17 @@
 
 {
 	admin off
+
+	# SNI has no representation for IP literals, so a browser opened at
+	# https://<ip> sends NO SNI at all — listing the IP in SITE_ADDRESS does
+	# not help, because Caddy selects its TLS connection policy by SNI. An
+	# SNI-less ClientHello then matches no site and the handshake dies with
+	# alert 80 (internal_error), before a single byte of HTTP is spoken — which
+	# is why it presents as "the port is closed" rather than as a TLS problem.
+	#
+	# Set EDGE_SNI_FALLBACK=default_sni <your.host> when operators reach the
+	# edge by IP; empty (the default) is correct for name-only access.
+	{$EDGE_SNI_FALLBACK}
 }
 
 {$SITE_ADDRESS} {
