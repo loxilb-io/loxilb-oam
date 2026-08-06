@@ -37,6 +37,8 @@ every wire that leaves the host (browser→edge, OAM→instances); DB isolated o
 an internal network; only the Caddy edge is exposed:
 ```bash
 # 1. pin OAM_TAG / UI_TAG in .env to released versions (never `latest`)
+#    (registry not reachable yet? build the images from source and tag them —
+#     see docs/deployment-compose.md §5.1 "Building the production images from source")
 # 2. edge cert — generate self-signed (or drop your CA's files in certs/edge/):
 scripts/generate-edge-certs.sh oam.example.internal
 #    then set in .env:
