@@ -1,61 +1,125 @@
-# Testing OAM-LoxiLB Proxy with curl
+# Testing the LoxiLB Gateway Proxy with curl
+
+Hands-on walkthrough of the proxy endpoints. For what the proxy does and how it
+is authorized, see [proxy-functionality.md](proxy-functionality.md).
 
 ## Prerequisites
-1. Start the OAM-LoxiLB server
-2. Have a LoxiLB instance configured in the database
-3. Have a user account created
+
+1. A running `loxilb-oam` server (see
+   [DEPLOYMENT.md](../DEPLOYMENT.md) or
+   [deployment-compose.md](deployment-compose.md)).
+2. `jq` installed.
+3. The bootstrap `admin` password (`OAM_DEFAULT_ADMIN_PASSWORD`).
+4. Optionally, a reachable LoxiLB instance. Without one, proxied calls return
+   `502` — which is still enough to exercise auth, RBAC, and routing.
+
+> **Two things trip people up.** User creation is **admin-only** — there is no
+> unauthenticated signup, so you must log in as `admin` first. And every
+> password must satisfy the account policy: **≥9 characters with an uppercase
+> letter, a lowercase letter, a digit and a special character; no character
+> three times in a row; not equal to the username.**
 
 ## Step-by-Step Testing Guide
 
-### 1. Start the OAM-LoxiLB Server
+### 1. Start the server
+
 ```bash
 cd /path/to/loxilb-oam
-./oam-loxilb --port=8080
+make build
+./loxilb-oam -port=8080     # DB_* / OAM_* env must already be set
 ```
 
-### 2. Create a User (if you don't have one)
+Or, if it is already running under Compose, just confirm it:
+
+```bash
+curl -s http://localhost:8080/oam/health
+```
+
+### 2. Log in as admin
+
+```bash
+ADMIN_TOKEN=$(curl -s -X POST http://localhost:8080/oam/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "password": "<OAM_DEFAULT_ADMIN_PASSWORD>"
+  }' | jq -r '.token')
+
+echo "Admin token: ${ADMIN_TOKEN:0:20}..."
+```
+
+### 3. Create a test user (optional — requires admin)
+
+`POST /oam/users` requires the `admin` role. Pick a role for the new account:
+`admin`, `operator` (can drive the gateway), or `viewer` (read-only).
+
 ```bash
 curl -X POST http://localhost:8080/oam/users \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d '{
     "username": "testuser",
     "email": "test@example.com",
-    "password": "testpass123"
+    "password": "TestPass1!",
+    "role": "operator"
   }'
 ```
 
-### 3. Login and Get Authentication Token
+Then log in as that user to get its token:
+
 ```bash
-# Login and extract token
 TOKEN=$(curl -s -X POST http://localhost:8080/oam/login \
   -H "Content-Type: application/json" \
   -d '{
-    "username": "testuser", 
-    "password": "testpass123"
+    "username": "testuser",
+    "password": "TestPass1!"
   }' | jq -r '.token')
-
-echo "Token: $TOKEN"
 ```
 
-### 4. Create a LoxiLB Instance (if you don't have one)
+To test with admin privileges instead, just use `TOKEN=$ADMIN_TOKEN`.
+
+### 4. Register a LoxiLB instance (requires admin)
+
+Registering, updating, and deleting instances all require the `admin` role —
+`operator` has read access only. Use `$ADMIN_TOKEN` here.
+
 ```bash
 curl -X POST http://localhost:8080/oam/loxilbs \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d '{
     "name": "test-loxilb",
     "host": "127.0.0.1",
     "port": "11111",
+    "protocol": "http",
     "description": "Test LoxiLB instance",
     "version": "v1",
-    "cimage": "loxilb",
+    "cimage": "ghcr.io/loxilb-io/loxilb",
     "ctag": "latest"
   }'
 ```
 
-### 5. Get LoxiLB Instance ID
+Field rules worth knowing — the body is fully validated, and a violation is
+`400` naming the offending `field`:
+
+| Field | Rule |
+|-------|------|
+| `name` | **required**; letters, digits, `.`, `-`, `_`; must start alphanumeric; ≤63 chars; unique |
+| `host` | **required**; hostname, IPv4 literal, or **bracketed** IPv6 (`[2001:db8::1]`) |
+| `port` | **required**; 1–65535 |
+| `protocol` | **required**; exactly `http` or `https`. It is deliberately not defaulted |
+| `version` | defaults to `v1`; a plain path segment |
+| `cimage` / `ctag` | OCI image reference and tag, kept in separate fields — do not put `:tag` in `cimage` |
+
+The derived endpoint is `{protocol}://{host}:{port}/netlox/{version}`. Both the
+name and that endpoint are unique: a collision returns **`409 Conflict`**, not
+`400`.
+
+### 5. Get the instance ID
+
+Reads are open to any authenticated role, so either token works.
+
 ```bash
-# List all instances and get the ID
 INSTANCE_ID=$(curl -s -H "Authorization: Bearer $TOKEN" \
   http://localhost:8080/oam/loxilbs | jq -r '.[0].id')
 
@@ -82,7 +146,11 @@ curl -H "Authorization: Bearer $TOKEN" \
   http://localhost:8080/oam/loxilbs/$INSTANCE_ID/netlox/v1/status/device
 ```
 
-#### Create a Load Balancer (POST request)
+#### Create a Load Balancer (POST — requires `gateway_write`)
+
+Mutating proxy calls need the `gateway_write` capability (`admin` or
+`operator`). A `viewer` token gets `403` here while the `GET`s above still work.
+
 ```bash
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
@@ -106,29 +174,24 @@ curl -X POST \
 
 ## Complete Test Script
 
-Here's a complete test script you can save and run:
+Save and run. It logs in as the bootstrap admin, registers a throwaway
+instance, exercises the proxy, and cleans up.
 
 ```bash
 #!/bin/bash
+# Requires: jq, and OAM_ADMIN_PASSWORD set to OAM_DEFAULT_ADMIN_PASSWORD.
 
-# Configuration
-OAM_HOST="localhost:8080"
-USERNAME="testuser"
-PASSWORD="testpass123"
+OAM_HOST="${OAM_HOST:-localhost:8080}"
+ADMIN_USER="${ADMIN_USER:-admin}"
+ADMIN_PASSWORD="${OAM_ADMIN_PASSWORD:?set OAM_ADMIN_PASSWORD to the bootstrap admin password}"
 
-echo "=== Testing OAM-LoxiLB Proxy ==="
+echo "=== Testing the LoxiLB gateway proxy ==="
 
-# 1. Create user
-echo "1. Creating user..."
-curl -s -X POST http://$OAM_HOST/oam/users \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"$USERNAME\",\"email\":\"test@example.com\",\"password\":\"$PASSWORD\"}" > /dev/null
-
-# 2. Login and get token
-echo "2. Logging in..."
+# 1. Log in as admin (user creation and instance registration are admin-only)
+echo "1. Logging in as $ADMIN_USER..."
 TOKEN=$(curl -s -X POST http://$OAM_HOST/oam/login \
   -H "Content-Type: application/json" \
-  -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}" | jq -r '.token')
+  -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASSWORD\"}" | jq -r '.token')
 
 if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
     echo "❌ Failed to get authentication token"
@@ -137,8 +200,9 @@ fi
 
 echo "✅ Got token: ${TOKEN:0:20}..."
 
-# 3. Create LoxiLB instance
-echo "3. Creating LoxiLB instance..."
+# 2. Register a LoxiLB instance. protocol is required; name and the derived
+#    endpoint are unique, so a rerun without cleanup returns 409.
+echo "2. Registering LoxiLB instance..."
 INSTANCE_RESPONSE=$(curl -s -X POST http://$OAM_HOST/oam/loxilbs \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
@@ -146,17 +210,22 @@ INSTANCE_RESPONSE=$(curl -s -X POST http://$OAM_HOST/oam/loxilbs \
     "name": "test-proxy-instance",
     "host": "127.0.0.1",
     "port": "11111",
+    "protocol": "http",
     "description": "Test proxy instance",
     "version": "v1",
-    "cimage": "loxilb",
+    "cimage": "ghcr.io/loxilb-io/loxilb",
     "ctag": "latest"
   }')
 
 INSTANCE_ID=$(echo "$INSTANCE_RESPONSE" | jq -r '.id')
-echo "✅ Created instance with ID: $INSTANCE_ID"
+if [ "$INSTANCE_ID" = "null" ] || [ -z "$INSTANCE_ID" ]; then
+    echo "❌ Failed to register instance: $INSTANCE_RESPONSE"
+    exit 1
+fi
+echo "✅ Registered instance with ID: $INSTANCE_ID"
 
-# 4. Test proxy requests
-echo "4. Testing proxy requests..."
+# 3. Test proxy requests
+echo "3. Testing proxy requests..."
 
 echo "   - Testing metadata endpoint..."
 RESPONSE=$(curl -s -w "%{http_code}" \
@@ -186,8 +255,8 @@ else
     echo "   ❌ Unexpected response code: $HTTP_CODE"
 fi
 
-# 5. Test error cases
-echo "5. Testing error cases..."
+# 4. Test error cases
+echo "4. Testing error cases..."
 
 echo "   - Testing invalid instance ID..."
 RESPONSE=$(curl -s -w "%{http_code}" \
@@ -212,8 +281,8 @@ else
     echo "   ❌ Expected 401, got: $HTTP_CODE"
 fi
 
-# 6. Cleanup
-echo "6. Cleaning up..."
+# 5. Cleanup
+echo "5. Cleaning up..."
 curl -s -X DELETE http://$OAM_HOST/oam/loxilbs/$INSTANCE_ID \
   -H "Authorization: Bearer $TOKEN" > /dev/null
 echo "✅ Deleted test instance"
@@ -273,14 +342,27 @@ If LoxiLB is running and reachable, you'll get the actual LoxiLB API response.
 
 ## Troubleshooting
 
-1. **401 Unauthorized**: Check if your token is valid and properly formatted
-2. **404 Not Found**: Verify the instance ID exists in the database
-3. **502 Bad Gateway**: LoxiLB instance is not running or unreachable
-4. **504 Gateway Timeout**: LoxiLB instance is taking too long to respond
+| Code | Cause / fix |
+|------|-------------|
+| `400 Bad Request` | On instance registration, the body failed validation — the response names the offending `field`. `protocol` is required and must be `http` or `https`. |
+| `401 Unauthorized` | Token missing, malformed, expired, or revoked by a logout. Log in again. |
+| `403 Forbidden` | Your role lacks the capability: mutating proxy calls need `gateway_write` (`admin`/`operator`), and instance registration needs `admin`. |
+| `404 Not Found` | The instance ID is not registered. List them with `GET /oam/loxilbs`. |
+| `409 Conflict` | The instance name or its derived endpoint is already taken. Delete the old row or pick a different name/host/port. |
+| `429 Too Many Requests` | Per-IP rate limit — 50 rps on the proxy, much tighter on `/oam/login`. Back off and retry. |
+| `502 Bad Gateway` | The LoxiLB instance is not running or unreachable. Expected when testing without one. |
+| `504 Gateway Timeout` | The instance did not respond within 10 seconds. |
+
+If you enabled TLS to instances, a `502` may also mean certificate
+verification failed — check `OAM_INSTANCE_CA_BUNDLE` and the certificate SANs
+against the registered host ([instance-tls.md](instance-tls.md)).
 
 ## Notes
 
-- Replace `localhost:8080` with your actual OAM server address
-- Replace instance ID with your actual LoxiLB instance ID
-- If you don't have a LoxiLB instance running, you'll get 502 errors, which is expected
-- The proxy will log all requests, so check the OAM logs for debugging
+- Replace `localhost:8080` with your actual OAM server address. Behind the
+  management-plane bundle's Caddy edge, the API is at `/api/oam/...` rather than
+  `/oam/...`.
+- Without a running LoxiLB instance you get `502` on proxied calls — expected,
+  and still a valid test of auth, RBAC, and routing.
+- All proxy requests are logged; check the OAM logs (`GET /oam/logs` or
+  `docker compose logs -f oam-loxilb`) when debugging.

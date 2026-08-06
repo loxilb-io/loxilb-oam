@@ -1,11 +1,14 @@
-# loxilb-oam — default stack: MySQL + the OAM service over HTTP.
+# loxilb-oam — API-only stack: MySQL + the OAM service over plain HTTP.
 #
 #   1. cp .env.example .env   and set the required secrets
 #   2. docker compose up -d
 #
-# Variants:
-#   HTTPS   : docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
-#   DB only : docker compose up -d mysql   (e.g. when running the binary from source)
+#   DB only : docker compose up -d mysql   (e.g. when running the binary from
+#             source — see docs/database-installation.md)
+#
+# This stack serves HTTP and does NOT include the web console. For a production
+# deployment — UI + API + MySQL behind a Caddy TLS edge — use the bundle in
+# deploy/compose/ (guide: docs/deployment-compose.md).
 
 services:
   mysql:
@@ -58,8 +61,6 @@ services:
       SNAPSHOT_ENC_KEY: ${SNAPSHOT_ENC_KEY:-}
       # CORS allowlist (comma-separated). Unset => wildcard (development only).
       OAM_ALLOWED_ORIGINS: ${OAM_ALLOWED_ORIGINS:-}
-      # OAuth is opt-in (experimental); set OAM_OAUTH_ENABLED=true to enable.
-      OAM_OAUTH_ENABLED: ${OAM_OAUTH_ENABLED:-false}
     ports:
       - "8080:8080"
     depends_on:

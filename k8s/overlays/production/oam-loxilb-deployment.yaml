@@ -65,21 +65,6 @@ spec:
             configMapKeyRef:
               name: oam-loxilb-config
               key: server-port
-        - name: GOOGLE_REDIRECT_URL
-          valueFrom:
-            secretKeyRef:
-              name: oam-loxilb-secret
-              key: google-redirect-url
-        - name: GITHUB_REDIRECT_URL
-          valueFrom:
-            secretKeyRef:
-              name: oam-loxilb-secret
-              key: github-redirect-url
-        - name: FACEBOOK_REDIRECT_URL
-          valueFrom:
-            secretKeyRef:
-              name: oam-loxilb-secret
-              key: facebook-redirect-url
         resources:
           requests:
             memory: "512Mi"

@@ -462,16 +462,17 @@ definitions:
       id:
         type: integer
       oauth_id:
-        description: ID provided by the OAuth provider
         type: string
       oauth_provider:
-        description: e.g., "google", "facebook"
+        description: |-
+          OAuth login was removed; these mirror columns kept in the users table so
+          a future implementation needs no migration. They are always empty today
+          and are omitted from responses. See the `feature/oauth2` branch.
         type: string
       oauth_token:
-        description: Access token from the OAuth provider
         type: string
       role:
-        description: e.g., "admin", "user"
+        description: '"admin", "operator" or "viewer"'
         type: string
       username:
         type: string
@@ -1674,63 +1675,6 @@ paths:
       summary: Proxy request to LoxiLB instance
       tags:
       - proxy
-  /oam/oauth/{provider}:
-    get:
-      description: Initiates the OAuth login flow for the specified provider.
-      parameters:
-      - description: OAuth provider
-        in: path
-        name: provider
-        required: true
-        type: string
-      responses:
-        "302":
-          description: Found
-          schema:
-            $ref: '#/definitions/models.MessageResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/models.ErrorResponse'
-      summary: OAuth login
-      tags:
-      - auth
-  /oam/oauth/{provider}/callback:
-    get:
-      description: Handles the OAuth callback flow for the specified provider and
-        returns enhanced login response with license information.
-      parameters:
-      - description: OAuth provider
-        in: path
-        name: provider
-        required: true
-        type: string
-      - description: OAuth code
-        in: query
-        name: code
-        required: true
-        type: string
-      - description: OAuth state
-        in: query
-        name: state
-        required: true
-        type: string
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/models.EnhancedLoginResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/models.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/models.ErrorResponse'
-      summary: OAuth callback
-      tags:
-      - auth
   /oam/setup/status:
     get:
       consumes:

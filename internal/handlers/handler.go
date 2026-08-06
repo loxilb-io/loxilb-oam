@@ -1,10 +1,8 @@
 package handlers
 
 import (
-	"context"
 	"crypto/subtle"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
@@ -21,7 +19,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/oauth2"
 )
 
 var (
@@ -1175,134 +1172,6 @@ func (h *Handler) GetLogArchivesFilename(c *gin.Context) {
 	}
 }
 
-// OAuthLogin handles the OAuth login flow.
-// @Summary OAuth login
-// @Description Initiates the OAuth login flow for the specified provider.
-// @Tags auth
-// @Param provider path string true "OAuth provider"
-// @Success 302 {object} models.MessageResponse
-// @Failure 400 {object} models.ErrorResponse
-// @Router /oam/oauth/{provider} [get]
-func (h *Handler) OAuthLogin(c *gin.Context) {
-	provider := c.Param("provider")
-	oauthConfig, exists := config.OAuthConfigs[provider]
-	if !exists {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid OAuth provider"})
-		return
-	}
-	state := utils.GenerateStateToken() // Generate a secure state token
-	utils.LogInfo("Generated state token for OAuth login: " + state)
-
-	// Can't extract the redirect URL from the OAuth config, so we set it here
-	authURL := oauthConfig.AuthCodeURL(state, oauth2.SetAuthURLParam("redirect_uri", oauthConfig.RedirectURL))
-	c.Redirect(http.StatusTemporaryRedirect, authURL)
-}
-
-// OAuthCallback handles the OAuth callback flow.
-// @Summary OAuth callback
-// @Description Handles the OAuth callback flow for the specified provider and returns enhanced login response with license information.
-// @Tags auth
-// @Param provider path string true "OAuth provider"
-// @Param code query string true "OAuth code"
-// @Param state query string true "OAuth state"
-// @Success 200 {object} models.EnhancedLoginResponse
-// @Failure 400 {object} models.ErrorResponse
-// @Failure 500 {object} models.ErrorResponse
-// @Router /oam/oauth/{provider}/callback [get]
-func (h *Handler) OAuthCallback(c *gin.Context) {
-	provider := c.Param("provider")
-	oauthConfig, exists := config.OAuthConfigs[provider]
-	if !exists {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid OAuth provider"})
-		return
-	}
-
-	state := c.Query("state")
-	if !utils.ValidateStateToken(state) { // Validate the state token
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid state token"})
-		return
-	}
-
-	code := c.Query("code")
-	token, err := oauthConfig.Exchange(context.Background(), code)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Token exchange failed"})
-		return
-	}
-
-	client := oauthConfig.Client(context.Background(), token)
-	userInfo, err := fetchUserInfo(client, provider)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user info"})
-		return
-	}
-
-	var oauthName, email, oauthID string
-
-	if provider == "google" {
-		email = userInfo["email"].(string)
-		oauthName = userInfo["name"].(string)
-		oauthID = userInfo["id"].(string)
-	} else if provider == "github" {
-		// Fetch emails explicitly from GitHub API
-		emailsResp, err := client.Get("https://api.github.com/user/emails")
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get GitHub emails"})
-			return
-		}
-		defer emailsResp.Body.Close()
-
-		var emails []map[string]interface{}
-		if err := json.NewDecoder(emailsResp.Body).Decode(&emails); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse GitHub emails"})
-			return
-		}
-
-		for _, e := range emails {
-			if primary, ok := e["primary"].(bool); ok && primary {
-				email = e["email"].(string)
-				break
-			}
-		}
-
-		// Fetch user details from GitHub API
-		userResp, err := client.Get("https://api.github.com/user")
-		if err == nil {
-			defer userResp.Body.Close()
-			var userDetail map[string]interface{}
-			if err := json.NewDecoder(userResp.Body).Decode(&userDetail); err == nil {
-				oauthName, _ = userDetail["name"].(string)
-				oauthID, _ = userDetail["id"].(string)
-			}
-		}
-	}
-
-	user_id, err := h.userService.FindOrCreateOAuthUser(email, provider, oauthName, oauthID)
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find or create user"})
-		return
-	}
-
-	// Login the user with email as user_name and generate a token
-	tokenString, err := utils.GenerateToken(strconv.Itoa(user_id), "", user_id, h.expirationMinutes)
-	if err != nil {
-		utils.LogError("Failed to generate token: " + err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate token"})
-		return
-	}
-
-	err = h.userService.SaveToken(strconv.Itoa(user_id), tokenString)
-	if err != nil {
-		utils.LogError("Failed to save token: " + err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not save token"})
-		return
-	}
-
-	utils.LogInfo("User logged in via OAuth: " + email)
-	c.JSON(http.StatusOK, gin.H{"id": user_id, "token": tokenString})
-}
-
 // CreateAlert handles the creation of a new alert
 // @Summary Create alert
 // @Description Creates a new alert in the system
@@ -1599,31 +1468,6 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
-}
-
-func fetchUserInfo(client *http.Client, provider string) (map[string]interface{}, error) {
-	var url string
-	switch provider {
-	case "github":
-		url = "https://api.github.com/user"
-	case "facebook":
-		url = "https://graph.facebook.com/me?fields=id,email"
-	default:
-		url = "https://www.googleapis.com/oauth2/v2/userinfo"
-	}
-
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var userInfo map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
-		return nil, err
-	}
-
-	return userInfo, nil
 }
 
 // ProxyToLoxiLB handles proxying requests to LoxiLB instances.

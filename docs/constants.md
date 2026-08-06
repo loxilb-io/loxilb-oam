@@ -1,8 +1,8 @@
 # Configuration Constants (`internal/config/constants.go`)
 
 `constants.go` holds compile-time constants used across the application:
-retry/backoff behavior, OAuth timing, logging, alerting, polling, SSL file
-paths, LoxiLB instance defaults, login-lockout and rate-limiting parameters.
+retry/backoff behavior, logging, alerting, polling, SSL file paths, LoxiLB
+instance defaults, login-lockout and rate-limiting parameters.
 
 Runtime secrets and tunables (JWT/token lifetime, admin password, database
 password, CORS allowlist) are **not** here — they are environment-driven and
@@ -37,17 +37,6 @@ the full environment-variable reference.
 | `DbRetryDelay`    | Delay between database connection retries      | `5s` |
 | `DbMaxRetries`    | Maximum database connection retries            | `1` |
 | `DbRetryBackoff`  | Backoff time for database retries              | `2s` |
-
-## OAuth2 Configuration
-
-| Constant Name   | Description                          | Value |
-|-----------------|--------------------------------------|-------|
-| `StateTokenTTL` | OAuth state token time-to-live       | `10m` |
-| `OAuthTmpPw`    | Temporary password for OAuth users   | `"oauth"` |
-
-> OAuth client credentials are supplied via environment variables
-> (`OAM_OAUTH_{GOOGLE,GITHUB,FACEBOOK}_CLIENT_{ID,SECRET}`), not constants.
-> See [oauth2.md](oauth2.md). OAuth support is slated for removal.
 
 ## Token & Cache Configuration
 

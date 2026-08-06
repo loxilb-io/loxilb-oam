@@ -1832,90 +1832,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/oam/oauth/{provider}": {
-            "get": {
-                "description": "Initiates the OAuth login flow for the specified provider.",
-                "tags": [
-                    "auth"
-                ],
-                "summary": "OAuth login",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "OAuth provider",
-                        "name": "provider",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "302": {
-                        "description": "Found",
-                        "schema": {
-                            "$ref": "#/definitions/models.MessageResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/models.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/oam/oauth/{provider}/callback": {
-            "get": {
-                "description": "Handles the OAuth callback flow for the specified provider and returns enhanced login response with license information.",
-                "tags": [
-                    "auth"
-                ],
-                "summary": "OAuth callback",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "OAuth provider",
-                        "name": "provider",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "OAuth code",
-                        "name": "code",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "OAuth state",
-                        "name": "state",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/models.EnhancedLoginResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/models.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/models.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/oam/setup/status": {
             "get": {
                 "description": "Check if admin credentials need to be updated from defaults",
@@ -3286,19 +3202,17 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "oauth_id": {
-                    "description": "ID provided by the OAuth provider",
                     "type": "string"
                 },
                 "oauth_provider": {
-                    "description": "e.g., \"google\", \"facebook\"",
+                    "description": "OAuth login was removed; these mirror columns kept in the users table so\na future implementation needs no migration. They are always empty today\nand are omitted from responses. See the ` + "`" + `feature/oauth2` + "`" + ` branch.",
                     "type": "string"
                 },
                 "oauth_token": {
-                    "description": "Access token from the OAuth provider",
                     "type": "string"
                 },
                 "role": {
-                    "description": "e.g., \"admin\", \"user\"",
+                    "description": "\"admin\", \"operator\" or \"viewer\"",
                     "type": "string"
                 },
                 "username": {

@@ -701,49 +701,6 @@ func (s *UserService) ValidatePassword(username, password string) error {
 	return s.validatePassword(username, password)
 }
 
-// FindOrCreateOAuthUser finds or creates a user based on the given email and OAuth provider information.
-// If the user does not exist, it creates a new user with a default license key. Returns the user ID and any error encountered.
-func (s *UserService) FindOrCreateOAuthUser(email, provider, oauthName, oauthID string) (int, error) {
-	var userID int
-	// oauthToken := userInfo["token"].(string) // Assuming the token is passed in userInfo
-
-	err := utils.RetryOperation(func() error {
-		// Check if the user exists
-		var existingUser models.User
-		query := "SELECT id, email, oauth_provider, oauth_id FROM users WHERE email = ? AND oauth_provider = ?"
-		err := s.DB.QueryRow(query, email, provider).Scan(&existingUser.ID, &existingUser.Email, &existingUser.OAuthProvider, &existingUser.OAuthID)
-
-		if err == sql.ErrNoRows {
-			// User doesn't exist, create a new OAuth user
-			// Users now get licenses through proper license management system
-			// No automatic license generation - admin must install licenses manually
-
-			result, err := s.DB.Exec(config.InsertOAuthUserQuery, oauthName, "oauth_temp_password", provider, email, oauthID)
-			if err != nil {
-				if isDuplicateEntryError(err) {
-					utils.LogWarning("Duplicate username: " + oauthName)
-					return errors.New("username already exists")
-				}
-				utils.LogError("Failed to insert user: " + err.Error())
-				return err
-			}
-
-			lastInsertID, err := result.LastInsertId()
-			if err != nil {
-				utils.LogError("Failed to get last insert ID: " + err.Error())
-				return err
-			}
-			userID = int(lastInsertID)
-			utils.LogInfo("OAuth User created: " + oauthName)
-		} else {
-			userID = existingUser.ID
-			utils.LogInfo("Existing OAuth User login: " + oauthName)
-		}
-		return nil
-	}, config.MaxRetries, config.RetryDelay)
-	return userID, err
-}
-
 // GetAdminCount returns the number of admin users in the system
 func (s *UserService) GetAdminCount() (int, error) {
 	var count int

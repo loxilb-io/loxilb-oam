@@ -60,9 +60,6 @@ func main() {
 	dbHost := flag.String("db-host", config.EnvOr("127.0.0.1", "DB_HOST"), "Database host (default: DB_HOST env)")
 	dbPort := flag.String("db-port", config.EnvOr("3306", "DB_PORT"), "Database port (default: DB_PORT env)")
 	dbName := flag.String("db-name", config.EnvOr("loxioam", "DB_NAME"), "Database name (default: DB_NAME env)")
-	googleRedirectURL := flag.String("google-redirect-url", "", "Google OAuth Redirect URL")
-	githubRedirectURL := flag.String("github-redirect-url", "", "GitHub OAuth Redirect URL")
-	facebookRedirectURL := flag.String("facebook-redirect-url", "", "Facebook OAuth Redirect URL")
 	sslOption := flag.String("ssl-option", "false", "Enable SSL connection")
 	sslCaCertFilePath := flag.String("ssl-ca-cert-file", "./ssl/certs/root-ca.pem", "SSL CA certificate file path")
 	sslCaClientCertFilePath := flag.String("ssl-ca-client-cert-file", "./ssl/certs/client-cert.pem", "SSL client certificate file path")
@@ -91,12 +88,6 @@ func main() {
 	if dbPass == "" {
 		utils.LogError("SECURITY: no database password provided. Set DB_PASSWORD or pass -db-password.")
 		os.Exit(1)
-	}
-
-	// OAuth is opt-in (disabled by default). Only initialize it when enabled.
-	if config.OAuthEnabled() {
-		config.InitOAuthConfigs(*googleRedirectURL, *githubRedirectURL, *facebookRedirectURL)
-		utils.LogInfo("OAuth login is ENABLED (OAM_OAUTH_ENABLED=true).")
 	}
 
 	// Connect to the MySQL database with retry logic. If the SSL option is enabled, connect securely

@@ -8,8 +8,10 @@ for one or more LoxiLB instances, backed by MySQL.
 
 ## Features
 
-- **Authentication** — JWT-based login with server-side token revocation and
-  exponential-backoff login lockout.
+- **Authentication** — JWT-based username/password login against the local user
+  store, with server-side token revocation and exponential-backoff login
+  lockout. (There is no external identity-provider integration; OAuth login was
+  removed before the public release.)
 - **RBAC** — three-role model (`admin`, `operator`, `viewer`) resolved from the
   database on every request, with a capability-gated management proxy.
 - **User management** — CRUD, password policy enforcement, and admin bootstrap.
@@ -22,9 +24,9 @@ for one or more LoxiLB instances, backed by MySQL.
 
 ## Prerequisites
 
-- Go **1.23+**
-- MySQL **8.x**
-- (Optional) Docker / Docker Compose or Kubernetes for containerized deployment
+- Go **1.25+** (the module targets `go 1.25`)
+- MySQL **8.x** or later (the Compose stacks ship MySQL 9.2)
+- (Optional) Docker Engine with the Compose plugin, for containerized deployment
 
 ## Quick start
 
@@ -80,8 +82,6 @@ startup if a required one is unset (there are no built-in fallback values).
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `OAM_TOKEN_TTL_MINUTES` | `480` | JWT / API-token lifetime in minutes |
-| `OAM_OAUTH_ENABLED` | `false` | Enable OAuth login (experimental, opt-in). Routes are not registered unless `true`. |
-| `OAM_OAUTH_{GOOGLE,GITHUB,FACEBOOK}_CLIENT_ID` / `_CLIENT_SECRET` | unset | OAuth provider credentials (used only when OAuth is enabled) |
 | `OAM_INSTANCE_CA_BUNDLE` / `OAM_INSTANCE_TLS_INSECURE` | unset / `false` | Trust a private CA for managed-instance TLS, or (dev-only) skip verification |
 | `OAM_DOCKER_TLS` / `OAM_DOCKER_PORT` / `OAM_DOCKER_CERT_PATH` | `false` / `2375` / unset | TLS + connection settings for the Docker Engine API on instance hosts |
 
@@ -101,14 +101,22 @@ Generate strong secrets with, e.g., `openssl rand -base64 48` (keys) and
 
 ## Deployment
 
-Multiple deployment paths are provided; see [DEPLOYMENT.md](DEPLOYMENT.md) for details.
+- **Management plane (recommended for production)** — the single-node bundle in
+  [`deploy/compose/`](deploy/compose/) runs the web console, this API, and MySQL
+  behind a Caddy TLS edge. Step-by-step operator guide:
+  [docs/deployment-compose.md](docs/deployment-compose.md).
+- **API only** — `docker compose up -d` from the repository root runs MySQL plus
+  the service over plain HTTP. See [DEPLOYMENT.md](DEPLOYMENT.md).
+- **From source, against your own database** — see
+  [docs/database-installation.md](docs/database-installation.md).
 
-- **Docker Compose** — `docker compose up -d` runs the default HTTP stack
-  (MySQL + service). For an HTTPS deployment with the UI behind a TLS edge, use
-  the management-plane bundle in [`deploy/compose/`](deploy/compose/).
-- **Kubernetes (Kustomize)** — `k8s/base`, `k8s/base-http`, and
-  `k8s/overlays/{development,production}`. Populate the `CHANGE_ME` placeholders
-  in the Secret manifests out-of-band (never commit real secrets).
+[DEPLOYMENT.md](DEPLOYMENT.md) is also the full configuration reference: every
+environment variable and CLI flag the service reads.
+
+> The Kubernetes manifests under `k8s/` are **pre-release and not supported** for
+> this release — as shipped they do not supply the mandatory secrets and will not
+> start. A converged Kubernetes deployment is in development; until then, use
+> Docker Compose. Details in [DEPLOYMENT.md](DEPLOYMENT.md#kubernetes-deployment).
 
 ## API
 
@@ -120,10 +128,14 @@ Multiple deployment paths are provided; see [DEPLOYMENT.md](DEPLOYMENT.md) for d
 ## Development
 
 ```bash
-make deps     # download dependencies
-make test     # run unit tests
+make deps     # download the dependencies pinned in go.mod
+make test     # run the unit tests (same set as the CI gate)
 go vet ./...  # static checks
 ```
+
+Integration suites under `tests/rest_api/` and `tests/e2e/` need a live server
+and database, so they are excluded from `make test`; CI runs them against a
+MySQL service container.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and
 [SECURITY.md](SECURITY.md) for vulnerability reporting.
