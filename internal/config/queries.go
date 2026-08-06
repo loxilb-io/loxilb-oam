@@ -15,10 +15,16 @@ const (
 	InsertLoxiLBInstanceQuery        = "INSERT INTO loxilb_instances (name, host, port, protocol, description, version, api_endpoint, cimage, ctag, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 	UpdateLoxiLBInstanceQuery        = "UPDATE loxilb_instances SET name = ?, host = ?, port = ?, protocol = ?, description = ?, version = ?, api_endpoint = ?, cimage = ?, ctag = ?, is_active = ? WHERE id = ?"
 	DeleteLoxiLBInstanceQuery        = "DELETE FROM loxilb_instances WHERE id = ?"
-	InsertTokenQuery                 = "INSERT INTO api_tokens (token_value, user_id, scopes, expires_at) VALUES (?, ?, ?, ?)"
-	ValidateTokenQuery               = "SELECT user_id FROM api_tokens WHERE token_value = ? AND expires_at > NOW()"
-	DeleteTokenQuery                 = "DELETE FROM api_tokens WHERE token_value = ?"
-	SelectLogsQuery                  = `
+	// Uniqueness pre-checks. The name has no UNIQUE constraint in the schema
+	// (the UI addresses instances by name, so duplicates make one of them
+	// unreachable) and api_endpoint has one — checking both here turns a
+	// driver-level 1062 into a 409 that names the conflicting instance.
+	CountLoxiLBInstanceByNameQuery     = "SELECT COUNT(*) FROM loxilb_instances WHERE LOWER(name) = LOWER(?) AND id <> ?"
+	CountLoxiLBInstanceByEndpointQuery = "SELECT COUNT(*) FROM loxilb_instances WHERE LOWER(api_endpoint) = LOWER(?) AND id <> ?"
+	InsertTokenQuery                   = "INSERT INTO api_tokens (token_value, user_id, scopes, expires_at) VALUES (?, ?, ?, ?)"
+	ValidateTokenQuery                 = "SELECT user_id FROM api_tokens WHERE token_value = ? AND expires_at > NOW()"
+	DeleteTokenQuery                   = "DELETE FROM api_tokens WHERE token_value = ?"
+	SelectLogsQuery                    = `
         SELECT 
             id, level, timestamp, message, severity, facility, programname, host, message, create_at
         FROM logs
