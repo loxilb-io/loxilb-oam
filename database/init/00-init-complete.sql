@@ -111,9 +111,13 @@ INSERT INTO system_settings (setting_key, setting_value)
 VALUES ('first_boot_at', NOW())
 ON DUPLICATE KEY UPDATE setting_value = setting_value;
 
--- Insert dummy data into loxilb_instances table (only if empty)
+-- Insert dummy data into loxilb_instances table (only if empty).
+-- api_endpoint MUST agree with protocol/host/port/version: the server derives
+-- it from those four fields on every write, so a seed row that disagrees
+-- (this one said https:// while protocol was http) is a row the application
+-- itself could never produce.
 INSERT IGNORE INTO loxilb_instances (name, host, port, protocol, description, version, api_endpoint, cimage, ctag) VALUES
-('LoxiLB-Instance-1', 'loxilb-enterprise', '11111', 'http', 'Local LoxiLB instance', 'v1', 'https://loxilb-enterprise:11111/netlox/v1', 'ghcr.io/loxilb-io/loxilb', 'v0.9.8');
+('LoxiLB-Instance-1', 'loxilb-enterprise', '11111', 'http', 'Local LoxiLB instance', 'v1', 'http://loxilb-enterprise:11111/netlox/v1', 'ghcr.io/loxilb-io/loxilb', 'v0.9.8');
 
 -- Create indexes for performance (only if they don't exist)
 -- We'll use a different approach to avoid duplicate key errors

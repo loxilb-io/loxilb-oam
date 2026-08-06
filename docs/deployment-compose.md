@@ -170,6 +170,32 @@ yet, or an air-gapped mirror), either authenticate —
 `docker login ghcr.io` — or load the images out-of-band and keep the same
 tags.
 
+**Building the production images from source.** When the release registry is
+not reachable but you have both checkouts on the host (the Mode 1 layout), you
+can build the images locally and point the prod overlay at them. Build with the
+dev overlay's build contexts, tag the results to immutable versions, and set the
+image name + tag in `.env`:
+
+```bash
+# 1. build from the local checkouts (produces loxilb-oam:dev, loxilb-ui:dev)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+
+# 2. tag to immutable versions (use the release version or a git short-SHA)
+docker tag loxilb-oam:dev loxilb-oam:0.9.0
+docker tag loxilb-ui:dev  loxilb-ui:0.9.0
+
+# 3. in .env, override the registry defaults with the local image names:
+#      OAM_IMAGE=loxilb-oam
+#      UI_IMAGE=loxilb-ui
+#      OAM_TAG=0.9.0
+#      UI_TAG=0.9.0
+```
+
+The prod overlay then runs these local images with full production isolation
+(no host DB/API ports, internal DB network) — identical to running the released
+images, only the build provenance differs. This is the recommended path for a
+self-hosted testbed until the GHCR packages are public.
+
 ### 5.2 Edge certificate (browser → UI/API)
 
 **Default path — self-signed, your own key.** Works on private networks with
