@@ -9,8 +9,11 @@ access to the host or container. There is no unauthenticated HTTP reset endpoint
 by design — it would be a critical security hole.
 
 After a reset, the admin account returns to the bootstrap credentials
-(`admin` / `OAM_DEFAULT_ADMIN_PASSWORD`). Change them immediately using the
-authenticated `POST /oam/setup/update-admin` flow shown below.
+(`admin` / `OAM_DEFAULT_ADMIN_PASSWORD`). Change them immediately via
+`POST /oam/setup/update-admin`, shown below. That endpoint needs no bearer
+token — it authenticates on the current username and password carried in the
+body, and is rate-limited per client IP — so it works even when you have no
+usable session.
 
 ## Deployment-Specific Examples
 
@@ -28,6 +31,10 @@ docker exec -it oam-loxilb-app ./reset_admin --confirm
 ```
 
 ### 2. Kubernetes Deployment
+
+> The Kubernetes manifests in `k8s/` are pre-release and not supported for this
+> release (see [DEPLOYMENT.md](../DEPLOYMENT.md#kubernetes-deployment)). The
+> commands below apply to any deployment that runs the OAM image in a Pod.
 
 ```bash
 # Find the pod name

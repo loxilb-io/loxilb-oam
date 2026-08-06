@@ -1,20 +1,25 @@
-# LoxiLB Proxy Functionality
+# LoxiLB Gateway Proxy
 
 ## Overview
 
-The OAM-LoxiLB now includes proxy functionality that allows clients to make API calls to LoxiLB instances through the OAM server instead of calling LoxiLB instances directly.
+`loxilb-oam` proxies the LoxiLB instance API, so clients call managed instances
+through the OAM server rather than reaching each instance directly. This puts
+every gateway call behind OAM authentication, role-based authorization, rate
+limiting, and audit logging, and means clients only need to know one endpoint.
 
-## Architecture Change
-
-### Before (Direct Access):
+### Direct access
 ```
 Client → LoxiLB Instance API (https://loxilb-host:11111/netlox/v1/...)
 ```
 
-### After (Proxy Access):
+### Proxied access
 ```
-Client → OAM-LoxiLB Proxy → LoxiLB Instance API
+Client → loxilb-oam proxy → LoxiLB Instance API
 ```
+
+The instance-facing hop uses TLS with certificate verification when the instance
+is registered with an `https://` endpoint — see
+[instance-tls.md](instance-tls.md).
 
 ## Proxy URL Structure
 
@@ -48,11 +53,31 @@ All LoxiLB API calls can now be made through the OAM proxy using the following U
    DELETE /oam/loxilbs/1/netlox/v1/config/route/destinationIPNet/192.168.1.0/24
    ```
 
-## Authentication
+## Authentication and authorization
 
-- All proxy requests require OAM authentication (Bearer token)
-- The proxy forwards requests to LoxiLB instances without additional authentication
-- Any authenticated OAM user can proxy to any LoxiLB instance
+- **Every** proxy request requires OAM authentication (a `Bearer` token from
+  `POST /oam/login`). Unauthenticated requests get `401`.
+- Authorization is then gated **by HTTP method**:
+
+  | Methods | Required capability | Roles allowed |
+  |---------|--------------------|---------------|
+  | `GET`, `HEAD`, `OPTIONS` | none beyond authentication | `admin`, `operator`, `viewer` |
+  | `POST`, `PUT`, `PATCH`, `DELETE`, … | `gateway_write` | `admin`, `operator` |
+
+  A `viewer` attempting any mutating call receives `403`. See
+  `RequireGatewayCapability` in `internal/middleware/rbac.go`.
+- The proxy authenticates *to* the LoxiLB instance only at the transport layer
+  (TLS); it does not add application credentials to the forwarded request.
+- Access is not scoped per instance: a role that may write can write to **any**
+  registered instance.
+
+## Rate limiting
+
+Proxy requests are rate-limited per client IP — 50 requests/second sustained
+with a burst of 100 (`ProxyRateLimitRPS` / `ProxyRateLimitBurst` in
+`internal/config/constants.go`). Exceeding it returns `429 Too Many Requests`.
+The credential endpoints (`/oam/login`, `/oam/setup/*`) have a much tighter,
+separate budget.
 
 ## Features
 
@@ -70,18 +95,17 @@ All proxy requests are logged with the following information:
 
 ### Error Handling
 The proxy returns appropriate HTTP status codes:
-- `400 Bad Request` - Invalid instance ID or missing path
-- `404 Not Found` - LoxiLB instance not found in database
-- `502 Bad Gateway` - LoxiLB instance unreachable
-- `504 Gateway Timeout` - Request timeout (10 seconds)
+- `400 Bad Request` — invalid instance ID or missing path
+- `401 Unauthorized` — missing, expired, or revoked token
+- `403 Forbidden` — the role lacks `gateway_write` for a mutating method
+- `404 Not Found` — LoxiLB instance not registered
+- `429 Too Many Requests` — per-IP rate limit exceeded
+- `502 Bad Gateway` — LoxiLB instance unreachable
+- `504 Gateway Timeout` — request timeout (10 seconds)
 
 ### Supported HTTP Methods
-The proxy supports all HTTP methods:
-- GET
-- POST
-- PUT
-- DELETE
-- PATCH
+All methods are forwarded (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`,
+`OPTIONS`), subject to the method-based authorization above.
 
 ## Configuration
 
@@ -90,7 +114,7 @@ The proxy supports all HTTP methods:
 - Connection timeout: 10 seconds
 
 ### Request Limits
-- No size limits on request/response bodies
+- No size limits are imposed on request/response bodies by the proxy itself
 - Headers are forwarded transparently (excluding hop-by-hop headers)
 
 ## Usage Examples
@@ -101,7 +125,7 @@ The proxy supports all HTTP methods:
    ```bash
    TOKEN=$(curl -s -X POST http://localhost:8080/oam/login \
      -H "Content-Type: application/json" \
-     -d '{"username":"admin","password":"password"}' | jq -r .token)
+     -d '{"username":"admin","password":"<your-admin-password>"}' | jq -r .token)
    ```
 
 2. **Get all load balancers from instance 1:**

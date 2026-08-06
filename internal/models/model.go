@@ -10,12 +10,15 @@ type User struct {
 	// Password hash is never serialized in API responses. Requests use
 	// dedicated DTOs (LoginRequest/CreateUserRequest), so `json:"-"` here only
 	// affects responses — it stops GetUsers/GetMe from leaking the hash.
-	Password      string    `json:"-"`
-	Role          string    `json:"role"`                     // e.g., "admin", "user"
-	OAuthProvider string    `json:"oauth_provider,omitempty"` // e.g., "google", "facebook"
+	Password string `json:"-"`
+	Role     string `json:"role"` // "admin", "operator" or "viewer"
+	// OAuth login was removed; these mirror columns kept in the users table so
+	// a future implementation needs no migration. They are always empty today
+	// and are omitted from responses. See the `feature/oauth2` branch.
+	OAuthProvider string    `json:"oauth_provider,omitempty"`
 	Email         string    `json:"email"`
-	OAuthID       string    `json:"oauth_id,omitempty"`    // ID provided by the OAuth provider
-	OAuthToken    string    `json:"oauth_token,omitempty"` // Access token from the OAuth provider
+	OAuthID       string    `json:"oauth_id,omitempty"`
+	OAuthToken    string    `json:"oauth_token,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -217,7 +220,7 @@ type PaginatedAlertsResponse struct {
 	Pagination PaginationMeta `json:"pagination"` // Pagination metadata
 }
 
-// EnhancedLoginResponse is the successful login / OAuth login response body.
+// EnhancedLoginResponse is the successful login response body.
 type EnhancedLoginResponse struct {
 	ID    int    `json:"id"`
 	Token string `json:"token"`

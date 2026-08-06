@@ -9,6 +9,3 @@ data:
   DB_NAME: "loxioam"
   TOKEN_EXPIRATION: "1440"
   SERVER_PORT: "443"
-  GOOGLE_REDIRECT_URL: "https://localhost:443/oam/oauth/google/callback"
-  GITHUB_REDIRECT_URL: "https://localhost:443/oam/oauth/github/callback"
-  FACEBOOK_REDIRECT_URL: "https://localhost:443/oam/oauth/facebook/callback"

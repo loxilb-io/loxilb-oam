@@ -86,9 +86,6 @@ spec:
         - "-db-name=$(DB_NAME)"
         - "-token-expiration=$(TOKEN_EXPIRATION)"
         - "-port=$(SERVER_PORT)"
-        - "--google-redirect-url=$(GOOGLE_REDIRECT_URL_HTTPS)"
-        - "--github-redirect-url=$(GITHUB_REDIRECT_URL_HTTPS)"
-        - "--facebook-redirect-url=$(FACEBOOK_REDIRECT_URL_HTTPS)"
         - "--enable-https=false"
       volumes:
       - name: oam-logs

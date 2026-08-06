@@ -1,18 +1,21 @@
-# OAM-LoxiLB Deployment Guide
+# loxilb-oam Deployment Guide
 
-This guide covers deploying OAM-LoxiLB with Docker Compose and Kubernetes.
+This document is the **configuration reference** for the `loxilb-oam` service —
+every environment variable and CLI flag it reads — plus the deployment guide for
+the single-service Docker Compose stack at the repository root.
 
-> **Deploying the full management plane (UI + API + DB)?** Use the
-> single-node Compose bundle instead — step-by-step operator guide:
-> [docs/deployment-compose.md](docs/deployment-compose.md). This document
-> remains the configuration reference for the OAM service itself.
+> **Deploying the full management plane (UI + API + DB)?** That is the
+> single-node Compose bundle in [`deploy/compose/`](deploy/compose/), and it has
+> its own step-by-step operator guide:
+> [docs/deployment-compose.md](docs/deployment-compose.md). It is the
+> recommended deployment for production.
 
 ## Table of Contents
 
 1. [Configuration Reference](#configuration-reference)
 2. [Docker Compose Deployment](#docker-compose-deployment)
 3. [HTTPS/SSL Support](#httpsssl-support)
-4. [Kubernetes Deployment](#kubernetes-deployment)
+4. [Kubernetes Deployment](#kubernetes-deployment) — **pre-release, not supported**
 5. [Database Initialization](#database-initialization)
 6. [Health Checks](#health-checks)
 7. [Troubleshooting](#troubleshooting)
@@ -42,8 +45,21 @@ to start** if the required secrets below are unset.
 
 | Variable                                              | Description | Default |
 |-------------------------------------------------------|-------------|---------|
-| `OAM_TOKEN_TTL_MINUTES`                                | JWT / API-token lifetime in minutes. | `480` (8h) |
-| `OAM_OAUTH_{GOOGLE,GITHUB,FACEBOOK}_CLIENT_{ID,SECRET}` | OAuth client credentials, per provider. Unset providers are disabled. OAuth is slated for removal — see [docs/oauth2.md](docs/oauth2.md). | — |
+| `OAM_TOKEN_TTL_MINUTES`                                | JWT / API-token lifetime in minutes. Read by the bare binary. In the container images the equivalent knob is `TOKEN_EXPIRATION`, which the entrypoint maps to `-token-expiration`. | `480` (8h) |
+| `OAM_INSTANCE_CA_BUNDLE`                               | PEM bundle trusted when connecting to managed LoxiLB instances (proxying and snapshots). Unset = system roots only. See [docs/instance-tls.md](docs/instance-tls.md). | — |
+| `OAM_INSTANCE_TLS_INSECURE`                            | Skip certificate verification on connections to managed instances. **Development only**; logs a startup warning. | `false` |
+| `OAM_DOCKER_TLS` / `OAM_DOCKER_PORT` / `OAM_DOCKER_CERT_PATH` | TLS and connection settings for the Docker Engine API on instance hosts. `OAM_DOCKER_CERT_PATH` must contain `ca.pem`, `cert.pem`, `key.pem`. | `false` / `2375` / — |
+
+> **Removed:** OAuth login (`OAM_OAUTH_ENABLED`, `OAM_OAUTH_*_CLIENT_ID` /
+> `_CLIENT_SECRET`, and the `-google/-github/-facebook-redirect-url` flags) was
+> withdrawn before the public release — it was unfinished and untested against
+> the real handlers. Those variables and flags no longer exist; remove them from
+> any configuration carried over from an earlier version, and note that passing
+> the removed **flags** will make the binary exit with `flag provided but not
+> defined`. Authentication is username/password against the local user store.
+> The archived implementation is on the `feature/oauth2` branch, and the users
+> table keeps its `oauth_*` columns so a future implementation needs no
+> migration.
 
 ### CLI flags (server & database)
 
@@ -61,32 +77,31 @@ to start** if the required secrets below are unset.
 | `-ssl-key-file`      | Path to the server private key | `./ssl/certs/server.key` |
 | `-ssl-option`        | Enable SSL for the database connection | `false` |
 | `-ssl-ca-cert-file`, `-ssl-ca-client-cert-file`, `-ssl-ca-client-key-file` | Database TLS certificate paths | see `main.go` |
-| `-google-redirect-url`, `-github-redirect-url`, `-facebook-redirect-url` | OAuth callback URLs (per deployment) | — |
 
 Each `-db-*` flag defaults from the matching `DB_*` environment variable
 (`DB_USER`/`DB_PASSWORD`/`DB_HOST`/`DB_PORT`/`DB_NAME`); an explicit flag wins.
-The bundled Compose and Kubernetes manifests set these as env and pass them on
-as `-db-*` flags, so the `reset_admin` tool — which reads the same `DB_*`
-surface — needs no extra flags inside those deployments.
-
-> **Note:** OAuth redirect URLs are CLI flags, not environment variables. Only
-> the OAuth **client credentials** (`OAM_OAUTH_*`) are read from the
-> environment.
+The container image's entrypoint reads that same `DB_*` family (plus
+`SERVER_PORT` and `TOKEN_EXPIRATION`) and passes the values on as flags, so the
+`reset_admin` tool — which reads the same `DB_*` surface — needs no extra flags
+inside a containerized deployment.
 
 ### Compose files
 
-- **`docker-compose.yml`** — the default stack: MySQL + the OAM service over
-  HTTP. It wires all required secrets from the environment (`.env`).
+The repository ships two distinct Compose deployments — do not mix them:
 
-For an HTTPS deployment that also serves the UI behind a TLS edge, use the
-management-plane bundle in [`deploy/compose/`](deploy/compose/) (Caddy
-terminates TLS; see its README).
+| Path | What it runs | Use it for |
+|------|--------------|------------|
+| `docker-compose.yml` (repository root) | MySQL + the OAM API over plain **HTTP**, built from local source | development, and API-only deployments |
+| [`deploy/compose/`](deploy/compose/) | the full management plane — UI + API + MySQL behind a **Caddy TLS edge** | **production** ([guide](docs/deployment-compose.md)) |
 
-Provide the required secrets (`OAM_JWT_SECRET`, `OAM_DEFAULT_ADMIN_PASSWORD`,
-`DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`) and the recommended
-`SNAPSHOT_ENC_KEY` via a `.env` file (see `.env.example`) or your secret manager.
-The Kubernetes **production** overlay (`k8s/overlays/production/`) wires these
-from Kubernetes Secrets.
+Each has its own `.env.example`; the key names are shared, so a `.env` written
+for one is largely portable to the other. Provide the required secrets
+(`OAM_JWT_SECRET`, `OAM_DEFAULT_ADMIN_PASSWORD`, `DB_PASSWORD`,
+`MYSQL_ROOT_PASSWORD`) and the recommended `SNAPSHOT_ENC_KEY` via that `.env`
+file or your secret manager.
+
+The rest of this section covers the root stack. For the management-plane bundle,
+follow [docs/deployment-compose.md](docs/deployment-compose.md) instead.
 
 ## Docker Compose Deployment
 
@@ -161,44 +176,41 @@ sudo update-ca-certificates
 
 ## Kubernetes Deployment
 
-### Prerequisites
+> ### ⚠️ Pre-release — not supported for this release
+>
+> **The manifests under `k8s/` are incomplete and will not start the service as
+> shipped.** None of them supply `OAM_JWT_SECRET` or
+> `OAM_DEFAULT_ADMIN_PASSWORD`, both of which are mandatory (see
+> [Required environment variables](#required-environment-variables)) — the
+> container aborts at startup and the Pod enters `CrashLoopBackOff`. The
+> production overlay also pins an image tag (`oam-loxilb:v1.0.0`) that is not
+> published.
+>
+> They are retained as the starting point for a converged Kubernetes deployment
+> (OAM + UI + MySQL + cert-manager) that is being developed separately. **Do not
+> deploy them.**
+>
+> **For a supported deployment, use Docker Compose** — either the full
+> management-plane bundle in [`deploy/compose/`](deploy/compose/) (see
+> [docs/deployment-compose.md](docs/deployment-compose.md)) or the
+> single-service stack described above.
 
-- Kubernetes cluster 1.20+
-- `kubectl` configured
-- Kustomize (recommended)
-
-### Layout
+If you are working on those manifests, the current layout is:
 
 ```
 k8s/
-├── base/            # base manifests (MySQL + application, HTTP)
+├── base/            # HTTPS base (MySQL + application)
 ├── base-http/       # HTTP-only base
 └── overlays/
     ├── development/
     └── production/  # wires SNAPSHOT_ENC_KEY via a Secret
 ```
 
-### Quick Deployment
-
-```bash
-# Build and tag the image
-docker build -t oam-loxilb:latest .
-
-# Development
-kubectl apply -k k8s/overlays/development
-
-# Production (provides SNAPSHOT_ENC_KEY and other secrets)
-kubectl apply -k k8s/overlays/production
-```
-
-### Accessing the Application
-
-```bash
-# Port forward (development)
-kubectl port-forward svc/oam-loxilb-service 8080:8080 -n oam-loxilb
-```
-
-For production, configure your DNS and ingress to point at the OAM service.
+At minimum, a working overlay must add `OAM_JWT_SECRET` and
+`OAM_DEFAULT_ADMIN_PASSWORD` to `oam-loxilb-secret.yaml` and reference them from
+the Deployment's `env:`. The container image translates the `DB_*` environment
+family into `-db-*` flags at entrypoint, so the database wiring in the existing
+manifests is correct as-is.
 
 ## Database Initialization
 
@@ -209,55 +221,33 @@ performance indexes, and seed rows. For existing databases, apply the numbered
 files under `database/migrations/` in order. See
 [docs/oam-db.md](docs/oam-db.md) for the schema reference.
 
-### Reinitialize
+The schema is applied only on first boot of an **empty** data volume. To
+reinitialize, destroy the volume:
 
-#### Docker Compose
 ```bash
 docker compose down -v
 docker compose up -d
 ```
 
-#### Kubernetes
-```bash
-kubectl delete pvc mysql-pvc -n oam-loxilb
-kubectl apply -f k8s/base/mysql-pvc.yaml
-kubectl rollout restart deployment/mysql -n oam-loxilb
-```
+Running the service against a database you manage yourself (containerized or
+external) is covered in
+[docs/database-installation.md](docs/database-installation.md).
 
 ## Health Checks
 
-### Application
-
 ```bash
+# Application (reports application and database connectivity)
 curl http://localhost:8080/oam/health
-```
 
-The `/oam/health` endpoint reports application and database connectivity.
-
-### Database
-
-#### Docker Compose
-```bash
+# Database
 docker compose exec mysql mysqladmin ping -h localhost -u root -p
-```
-
-#### Kubernetes
-```bash
-kubectl exec -it deployment/mysql -n oam-loxilb -- mysqladmin ping -h localhost -u root -p
 ```
 
 ## Monitoring and Logs
 
-### Docker Compose
 ```bash
 docker compose logs -f
 docker compose logs -f oam-loxilb
-```
-
-### Kubernetes
-```bash
-kubectl logs -f deployment/oam-loxilb -n oam-loxilb
-kubectl get pods -n oam-loxilb
 ```
 
 ## Troubleshooting
@@ -275,31 +265,19 @@ kubectl get pods -n oam-loxilb
   / `DB_*` env vars are correct.
   ```bash
   docker compose logs mysql
-  kubectl logs -f deployment/mysql -n oam-loxilb
   ```
-
-### Image pull errors in Kubernetes
-
-```bash
-# Build and load the image into your local cluster
-docker build -t oam-loxilb:latest .
-minikube image load oam-loxilb:latest    # minikube
-kind load docker-image oam-loxilb:latest # kind
-```
+- **Bootstrap admin not created / container restarting on a fresh install:**
+  `OAM_DEFAULT_ADMIN_PASSWORD` violated the account password policy (≥9
+  characters with upper, lower, digit and special; no character three times in a
+  row; not equal to the username), so the initial admin could not be created and
+  the API refuses to run. The log shows `failed to set up the initial admin
+  account`. Set a compliant password and run `up -d` again.
 
 ### Cleanup
 
-#### Docker Compose
 ```bash
 docker compose down      # keep data
 docker compose down -v   # destroy data
-```
-
-#### Kubernetes
-```bash
-kubectl delete -k k8s/overlays/production
-kubectl delete pvc mysql-pvc -n oam-loxilb
-kubectl delete namespace oam-loxilb
 ```
 
 ## Security Considerations

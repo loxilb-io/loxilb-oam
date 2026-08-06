@@ -14,7 +14,8 @@ This document is the schema reference. The authoritative definitions live in:
 ## Database Information
 
 - **Database Name:** `loxioam`
-- **Default DB User:** `oamuser` (override with `-db-user` / `OAM_DB_*`; see
+- **Default DB User:** `oamuser` (override with `-db-user` or the `DB_USER` env
+  var; the canonical connection surface is the `DB_*` family — see
   [DEPLOYMENT.md](../DEPLOYMENT.md))
 - **Default Host / Port:** `127.0.0.1` / `3306`
 
@@ -25,22 +26,28 @@ they are not hardcoded.
 
 ### `users`
 
-Stores user authentication details, role, and OAuth linkage.
+Stores user authentication details and RBAC role.
 
 | Column                   | Type | Description |
 |--------------------------|------|-------------|
 | `id`                     | `INT AUTO_INCREMENT PRIMARY KEY` | Unique user ID |
 | `username`               | `VARCHAR(255) NOT NULL UNIQUE` | Unique username |
-| `password`               | `VARCHAR(255) NOT NULL` | Hashed password |
+| `password`               | `VARCHAR(255) NOT NULL` | bcrypt password hash |
 | `role`                   | `ENUM('admin','operator','viewer','user') DEFAULT 'viewer'` | RBAC role. `user` is a legacy alias treated as `operator`. |
-| `oauth_provider`         | `VARCHAR(50) DEFAULT NULL` | OAuth provider (google, github, …) |
+| `oauth_provider`         | `VARCHAR(50) DEFAULT NULL` | **Unused** — see note below |
 | `email`                  | `VARCHAR(255) DEFAULT NULL` | User email |
-| `oauth_id`               | `VARCHAR(255) DEFAULT NULL` | OAuth provider user ID |
-| `oauth_token`            | `TEXT DEFAULT NULL` | OAuth access token |
+| `oauth_id`               | `VARCHAR(255) DEFAULT NULL` | **Unused** — see note below |
+| `oauth_token`            | `TEXT DEFAULT NULL` | **Unused** — see note below |
 | `created_at`             | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` | Creation time |
 | `credentials_updated`    | `BOOLEAN DEFAULT FALSE` | True once the user changes from default credentials |
 | `credentials_updated_at` | `TIMESTAMP NULL` | When credentials were last updated |
 | `must_change_password`   | `BOOLEAN DEFAULT FALSE` | Force password change on next login |
+
+> **The `oauth_*` columns are retained but never written.** OAuth login was
+> removed before the public release; authentication is username/password against
+> this table. The columns (and the `idx_users_oauth_id` index) are kept so a
+> future identity-provider integration needs no migration — they are always
+> `NULL` today, and the API omits them from user responses.
 
 ### `loxilb_instances`
 

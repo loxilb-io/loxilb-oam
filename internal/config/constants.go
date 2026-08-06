@@ -24,10 +24,6 @@ const (
 	CacheExpirationTime  = 5  // 5 minutes
 	CacheCleanupInterval = 10 // 10 minutes
 
-	// OAuth2 constants
-	StateTokenTTL = 10 * time.Minute // OAuth Token Time-To-Live
-	OAuthTmpPw    = "oauth"
-
 	// AlertType and Severity constants
 	AlertTypeDBDisconnect   = "DB_DISCONNECT"
 	AlertTypeAPIUnreachable = "API_UNREACHABLE"

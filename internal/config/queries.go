@@ -2,9 +2,7 @@ package config
 
 const (
 	InsertUserQuery                  = "INSERT INTO users (username, email, password) VALUES (?, ?, ?)"
-	InsertOAuthUserQuery             = "INSERT INTO users (username, password, oauth_provider, email, oauth_id) VALUES (?, ?, ?, ?, ?)"
 	UpdateUserQuery                  = "UPDATE users SET username = ?, password = ?, email = ?, role = ? WHERE id = ?"
-	UpdateOAuthUserQuery             = "UPDATE users SET username = ?, password = ?, oauth_provider = ?, oauth_id = ?, email = ? WHERE id = ?"
 	DeleteUserQuery                  = "DELETE FROM users WHERE id = ?"
 	SelectUserPasswordQuery          = "SELECT password FROM users WHERE username = ?"
 	UpdateUserPasswordQuery          = "UPDATE users SET password = ? WHERE id = ?"

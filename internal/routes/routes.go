@@ -38,11 +38,12 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, dsn, ssl_option, sslCaCertFileP
 	// Admin reset is now a break-glass, local-only operation via the
 	// `cmd/reset_admin` CLI (requires shell access to the host).
 
-	// OAuth Routes (opt-in, experimental — only registered when enabled).
-	if config.OAuthEnabled() {
-		router.GET("/oam/oauth/:provider", handler.OAuthLogin)
-		router.GET("/oam/oauth/:provider/callback", handler.OAuthCallback)
-	}
+	// OAuth login was REMOVED. The provider flows (Google/GitHub/Facebook) were
+	// experimental, unfinished, and untested against the real handlers, so they
+	// were withdrawn rather than published. Authentication is username/password
+	// against the local user store. The archived implementation lives on the
+	// `feature/oauth2` branch; the users table keeps its oauth_* columns so a
+	// future implementation needs no migration.
 
 	// Serve Swagger API documentation
 	router.GET("/oam/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

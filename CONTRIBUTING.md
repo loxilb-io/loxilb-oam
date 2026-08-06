@@ -6,14 +6,19 @@ set up a development environment and the conventions we follow.
 ## Getting started
 
 1. Fork the repository and clone your fork.
-2. Install Go 1.23+ and MySQL 8.x.
+2. Install Go 1.25+ and MySQL 8.x or later.
 3. Copy `.env.example` to `.env` and fill in the required secrets.
-4. Install dependencies and run the tests:
+4. Download dependencies and run the tests:
 
    ```bash
    make deps
    make test
    ```
+
+   `make test` runs the same unit-test set as the CI gate. The integration
+   suites under `tests/rest_api/` and `tests/e2e/` need a live server and
+   database and are excluded; see `.github/workflows/ci.yml` for how CI boots
+   them if you need to reproduce a failure locally.
 
 ## Development workflow
 
@@ -22,11 +27,15 @@ set up a development environment and the conventions we follow.
 - Ensure the following pass before opening a PR:
 
   ```bash
+  gofmt -l .          # must print nothing — CI fails on any unformatted file
   go build ./...
   go vet ./...
-  go test ./...
+  make test           # unit tests; excludes the live-server integration suites
   golangci-lint run   # config in .golangci.yml
   ```
+
+  If you change handler annotations, also regenerate the OpenAPI docs
+  (`swag init`) — CI fails on drift between the annotations and `docs/`.
 
 - Update or add tests for any behavior change.
 - Update documentation (`README.md`, `docs/`, `DEPLOYMENT.md`, Swagger) when you
