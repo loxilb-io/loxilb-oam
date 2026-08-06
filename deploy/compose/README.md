@@ -108,5 +108,6 @@ docker compose ... down -v            # stop + destroy DB/volumes
 
 > **Layout note:** this bundle lives in the `loxilb-oam` repo so the MySQL schema
 > (`../../database/init`) and the future k8s overlays stay single-sourced. The
-> dev overlay expects `loxilb-ui` checked out as a sibling of `loxilb-oam`;
-> override `UI_SRC` / `OAM_SRC` in `.env` if your layout differs.
+> dev overlay builds only the OAM image, from this repository (`OAM_SRC`,
+> default `../..`); the console image is always pulled — set `UI_IMAGE` /
+> `UI_TAG` in `.env` to run a build of your own.
