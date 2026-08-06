@@ -3201,16 +3201,6 @@ const docTemplate = `{
                 "id": {
                     "type": "integer"
                 },
-                "oauth_id": {
-                    "type": "string"
-                },
-                "oauth_provider": {
-                    "description": "OAuth login was removed; these mirror columns kept in the users table so\na future implementation needs no migration. They are always empty today\nand are omitted from responses. See the ` + "`" + `feature/oauth2` + "`" + ` branch.",
-                    "type": "string"
-                },
-                "oauth_token": {
-                    "type": "string"
-                },
                 "role": {
                     "description": "\"admin\", \"operator\" or \"viewer\"",
                     "type": "string"

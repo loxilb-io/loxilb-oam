@@ -42,8 +42,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, dsn, ssl_option, sslCaCertFileP
 	// experimental, unfinished, and untested against the real handlers, so they
 	// were withdrawn rather than published. Authentication is username/password
 	// against the local user store. The archived implementation lives on the
-	// `feature/oauth2` branch; the users table keeps its oauth_* columns so a
-	// future implementation needs no migration.
+	// `feature/oauth2` branch.
 
 	// Serve Swagger API documentation
 	router.GET("/oam/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

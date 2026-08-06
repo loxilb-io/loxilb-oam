@@ -21,11 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   had no coverage against the real handlers, so it was withdrawn rather than
   published. This drops the `OAM_OAUTH_ENABLED` and `OAM_OAUTH_*_CLIENT_{ID,
   SECRET}` variables, the `-google/-github/-facebook-redirect-url` flags, the
-  `/oam/oauth/*` endpoints, and the `golang.org/x/oauth2` dependency.
-  Authentication is username/password against the local user store. The
-  `users` table keeps its `oauth_*` columns, so no migration is needed and a
-  future implementation can reuse them; the withdrawn code is archived on the
-  `feature/oauth2` branch.
+  `/oam/oauth/*` endpoints, the `golang.org/x/oauth2` dependency, and the
+  `users.oauth_provider` / `oauth_id` / `oauth_token` columns (the last of
+  which stored provider access tokens in plaintext). Authentication is
+  username/password against the local user store. Databases created before
+  this release should apply
+  `database/migrations/005_drop_oauth_columns.sql`; the withdrawn code is
+  archived on the `feature/oauth2` branch.
 
 ### Known limitations
 - The Kubernetes manifests under `k8s/` are **pre-release and unsupported**:

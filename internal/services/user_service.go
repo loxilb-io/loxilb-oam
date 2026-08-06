@@ -197,11 +197,11 @@ func (s *UserService) GetUsers() ([]models.User, error) {
 // Returns the user information without the password field for security.
 func (s *UserService) GetUserByUsername(username string) (*models.User, error) {
 	var user models.User
-	var email, oauthProvider, oauthID sql.NullString
+	var email sql.NullString
 
 	err := utils.RetryOperation(func() error {
-		query := "SELECT id, username, email, role, oauth_provider, oauth_id, created_at FROM users WHERE username = ?"
-		err := s.DB.QueryRow(query, username).Scan(&user.ID, &user.Username, &email, &user.Role, &oauthProvider, &oauthID, &user.CreatedAt)
+		query := "SELECT id, username, email, role, created_at FROM users WHERE username = ?"
+		err := s.DB.QueryRow(query, username).Scan(&user.ID, &user.Username, &email, &user.Role, &user.CreatedAt)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				utils.LogWarning("User not found: " + username)
@@ -220,12 +220,6 @@ func (s *UserService) GetUserByUsername(username string) (*models.User, error) {
 	// Convert sql.NullString to regular string (empty string if NULL)
 	if email.Valid {
 		user.Email = email.String
-	}
-	if oauthProvider.Valid {
-		user.OAuthProvider = oauthProvider.String
-	}
-	if oauthID.Valid {
-		user.OAuthID = oauthID.String
 	}
 
 	return &user, nil
