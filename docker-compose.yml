@@ -41,6 +41,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Release identifier compiled into the binary (`loxilb-oam -version`).
+        # A source build is "dev" unless OAM_VERSION is set — set it to the
+        # release this tree corresponds to (e.g. OAM_VERSION=v0.9.8.7) when
+        # building an image you intend to keep.
+        VERSION: ${OAM_VERSION:-dev}
     image: loxilb-oam:latest
     container_name: oam-loxilb-app
     environment:
@@ -76,7 +82,11 @@ services:
       start_period: 30s
     restart: unless-stopped
     volumes:
-      - app_logs:/app/logs
+      # The service logs to /var/log/loxioam.log, and the log-retrieval API
+      # lists /var/log — persist that directory, not /app/logs (which nothing
+      # writes to). Docker seeds the empty volume from the image's /var/log on
+      # first run, so the directory the image prepares is preserved.
+      - oam_logs:/var/log
 
 networks:
   oam-loxilb-network:
@@ -85,5 +95,5 @@ networks:
 volumes:
   mysql_data:
     driver: local
-  app_logs:
+  oam_logs:
     driver: local

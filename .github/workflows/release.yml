@@ -1,7 +1,9 @@
 name: Release
 
-# Tag-triggered release (push a tag like v1.2.3, or v1.2.3-rc.1 for a
-# prerelease). Produces:
+# Tag-triggered release. Versions follow loxilb-io/loxilb — vMAJOR.MINOR.PATCH
+# with an optional build component (v0.9.8.7), or a -rc./-alpha./-beta. suffix
+# for a prerelease; the tag is validated below and stamped into the binary.
+# Produces:
 #   - a linux/amd64 binary tarball + SHA256SUMS attached to a GitHub Release
 #   - a container image pushed to GHCR (ghcr.io/<owner>/loxilb-oam), which is
 #     Cosign-signed (keyless/OIDC), carries a SLSA build-provenance attestation,
@@ -21,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag to release (e.g. v1.2.3 or v1.2.3-rc.1)'
+        description: 'Version tag to release (e.g. v0.9.8.7 or v0.9.8.7-rc.1)'
         required: true
 
 permissions:
@@ -55,9 +57,17 @@ jobs:
           else
             VERSION="${GITHUB_REF_NAME}"
           fi
+          # loxilb-oam follows loxilb-io/loxilb's scheme: vMAJOR.MINOR.PATCH
+          # with an optional fourth build component (e.g. v0.9.8.7), plus an
+          # optional -rc/-alpha/-beta prerelease suffix. Reject anything else
+          # so a stray tag cannot publish a release.
+          if ! echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-(rc|alpha|beta)[.-]?[0-9]+)?$'; then
+            echo "::error::'${VERSION}' is not a valid version: expected vMAJOR.MINOR.PATCH[.BUILD][-rc.N] (e.g. v0.9.8.7)"
+            exit 1
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          # Prerelease when the tag carries an -rc./-alpha./-beta. suffix.
-          if echo "$VERSION" | grep -Eq -- '-(rc|alpha|beta)\.'; then
+          # Prerelease when the tag carries an -rc/-alpha/-beta suffix.
+          if echo "$VERSION" | grep -Eq -- '-(rc|alpha|beta)'; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
@@ -92,7 +102,9 @@ jobs:
           GOARCH: amd64
         run: |
           go run github.com/swaggo/swag/cmd/swag@v1.16.6 init
-          go build -o loxilb-oam .
+          # Stamp the tag into main.version — it is what `loxilb-oam -version`,
+          # the startup log, and the served OpenAPI spec report.
+          go build -ldflags "-X main.version=${{ steps.ver.outputs.version }}" -o loxilb-oam .
           go build -o reset_admin ./cmd/reset_admin
 
       - name: Package tarball + checksums
@@ -122,6 +134,7 @@ jobs:
           push: false
           load: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
+          build-args: VERSION=${{ steps.ver.outputs.version }}
 
       - name: Trivy gate (CRITICAL + fixable) — blocks publish
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -140,6 +153,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.tags.outputs.list }}
+          build-args: VERSION=${{ steps.ver.outputs.version }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3

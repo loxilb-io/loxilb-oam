@@ -11,9 +11,14 @@ RUN go mod download
 COPY . .
 RUN go install github.com/swaggo/swag/cmd/swag@latest && swag init
 
+# Release identifier, stamped into the binary and repeated on the OCI label.
+# Set by `make docker-build` / the release workflow (vMAJOR.MINOR.PATCH.BUILD,
+# in lockstep with loxilb-io/loxilb); an unset build honestly reports "dev".
+ARG VERSION=dev
+
 # Static binaries (CGO off so they run on a minimal base; -trimpath/-s -w shrink them).
 ENV CGO_ENABLED=0
-RUN go build -trimpath -ldflags="-s -w" -o loxilb-oam . && \
+RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o loxilb-oam . && \
     go build -trimpath -ldflags="-s -w" -o reset_admin ./cmd/reset_admin
 
 # ---- Runtime stage: minimal Alpine with just the binaries ----
@@ -31,9 +36,9 @@ RUN apk add --no-cache ca-certificates && \
 COPY --from=build /app/loxilb-oam /app/reset_admin ./
 COPY --from=build /app/scripts ./scripts
 
-# Image version (set by `make docker-build`, defaults to the :latest tag).
-# Declared after the copy so a version bump only rebuilds the label layer.
-ARG VERSION=latest
+# Re-declared here because ARG is scoped per stage — same value as the build
+# stage above, so the label matches the version compiled into the binary.
+ARG VERSION=dev
 
 # OCI labels: link the published GHCR package back to its source repo (so it
 # inherits the repo's visibility for public releases) and record its metadata.

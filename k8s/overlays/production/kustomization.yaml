@@ -17,4 +17,4 @@ resources:
 
 images:
 - name: oam-loxilb
-  newTag: v1.0.0
+  newTag: v0.9.8.7

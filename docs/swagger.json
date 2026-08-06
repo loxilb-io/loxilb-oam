@@ -1,7 +1,13 @@
 {
     "swagger": "2.0",
     "info": {
-        "contact": {}
+        "description": "Operations, Administration and Management API for LoxiLB instances —\nauthentication, RBAC, user and instance management, configuration\nsnapshots, and a management proxy.",
+        "title": "LoxiLB OAM API",
+        "contact": {},
+        "license": {
+            "name": "Apache 2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
+        }
     },
     "paths": {
         "/oam/alerts": {

@@ -2,13 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## Versioning
+
+loxilb-oam versions **in lockstep with [loxilb-io/loxilb](https://github.com/loxilb-io/loxilb)**
+and uses the same `vMAJOR.MINOR.PATCH[.BUILD]` scheme (e.g. `v0.9.8.7`). A given
+loxilb-oam release targets the loxilb release of the same version: run
+`loxilb-oam v0.9.8.7` against `loxilb v0.9.8.7`. Version numbers therefore track
+the loxilb release train rather than carrying independent semantic-versioning
+meaning about this repository's own API compatibility.
+
+The version is stamped into the binary at build time (`loxilb-oam -version`, the
+startup log, and the served OpenAPI spec all report it) and onto the container
+image's `org.opencontainers.image.version` label.
 
 ## [Unreleased]
 
+## [v0.9.8.7]
+
 ### Added
-- Initial public release of loxilb-oam: OAM management API for LoxiLB instances.
+- Initial public release of loxilb-oam: OAM management API for LoxiLB instances,
+  versioned in lockstep with loxilb v0.9.8.7.
 - Authentication, RBAC (admin/operator/viewer), and server-side token revocation.
 - Instance snapshot orchestration with at-rest AES-256-GCM encryption.
 - Docker Compose deployments: a single-node management-plane bundle
@@ -35,4 +50,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OAM_DEFAULT_ADMIN_PASSWORD` and will not start. Use Docker Compose. See
   [k8s/README.md](k8s/README.md).
 
-[Unreleased]: https://github.com/loxilb-io/loxilb-oam/commits/main
+[Unreleased]: https://github.com/loxilb-io/loxilb-oam/compare/v0.9.8.7...HEAD
+[v0.9.8.7]: https://github.com/loxilb-io/loxilb-oam/releases/tag/v0.9.8.7

@@ -13,7 +13,7 @@ into `CrashLoopBackOff`.
 
 Two smaller problems come with it:
 
-- `k8s/overlays/production` pins `oam-loxilb:v1.0.0`, an image tag that has
+- `k8s/overlays/production` pins `oam-loxilb:v0.9.8.7`, an image tag that has
   never been published.
 
 ## What to use instead

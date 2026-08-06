@@ -389,4 +389,6 @@ All variants are the same two `.env` knobs; only the values differ.
   file layout of the bundle.
 - [`DEPLOYMENT.md`](../DEPLOYMENT.md) — OAM configuration reference (all
   environment variables and CLI flags) and standalone/Kubernetes deployment.
+- [`docs/container-image.md`](container-image.md) — the image itself: published
+  tags, signature/SBOM verification, building your own, air-gapped mirroring.
 - [`SECURITY.md`](../SECURITY.md) — vulnerability reporting.

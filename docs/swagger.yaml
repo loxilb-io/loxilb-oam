@@ -474,6 +474,14 @@ definitions:
     type: object
 info:
   contact: {}
+  description: |-
+    Operations, Administration and Management API for LoxiLB instances —
+    authentication, RBAC, user and instance management, configuration
+    snapshots, and a management proxy.
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  title: LoxiLB OAM API
 paths:
   /oam/alerts:
     get:
