@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
 	"github.com/loxilb-io/loxilb-oam/internal/models"
@@ -562,6 +563,7 @@ func (h *Handler) GetLoxiLBInstanceByID(c *gin.Context) {
 // @Param instance body models.LoxiLBInstanceRequest true "LoxiLB Instance"
 // @Success 201 {object} models.LoxiLBInstance
 // @Failure 400 {object} models.ErrorResponse
+// @Failure 409 {object} models.ErrorResponse
 // @Failure 500 {object} models.ErrorResponse
 // @Security BearerAuth
 // @Router /oam/loxilbs [post]
@@ -574,10 +576,27 @@ func (h *Handler) CreateLoxiLBInstance(c *gin.Context) {
 		return
 	}
 
-	// Default to https if protocol is not specified or is invalid
-	protocol := strings.ToLower(instance.Protocol)
-	if protocol != "http" && protocol != "https" {
-		protocol = "https"
+	fields := models.InstanceFields{
+		Name:        instance.Name,
+		Host:        instance.Host,
+		Port:        instance.Port,
+		Protocol:    instance.Protocol,
+		Description: instance.Description,
+		Version:     instance.Version,
+		Cimage:      instance.Cimage,
+		Ctag:        instance.Ctag,
+	}
+	// Normalize first (trim, lowercase the protocol, default version=v1 as
+	// this endpoint has always done), then validate — the stored values and
+	// the values checked for uniqueness must be the same ones.
+	fields.Normalize()
+	if verr := fields.Validate(); verr != nil {
+		utils.LogWarning("Rejected LoxiLB instance create: " + verr.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": verr.Message, "field": verr.Field})
+		return
+	}
+	if h.rejectInstanceConflict(c, fields, 0) {
+		return
 	}
 
 	// Set default value for IsActive if not provided
@@ -586,32 +605,64 @@ func (h *Handler) CreateLoxiLBInstance(c *gin.Context) {
 		isActive = *instance.IsActive
 	}
 
-	instanceID, apiEndpoint, err := h.loxilbService.AddLoxiLBInstanceWithArgs(instance.Name, instance.Host,
-		instance.Port, protocol, instance.Description, instance.Version, instance.Cimage, instance.Ctag, isActive)
+	instanceID, apiEndpoint, err := h.loxilbService.AddLoxiLBInstanceWithArgs(fields.Name, fields.Host,
+		fields.Port, fields.Protocol, fields.Description, fields.Version, fields.Cimage, fields.Ctag, isActive)
 	if err != nil {
 		utils.LogError("Failed to add LoxiLB instance: " + err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// Lost the race against a concurrent create with the same endpoint.
+		if errors.Is(err, services.ErrInstanceEndpointTaken) {
+			c.JSON(http.StatusConflict, gin.H{"error": services.ErrInstanceEndpointTaken.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add LoxiLB instance"})
 		return
 	}
 
 	// Create a new LoxiLBInstance using the provided information and return it
 	newInstance := models.LoxiLBInstance{
 		ID:          instanceID,
-		Name:        instance.Name,
-		Host:        instance.Host,
-		Port:        instance.Port,
-		Protocol:    protocol,
-		Description: instance.Description,
-		Version:     instance.Version,
+		Name:        fields.Name,
+		Host:        fields.Host,
+		Port:        fields.Port,
+		Protocol:    fields.Protocol,
+		Description: fields.Description,
+		Version:     fields.Version,
 		ApiEndpoint: apiEndpoint,
-		Cimage:      instance.Cimage,
-		Ctag:        instance.Ctag,
+		Cimage:      fields.Cimage,
+		Ctag:        fields.Ctag,
 		IsActive:    isActive,
 		CreatedAt:   time.Now(),
 	}
 
-	utils.LogInfo("LoxiLB instance created: " + instance.Name)
+	utils.LogInfo("LoxiLB instance created: " + fields.Name)
 	c.JSON(http.StatusCreated, newInstance)
+}
+
+// rejectInstanceConflict answers 409 when the name or the derived endpoint is
+// already taken by another row, and 500 if the check itself fails. Reports
+// whether the request has been answered. excludeID is the row being updated
+// (0 on create), so re-saving an instance unchanged is never a conflict.
+func (h *Handler) rejectInstanceConflict(c *gin.Context, fields models.InstanceFields, excludeID int) bool {
+	nameTaken, err := h.loxilbService.InstanceNameTaken(fields.Name, excludeID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate LoxiLB instance"})
+		return true
+	}
+	if nameTaken {
+		c.JSON(http.StatusConflict, gin.H{"error": services.ErrInstanceNameTaken.Error(), "field": "name"})
+		return true
+	}
+
+	endpointTaken, err := h.loxilbService.InstanceEndpointTaken(fields.APIEndpoint(), excludeID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate LoxiLB instance"})
+		return true
+	}
+	if endpointTaken {
+		c.JSON(http.StatusConflict, gin.H{"error": services.ErrInstanceEndpointTaken.Error() + ": " + fields.APIEndpoint()})
+		return true
+	}
+	return false
 }
 
 // UpdateLoxiLBInstance handles updating a LoxiLB instance.
@@ -625,6 +676,8 @@ func (h *Handler) CreateLoxiLBInstance(c *gin.Context) {
 // @Param instance body models.LoxiLBInstance true "LoxiLB instance data"
 // @Success 200 {object} models.LoxiLBInstance
 // @Failure 400 {object} models.ErrorResponse
+// @Failure 404 {object} models.ErrorResponse
+// @Failure 409 {object} models.ErrorResponse
 // @Failure 500 {object} models.ErrorResponse
 // @Security BearerAuth
 // @Router /oam/loxilbs/{id} [put]
@@ -642,11 +695,53 @@ func (h *Handler) UpdateLoxiLBInstance(c *gin.Context) {
 		return
 	}
 
+	// PUT replaces the whole row (the UPDATE writes every column), so the
+	// payload has to carry every field. Without this the endpoint accepted
+	// {"name":"x"} and blanked host/port/image — and an empty protocol
+	// produced the endpoint '://host:port/netlox/', pointing the proxy at
+	// nothing. Same rules as create; both go through InstanceFields.
+	fields := models.InstanceFields{
+		Name:        instance.Name,
+		Host:        instance.Host,
+		Port:        instance.Port,
+		Protocol:    instance.Protocol,
+		Description: instance.Description,
+		Version:     instance.Version,
+		Cimage:      instance.Cimage,
+		Ctag:        instance.Ctag,
+	}
+	fields.Normalize()
+	if verr := fields.Validate(); verr != nil {
+		utils.LogWarning(fmt.Sprintf("Rejected LoxiLB instance update (id %d): %s", instanceID, verr.Error()))
+		c.JSON(http.StatusBadRequest, gin.H{"error": verr.Message, "field": verr.Field})
+		return
+	}
+	if h.rejectInstanceConflict(c, fields, instanceID) {
+		return
+	}
+
 	// Set the instance ID from the URL path parameter
 	instance.ID = instanceID
+	instance.Name = fields.Name
+	instance.Host = fields.Host
+	instance.Port = fields.Port
+	instance.Protocol = fields.Protocol
+	instance.Description = fields.Description
+	instance.Version = fields.Version
+	instance.Cimage = fields.Cimage
+	instance.Ctag = fields.Ctag
+	instance.ApiEndpoint = fields.APIEndpoint()
 
 	if err := h.loxilbService.UpdateLoxiLBInstance(instance); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		switch {
+		case errors.Is(err, services.ErrInstanceNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": services.ErrInstanceNotFound.Error()})
+		case errors.Is(err, services.ErrInstanceEndpointTaken):
+			c.JSON(http.StatusConflict, gin.H{"error": services.ErrInstanceEndpointTaken.Error()})
+		default:
+			utils.LogError("Failed to update LoxiLB instance: " + err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update LoxiLB instance"})
+		}
 		return
 	}
 
