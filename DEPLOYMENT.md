@@ -57,9 +57,10 @@ to start** if the required secrets below are unset.
 > any configuration carried over from an earlier version, and note that passing
 > the removed **flags** will make the binary exit with `flag provided but not
 > defined`. Authentication is username/password against the local user store.
-> The archived implementation is on the `feature/oauth2` branch, and the users
-> table keeps its `oauth_*` columns so a future implementation needs no
-> migration.
+> The archived implementation is on the `feature/oauth2` branch. Databases
+> created before this release should apply
+> `database/migrations/005_drop_oauth_columns.sql` to drop the now-unused
+> `oauth_*` columns.
 
 ### CLI flags (server & database)
 

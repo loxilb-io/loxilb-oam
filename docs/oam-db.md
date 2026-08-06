@@ -34,20 +34,16 @@ Stores user authentication details and RBAC role.
 | `username`               | `VARCHAR(255) NOT NULL UNIQUE` | Unique username |
 | `password`               | `VARCHAR(255) NOT NULL` | bcrypt password hash |
 | `role`                   | `ENUM('admin','operator','viewer','user') DEFAULT 'viewer'` | RBAC role. `user` is a legacy alias treated as `operator`. |
-| `oauth_provider`         | `VARCHAR(50) DEFAULT NULL` | **Unused** — see note below |
 | `email`                  | `VARCHAR(255) DEFAULT NULL` | User email |
-| `oauth_id`               | `VARCHAR(255) DEFAULT NULL` | **Unused** — see note below |
-| `oauth_token`            | `TEXT DEFAULT NULL` | **Unused** — see note below |
 | `created_at`             | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` | Creation time |
 | `credentials_updated`    | `BOOLEAN DEFAULT FALSE` | True once the user changes from default credentials |
 | `credentials_updated_at` | `TIMESTAMP NULL` | When credentials were last updated |
 | `must_change_password`   | `BOOLEAN DEFAULT FALSE` | Force password change on next login |
 
-> **The `oauth_*` columns are retained but never written.** OAuth login was
-> removed before the public release; authentication is username/password against
-> this table. The columns (and the `idx_users_oauth_id` index) are kept so a
-> future identity-provider integration needs no migration — they are always
-> `NULL` today, and the API omits them from user responses.
+Authentication is username/password against this table; there is no external
+identity-provider linkage. Databases created before this release carry unused
+`oauth_provider` / `oauth_id` / `oauth_token` columns — apply
+`database/migrations/005_drop_oauth_columns.sql` to remove them.
 
 ### `loxilb_instances`
 

@@ -81,9 +81,9 @@ func gatewayRequest(t *testing.T, role, method string) int {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 	default:
-		rows := sqlmock.NewRows([]string{"id", "username", "email", "role", "oauth_provider", "oauth_id", "created_at"}).
-			AddRow(7, "alice", "alice@test.local", role, nil, nil, time.Now())
-		mock.ExpectQuery("SELECT id, username, email, role, oauth_provider, oauth_id, created_at FROM users WHERE username = ?").
+		rows := sqlmock.NewRows([]string{"id", "username", "email", "role", "created_at"}).
+			AddRow(7, "alice", "alice@test.local", role, time.Now())
+		mock.ExpectQuery("SELECT id, username, email, role, created_at FROM users WHERE username = ?").
 			WithArgs("alice").
 			WillReturnRows(rows)
 	}

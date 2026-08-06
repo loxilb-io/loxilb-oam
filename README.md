@@ -10,8 +10,7 @@ for one or more LoxiLB instances, backed by MySQL.
 
 - **Authentication** — JWT-based username/password login against the local user
   store, with server-side token revocation and exponential-backoff login
-  lockout. (There is no external identity-provider integration; OAuth login was
-  removed before the public release.)
+  lockout.
 - **RBAC** — three-role model (`admin`, `operator`, `viewer`) resolved from the
   database on every request, with a capability-gated management proxy.
 - **User management** — CRUD, password policy enforcement, and admin bootstrap.

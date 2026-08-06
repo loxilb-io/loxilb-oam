@@ -10,10 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     password VARCHAR(255) NOT NULL,
     -- RBAC Phase 2 3-role model; 'user' kept as legacy alias of operator
     role ENUM('admin', 'operator', 'viewer', 'user') DEFAULT 'viewer',
-    oauth_provider VARCHAR(50) DEFAULT NULL,
     email VARCHAR(255) DEFAULT NULL,
-    oauth_id VARCHAR(255) DEFAULT NULL,
-    oauth_token TEXT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     credentials_updated BOOLEAN DEFAULT FALSE COMMENT 'True if user has updated from default credentials',
     credentials_updated_at TIMESTAMP NULL COMMENT 'When credentials were last updated',
@@ -151,7 +148,6 @@ DELIMITER ;
 
 -- Create indexes using the stored procedure
 CALL CreateIndexIfNotExists('users', 'idx_users_username', 'username');
-CALL CreateIndexIfNotExists('users', 'idx_users_oauth_id', 'oauth_id');
 CALL CreateIndexIfNotExists('users', 'idx_users_credentials_updated', 'credentials_updated');
 CALL CreateIndexIfNotExists('users', 'idx_users_username_credentials', 'username, credentials_updated');
 CALL CreateIndexIfNotExists('loxilb_instances', 'idx_loxilb_instances_api_endpoint', 'api_endpoint');

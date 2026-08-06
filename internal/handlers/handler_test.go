@@ -114,9 +114,9 @@ func TestGetMeOK(t *testing.T) {
 	h, mock, done := newTestHandler(t)
 	defer done()
 
-	rows := sqlmock.NewRows([]string{"id", "username", "email", "role", "oauth_provider", "oauth_id", "created_at"}).
-		AddRow(7, "alice", "alice@test.local", "admin", nil, nil, time.Now())
-	mock.ExpectQuery("SELECT id, username, email, role, oauth_provider, oauth_id, created_at FROM users WHERE username = ?").
+	rows := sqlmock.NewRows([]string{"id", "username", "email", "role", "created_at"}).
+		AddRow(7, "alice", "alice@test.local", "admin", time.Now())
+	mock.ExpectQuery("SELECT id, username, email, role, created_at FROM users WHERE username = ?").
 		WithArgs("alice").
 		WillReturnRows(rows)
 
@@ -136,7 +136,7 @@ func TestGetMeNotFound(t *testing.T) {
 	h, mock, done := newTestHandler(t)
 	defer done()
 
-	mock.ExpectQuery("SELECT id, username, email, role, oauth_provider, oauth_id, created_at FROM users WHERE username = ?").
+	mock.ExpectQuery("SELECT id, username, email, role, created_at FROM users WHERE username = ?").
 		WithArgs("ghost").
 		WillReturnError(sql.ErrNoRows)
 
