@@ -111,7 +111,22 @@ docker-build:
 
 # Push the public image. Requires a prior `docker login $(REGISTRY)`
 # (for GHCR: a token with write:packages).
+#
+# Release tags are NOT pushed from here. .github/workflows/release.yml is the
+# only publisher: it scans the image with Trivy before publishing, signs it with
+# Cosign, and attaches SLSA provenance and an SBOM. A hand push silently moves
+# the tag off that artifact — the signature stays bound to the old digest, so
+# `cosign verify` on the tag then fails and the "immutable release" guarantee in
+# docs/container-image.md is no longer true. This refuses any release-shaped tag
+# (and `latest`, which a release also moves); override deliberately with
+# ALLOW_RELEASE_PUSH=1 when you genuinely mean to replace a published image.
 docker-push:
+	@if [ "$(ALLOW_RELEASE_PUSH)" != "1" ] && printf '%s' "$(TAG)" | grep -Eq '^(latest|v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-(rc|alpha|beta)[.-]?[0-9]+)?)$$'; then \
+		echo "refusing to push $(IMAGE):$(TAG): release tags are published by the Release workflow"; \
+		echo "  (a hand push replaces the signed, scanned, attested image and breaks cosign verify)"; \
+		echo "  push a non-release tag, or override with: make docker-push TAG=$(TAG) ALLOW_RELEASE_PUSH=1"; \
+		exit 1; \
+	fi
 	docker push $(IMAGE):$(TAG)
 
 # Run Docker container

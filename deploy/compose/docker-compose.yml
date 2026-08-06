@@ -80,6 +80,11 @@ services:
     # self-signed cert + `nginx -t`) meant for standalone serving. We only want
     # the built SPA, so bypass that entrypoint and just copy assets out.
     entrypoint: ["sh", "-c"]
+    # Run as root: the image drops to USER nginx (uid 101), which cannot write
+    # into the named volume — Docker creates it root-owned, and the assets a
+    # previous run published are root-owned too. This job only copies files and
+    # exits; nothing here serves traffic, and Caddy mounts the result read-only.
+    user: "0:0"
     command: ["rm -rf /srv/* && cp -a /usr/share/nginx/html/. /srv/ && echo 'loxilb-ui SPA published to /srv'"]
     volumes:
       - ui_build:/srv

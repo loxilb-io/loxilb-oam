@@ -17,7 +17,7 @@ The bundle supports **two first-class modes**:
 | | Mode 1 — Development | Mode 2 — Production |
 |---|---|---|
 | Transport | end-to-end **HTTP** | end-to-end **HTTPS** (every wire that leaves the host) |
-| Images | built from local source | pinned, signed release images from GHCR |
+| Images | OAM built from local source, console pulled | pinned, signed release images from GHCR |
 | DB / API exposure | host ports published for debugging | **none** — DB network is internal; only the edge is reachable |
 | Instance TLS | verification off | verification **on** against your management CA |
 
@@ -37,22 +37,17 @@ Docker Engine 24+ with the Compose plugin, single node.
   `HTTP_PORT`/`HTTPS_PORT`).
 - At least **2 GB RAM** and **10 GB free disk** (Mode 1 source builds need
   more — roughly 5 GB extra for build layers).
-- Outbound HTTPS to `ghcr.io` (Mode 2 image pulls) — not required in Mode 1.
-- For **Mode 1** only: local checkouts of both repositories, side by side:
-  ```
-  <workdir>/
-  ├── loxilb-oam/     # this repository
-  └── loxilb-ui/      # the web console
-  ```
-  (A different layout works — set `OAM_SRC`/`UI_SRC` in `.env`.)
+- Outbound HTTPS to `ghcr.io` — Mode 2 pulls both images; Mode 1 builds the OAM
+  image locally but still pulls the console image.
+- For **Mode 1** only: a checkout of this repository. The OAM build context is
+  the repository root (`../..` from the bundle); set `OAM_SRC` in `.env` if your
+  layout differs. The console is not built here — `loxilb-ui` is its own
+  repository and ships its own image.
 
 ## 2. Get the bundle
 
 ```bash
 git clone https://github.com/loxilb-io/loxilb-oam.git
-# Mode 1 also needs the UI source as a sibling:
-git clone https://github.com/loxilb-io/loxilb-ui.git
-
 cd loxilb-oam/deploy/compose
 ```
 
@@ -113,15 +108,15 @@ Key reference (full comments in `.env.example`):
 
 ## 4. Mode 1 — Development (end-to-end HTTP)
 
-Builds both images from your local checkouts and serves everything over plain
-HTTP. `SITE_ADDRESS=:80` and empty `EDGE_TLS` are the shipped defaults, so no
-edge configuration is needed.
+Builds the OAM image from your checkout, pulls the console image, and serves
+everything over plain HTTP. `SITE_ADDRESS=:80` and empty `EDGE_TLS` are the
+shipped defaults, so no edge configuration is needed.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
 ```
 
-The first build takes several minutes (the UI is a full Node build). Then:
+The first run takes a few minutes (Go build plus the console image pull). Then:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
@@ -171,20 +166,23 @@ yet, or an air-gapped mirror), either authenticate —
 tags.
 
 **Building the production images from source.** When the release registry is
-not reachable but you have both checkouts on the host (the Mode 1 layout), you
-can build the images locally and point the prod overlay at them. Build with the
-dev overlay's build contexts, tag the results to immutable versions, and set the
-image name + tag in `.env`:
+not reachable, build both images locally and point the prod overlay at them.
+Each image is built from its own repository — this bundle only builds OAM —
+then tagged to an immutable version and named in `.env`:
 
 ```bash
-# 1. build from the local checkouts (produces loxilb-oam:dev, loxilb-ui:dev)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+# 1. build the OAM image from this checkout (produces loxilb-oam:dev)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build oam-loxilb
 
-# 2. tag to immutable versions (use the release version or a git short-SHA)
+# 2. build the console from its own repository
+git clone https://github.com/loxilb-io/loxilb-ui.git
+docker build -t loxilb-ui:dev loxilb-ui/
+
+# 3. tag to immutable versions (use the release version or a git short-SHA)
 docker tag loxilb-oam:dev loxilb-oam:0.9.0
 docker tag loxilb-ui:dev  loxilb-ui:0.9.0
 
-# 3. in .env, override the registry defaults with the local image names:
+# 4. in .env, override the registry defaults with the local image names:
 #      OAM_IMAGE=loxilb-oam
 #      UI_IMAGE=loxilb-ui
 #      OAM_TAG=0.9.0
