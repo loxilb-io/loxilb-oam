@@ -12,22 +12,31 @@ name: Release
 # `-rc.` / `-alpha.` / `-beta.` tags publish as prereleases and do NOT move
 # the `:latest` image tag.
 #
-# AUTHORIZATION: this job targets the `release` Environment, so publishing
-# waits for a required-reviewer approval even after a tag is pushed — a tag
-# alone cannot ship a release.
+# AUTHORIZATION: this job targets the `release` Environment, which carries
+# required reviewers (self-review blocked, no admin bypass) and a deployment
+# branch policy allowing only `v*` tags. A tag alone cannot ship a release, and
+# a run started from a branch cannot deploy at all.
 #
 # NOTE: pushing to GHCR requires the org to grant this repo `packages: write`.
 on:
   push:
     tags: ['v*']
+  # Rebuild the image for an EXISTING tag. Run it with the tag as the ref
+  # ("gh workflow run release.yml --ref v0.9.8.7"), not from a branch: the
+  # version comes from the ref, so there is no free-text input that could name
+  # one tag while the job builds another. This path republishes the image only —
+  # the GitHub Release is created on tag push alone (see the step's `if`).
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Version tag to release (e.g. v0.9.8.7 or v0.9.8.7-rc.1)'
-        required: true
 
 permissions:
   contents: read
+
+# Never let two runs publish concurrently — they would race on `:latest` and on
+# the release page. Queue instead of cancelling: a half-published release is
+# worse than a slow one.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -52,11 +61,14 @@ jobs:
       - name: Resolve version
         id: ver
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.tag }}"
-          else
-            VERSION="${GITHUB_REF_NAME}"
+          # The ref IS the version, for both triggers. checkout above therefore
+          # built exactly the tagged tree — a dispatch cannot build one commit
+          # while labelling it as another.
+          if [ "${GITHUB_REF}" != "refs/tags/${GITHUB_REF_NAME}" ]; then
+            echo "::error::Release must run on a tag ref, got '${GITHUB_REF}'. Re-run with: gh workflow run release.yml --ref <tag>"
+            exit 1
           fi
+          VERSION="${GITHUB_REF_NAME}"
           # loxilb-oam follows loxilb-io/loxilb's scheme: vMAJOR.MINOR.PATCH
           # with an optional fourth build component (e.g. v0.9.8.7), plus an
           # optional -rc/-alpha/-beta prerelease suffix. Reject anything else
@@ -64,6 +76,19 @@ jobs:
           if ! echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(-(rc|alpha|beta)[.-]?[0-9]+)?$'; then
             echo "::error::'${VERSION}' is not a valid version: expected vMAJOR.MINOR.PATCH[.BUILD][-rc.N] (e.g. v0.9.8.7)"
             exit 1
+          fi
+          # The Makefile's VERSION is what a local `make build` stamps and what
+          # the docs quote, so it drifting behind the tag is worth surfacing.
+          #
+          # Deliberately a warning, not a hard failure. The tag is the only
+          # input to the published artifact (see the -ldflags stamp below), so
+          # drift cannot corrupt a release — while failing here would burn the
+          # tag: release tags are immutable by ruleset, and versions are in
+          # lockstep with loxilb, so the number cannot simply be bumped to get
+          # unstuck. Surface it and let the release proceed.
+          MK_VERSION="$(make -s version 2>/dev/null || true)"
+          if [ -n "$MK_VERSION" ] && [ "$MK_VERSION" != "$VERSION" ]; then
+            echo "::warning::tag '${VERSION}' disagrees with the Makefile's VERSION (${MK_VERSION}). The release is stamped '${VERSION}' and is correct, but local 'make build' will report '${MK_VERSION}' until the Makefile is bumped."
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           # Prerelease when the tag carries an -rc/-alpha/-beta suffix.
@@ -182,6 +207,14 @@ jobs:
           registry-password: ${{ secrets.GITHUB_TOKEN }}
           format: spdx-json
           output-file: sbom.spdx.json
+          # When a Release already exists for the tag — any re-run, or a
+          # dispatch rebuild — this action otherwise tries to attach the SBOM to
+          # it by re-downloading its own workflow artifact, which needs
+          # `actions: read` that this job deliberately does not grant, and the
+          # step dies with "Resource not accessible by integration". The SBOM is
+          # attached by the release step below and attested above, so the
+          # action's own upload is redundant.
+          upload-release-assets: false
 
       - name: Attest SBOM
         uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
@@ -191,7 +224,14 @@ jobs:
           sbom-path: sbom.spdx.json
           push-to-registry: true
 
+      # Only a tag push publishes a release page. A dispatch rebuild
+      # republishes the image and re-attests it, but must never create or
+      # rewrite a release — and, because this action creates a missing tag at
+      # the ref it runs on, gating it here also removes the last way a run could
+      # mint a tag that no one pushed. To finish a release that failed at this
+      # step, re-run the original tag-push run.
       - name: Create GitHub Release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ steps.ver.outputs.version }}
