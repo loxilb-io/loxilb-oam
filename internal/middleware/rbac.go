@@ -28,12 +28,18 @@ const (
 	ActGatewayWrite  Action = "gateway_write"  // mutating methods through the gateway proxy
 	ActConfigWrite   Action = "config_write"   // configuration export/import
 	ActAlertWrite    Action = "alert_write"    // create/acknowledge alerts
+	ActLogRead       Action = "log_read"       // read the server log and its archives
 )
 
 // roleCapabilities is the single-source capability matrix:
 // admin = everything; operator = day-to-day gateway/alert work, instance READ
-// only; viewer = GET-only everywhere. Reads are granted by authentication
-// alone and are not listed here.
+// only; viewer = GET-only everywhere. Reads of *resources* are granted by
+// authentication alone and are not listed here.
+//
+// ActLogRead is the exception: the server log is not a resource, it is a
+// process-wide diagnostic stream that can incidentally capture anything the
+// code paths touch. Gating it admin-only means a future stray log line cannot
+// become a privilege-escalation path for a lower-privileged role.
 var roleCapabilities = map[string]map[Action]bool{
 	models.RoleAdmin: {
 		ActUserAdmin:     true,
@@ -41,6 +47,7 @@ var roleCapabilities = map[string]map[Action]bool{
 		ActGatewayWrite:  true,
 		ActConfigWrite:   true,
 		ActAlertWrite:    true,
+		ActLogRead:       true,
 	},
 	models.RoleOperator: {
 		ActGatewayWrite: true,

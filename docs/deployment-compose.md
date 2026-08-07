@@ -98,6 +98,7 @@ Key reference (full comments in `.env.example`):
 | `MYSQL_ROOT_PASSWORD`, `DB_PASSWORD` | database credentials (required) |
 | `SNAPSHOT_ENC_KEY` | snapshot encryption at rest (strongly recommended) |
 | `OAM_ALLOWED_ORIGINS` | CORS allowlist, e.g. `https://oam.example.internal` (production) |
+| `OAM_TRUSTED_PROXIES` | proxies whose `X-Forwarded-For` OAM trusts; defaults to `172.16.0.0/12` so the Caddy edge's client IP reaches rate limiting and login lockout |
 | `SITE_ADDRESS`, `EDGE_TLS` | edge listen address + TLS mode (§4/§5) |
 | `EDGE_SNI_FALLBACK` | site to serve clients that send no SNI — required only when the edge is reached by IP (see Troubleshooting) |
 | `OAM_INSTANCE_CA_BUNDLE`, `OAM_INSTANCE_TLS_INSECURE` | TLS to managed LoxiLB instances (§6) |

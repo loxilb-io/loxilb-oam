@@ -10,25 +10,21 @@ import (
 	"github.com/loxilb-io/loxilb-oam/internal/models"
 	"github.com/loxilb-io/loxilb-oam/internal/utils"
 	passwordUtils "github.com/loxilb-io/loxilb-oam/pkg/utils"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/patrickmn/go-cache"
 )
 
 type UserService struct {
-	DB    *sql.DB
-	Cache *cache.Cache
+	DB *sql.DB
 }
 
-// NewUserService initializes a new UserService with the given database connection
-// and sets up an in-memory cache with expiration and cleanup intervals from the config.
+// NewUserService initializes a new UserService with the given database connection.
 func NewUserService(db *sql.DB) *UserService {
-	// Initialize the in-memory cache with expiration and cleanup intervals from the config
-	c := cache.New(time.Duration(config.CacheExpirationTime)*time.Minute, time.Duration(config.CacheCleanupInterval)*time.Minute)
-	return &UserService{DB: db, Cache: c}
+	return &UserService{DB: db}
 }
 
 // AddUserWithArgs adds a new user to the database with the given name and password.
@@ -620,24 +616,26 @@ func (s *UserService) validatePassword(username, password string) error {
 	return nil
 }
 
-// ValidateToken validates the given token using the in-memory cache and the database as a fallback.
-// Returns (true, nil) when the token exists in the store, (false, nil) when it is
+// ValidateToken reports whether the token is still present in the server-side
+// store. Returns (true, nil) when it exists, (false, nil) when it is
 // definitively absent (revoked, expired, or never issued), and (false, err) only on
 // system errors. Absence is NOT retried — the auth middleware calls this on every
 // request, and a retry sleep would penalize each rejected request.
+//
+// The store is queried on every request rather than cached. A positive cache
+// here silently breaks revocation, which is the only reason the store check
+// exists: cached entries outlived logout by the cache TTL, and a revocation
+// performed by a *separate process* — the break-glass `reset_admin` CLI — never
+// reached the running server's cache at all, so a stolen token kept
+// authenticating indefinitely. Verified live. The lookup is a single indexed
+// read on a unique key, which a management API can afford.
 func (s *UserService) ValidateToken(token string) (bool, error) {
-	// Check the cache first
-	if _, found := s.Cache.Get(token); found {
-		return true, nil
-	}
-
-	// If not found in cache, check the database
-	var username string
+	var storedUserID string
 	notFound := false
 	err := utils.RetryOperation(func() error {
 		notFound = false
 		query := config.ValidateTokenQuery
-		err := s.DB.QueryRow(query, token).Scan(&username)
+		err := s.DB.QueryRow(query, token).Scan(&storedUserID)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				notFound = true
@@ -657,18 +655,12 @@ func (s *UserService) ValidateToken(token string) (bool, error) {
 		return false, nil
 	}
 
-	// Cache the token
-	s.Cache.Set(token, username, cache.DefaultExpiration)
-
 	return true, nil
 }
 
-// Logout logs out the user by deleting the given token from the cache and the database.
+// Logout logs out the user by deleting the given token from the database.
 // Returns any error encountered during the process.
 func (s *UserService) Logout(tokenString string) error {
-	// Remove the token from the cache
-	s.Cache.Delete(tokenString)
-
 	return utils.RetryOperation(func() error {
 		query := config.DeleteTokenQuery
 		_, err := s.DB.Exec(query, tokenString)
@@ -677,7 +669,9 @@ func (s *UserService) Logout(tokenString string) error {
 			return err
 		}
 
-		utils.LogInfo("User logged out and token deleted: " + tokenString)
+		// Log the fact, never the credential: the log is API-readable, and a
+		// token echoed here stays valid for the rest of its TTL.
+		utils.LogInfo("User logged out and token deleted")
 		return nil
 	}, config.MaxRetries, config.RetryDelay)
 }
@@ -1060,12 +1054,17 @@ func (s *UserService) ResetAdminToDefault() (int, error) {
 			utils.LogInfo(fmt.Sprintf("Reset admin user (ID: %d) to default credentials", existingUserID))
 		}
 
-		// Invalidate all existing tokens for the admin user
-		deleteTokenQuery := "DELETE FROM user_tokens WHERE user_id = ?"
-		_, err = tx.Exec(deleteTokenQuery, existingUserID)
-		if err != nil {
-			utils.LogWarning(fmt.Sprintf("Failed to delete admin tokens: %s", err))
-			// Continue anyway - not critical
+		// Invalidate every issued token for the admin user. This is the whole
+		// point of a break-glass reset: the account is assumed compromised, so
+		// a stolen bearer token must stop working immediately rather than
+		// outliving the reset by its remaining TTL. Failure aborts the
+		// transaction — a reset that silently leaves sessions alive is worse
+		// than no reset, because the operator is told the account is secured.
+		// Tokens live in api_tokens keyed by the user ID as a string
+		// (see saveToken, which stores strconv.Itoa(user_id)).
+		deleteTokenQuery := "DELETE FROM api_tokens WHERE user_id = ?"
+		if _, err = tx.Exec(deleteTokenQuery, strconv.Itoa(existingUserID)); err != nil {
+			return fmt.Errorf("failed to invalidate existing admin tokens: %w", err)
 		}
 
 		// Commit transaction
@@ -1073,12 +1072,21 @@ func (s *UserService) ResetAdminToDefault() (int, error) {
 			return fmt.Errorf("failed to commit transaction: %w", err)
 		}
 
+		// Deleting the rows is sufficient because ValidateToken reads the store
+		// on every request. It was not when token validity was cached in the
+		// server process: this reset runs as a separate binary, so it could
+		// never have evicted that cache. See ValidateToken.
+
 		// Store the admin user ID for return
 		adminUserID = existingUserID
 
+		// The password is deliberately NOT logged. /var/log/loxioam.log is
+		// served over the API, so anything written here is readable by every
+		// operator who can reach the log endpoints. The caller of the reset
+		// CLI already knows the password — it comes from their own
+		// OAM_DEFAULT_ADMIN_PASSWORD.
 		utils.LogInfo("Admin account reset completed")
 		utils.LogInfo(fmt.Sprintf("   Username: %s", defaultUsername))
-		utils.LogInfo(fmt.Sprintf("   Password: %s", defaultPassword))
 		utils.LogInfo(fmt.Sprintf("   Email: %s", defaultEmail))
 		utils.LogInfo("Please change these credentials after logging in.")
 

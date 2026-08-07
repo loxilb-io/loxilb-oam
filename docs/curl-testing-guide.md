@@ -365,4 +365,7 @@ against the registered host ([instance-tls.md](instance-tls.md)).
 - Without a running LoxiLB instance you get `502` on proxied calls — expected,
   and still a valid test of auth, RBAC, and routing.
 - All proxy requests are logged; check the OAM logs (`GET /oam/logs` or
-  `docker compose logs -f oam-loxilb`) when debugging.
+  `docker compose logs -f oam-loxilb`) when debugging. The `/oam/logs`
+  endpoints require the `admin` role — the raw server log is a process-wide
+  diagnostic stream, not per-resource data, so `operator` and `viewer` tokens
+  get `403`.

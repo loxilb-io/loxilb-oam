@@ -65,3 +65,29 @@ var DefaultConfigPassword = os.Getenv("OAM_DEFAULT_ADMIN_PASSWORD")
 
 // AdminPasswordMissing reports whether OAM_DEFAULT_ADMIN_PASSWORD is unset.
 func AdminPasswordMissing() bool { return os.Getenv("OAM_DEFAULT_ADMIN_PASSWORD") == "" }
+
+// TrustedProxies is the comma-separated OAM_TRUSTED_PROXIES allowlist of proxy
+// IPs/CIDRs (e.g. "10.0.0.0/8,172.18.0.0/16") whose X-Forwarded-For header the
+// server is willing to believe.
+//
+// This is a security control, not a convenience knob. gin's default is to trust
+// every proxy, which makes ClientIP() equal to whatever X-Forwarded-For the
+// caller sent — and ClientIP() keys both the per-IP rate limiter and the
+// failed-login lockout. Trusting all proxies therefore lets an attacker defeat
+// both by rotating one header. Empty (the default) trusts nothing: ClientIP()
+// is the real socket peer, which cannot be spoofed.
+//
+// Set this only when OAM genuinely sits behind a reverse proxy you control, and
+// list that proxy's address — otherwise every request appears to come from the
+// proxy and all clients share one rate-limit bucket.
+var TrustedProxies = parseTrustedProxies(os.Getenv("OAM_TRUSTED_PROXIES"))
+
+func parseTrustedProxies(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
