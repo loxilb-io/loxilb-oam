@@ -196,9 +196,20 @@ Forks, air-gapped builds, and patched releases all build from the same
 
 ```bash
 make docker-build VERSION=v0.9.8.7                     # ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7
-make docker-build docker-push VERSION=v0.9.8.7         # build, then push (needs docker login)
 make docker-build IMAGE_NAME=myorg/loxilb-oam REGISTRY=docker.io VERSION=v0.9.8.7
+
+# Build, then push under a non-release tag (needs docker login):
+make docker-build docker-push VERSION=v0.9.8.7 TAG=v0.9.8.7-myorg.1
 ```
+
+`docker-push` refuses release-shaped tags (`vX.Y.Z[.B]`, optional
+`-rc/alpha/beta` suffix, and `latest`), because those are published solely by
+the release workflow with a Trivy scan, a Cosign signature, provenance, and an
+SBOM bound to that exact digest — a hand push would move the tag off the signed
+artifact and break `cosign verify`. Since `TAG` defaults to `VERSION`, pushing a
+build stamped with a release version needs an explicit non-release `TAG` as
+above. To deliberately replace a published image anyway, add
+`ALLOW_RELEASE_PUSH=1`.
 
 | Make variable | Default | Purpose |
 |---------------|---------|---------|

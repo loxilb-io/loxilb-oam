@@ -49,6 +49,9 @@ image's `org.opencontainers.image.version` label.
   held the original pool, leaving all handlers on a closed one
   (`sql: database is closed`) until restart. The pool is now left to
   `database/sql`, which redials on its own.
+- `docs/container-image.md` documented a `make docker-build docker-push
+  VERSION=…` command that the Makefile's release-tag guard rejects, so the
+  build-your-own-image instructions failed as written.
 
 ## [v0.9.8.7]
 
