@@ -28,7 +28,6 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -197,11 +196,18 @@ func main() {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 
-	// Create a mutex for synchronizing access to the db pointer
-	var mu sync.Mutex
-
-	// Start a goroutine to periodically check the database connection health
+	// Periodically report database reachability.
+	//
+	// This deliberately only observes. *sql.DB is a pool, not a connection: it
+	// reconnects on its own, and a failed Ping means "no connection was free
+	// and healthy just now", not "this pool is finished". The previous version
+	// closed the pool and swapped in a new one, but every service above
+	// captured the original *sql.DB at construction and was never updated — so
+	// one transient blip permanently left every handler querying a closed pool
+	// ("sql: database is closed") until the process restarted. Observing and
+	// letting database/sql recover is both simpler and correct.
 	go func() {
+		wasDown := false
 		for {
 			select {
 			case <-ctx.Done():
@@ -209,35 +215,33 @@ func main() {
 				return
 			default:
 				time.Sleep(config.DbRetryDelay)
-				mu.Lock()
 				if err := db.Ping(); err != nil {
-					utils.LogError(fmt.Sprintf("Database connection lost: %s", err))
-					if *sslOption == "true" {
-						newDB, err := services.ConnectWithSecureTLS(dsn, config.DbMaxRetries, config.DbRetryBackoff, *sslCaCertFilePath, *sslCaClientCertFilePath, *sslCaClientKeyFilePath)
-						if err != nil {
-							utils.LogError(fmt.Sprintf("Reconnection failed: %s", err))
-						} else {
-							db = newDB
-							utils.LogInfo("Database SSL connection re-established")
-						}
-					} else {
-						newDB, err := services.ConnectWithRetry(dsn, config.DbMaxRetries, config.DbRetryBackoff)
-						if err != nil {
-							utils.LogError(fmt.Sprintf("Reconnection failed: %s", err))
-						} else {
-							db.Close()
-							db = newDB
-							utils.LogInfo("Database connection re-established")
-						}
+					if !wasDown {
+						utils.LogError(fmt.Sprintf("Database unreachable: %s (the pool will keep retrying)", err))
+						wasDown = true
 					}
+				} else if wasDown {
+					utils.LogInfo("Database connection re-established")
+					wasDown = false
 				}
-				mu.Unlock()
 			}
 		}
 	}()
 
 	router := gin.Default()
-	routes.SetupRoutes(router, db, dsn, *sslOption, *sslCaCertFilePath, *sslCaClientCertFilePath, *sslCaClientKeyFilePath, handler, userService, &mu, alertService)
+
+	// Decide which proxies may set X-Forwarded-For. ClientIP() keys the rate
+	// limiter and the login lockout, so gin's trust-everything default would
+	// let a caller forge a new identity per request and evade both.
+	if err := router.SetTrustedProxies(config.TrustedProxies); err != nil {
+		utils.LogError(fmt.Sprintf("Invalid OAM_TRUSTED_PROXIES value: %s", err))
+		os.Exit(1)
+	}
+	if len(config.TrustedProxies) == 0 {
+		utils.LogInfo("OAM_TRUSTED_PROXIES is not set — X-Forwarded-For is ignored and the peer address is used as the client IP. If OAM runs behind a reverse proxy, set it to that proxy's address so rate limiting and login lockout see real client IPs.")
+	}
+
+	routes.SetupRoutes(router, db, handler, userService, alertService)
 
 	// Create HTTP/HTTPS server
 	port := fmt.Sprintf(":%s", *serverPort)

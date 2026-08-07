@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
-	"sync"
-	"time"
 
 	"github.com/loxilb-io/loxilb-oam/internal/config"
 	"github.com/loxilb-io/loxilb-oam/internal/models"
@@ -15,48 +13,36 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// DBCheckMiddleware returns a gin middleware that verifies the database
-// connection on each request. If the connection is lost, it raises an alert
-// and attempts to reconnect (using TLS when ssl_option is "true"), updating the
-// shared *db pointer under mu on success.
-func DBCheckMiddleware(db **sql.DB, dsn string, mu *sync.Mutex, ssl_option, sslCaCertFilePath, sslCaClientCertFilePath, sslCaClientKeyFilePath string, alertService *services.AlertService) gin.HandlerFunc {
+// DBCheckMiddleware returns a gin middleware that verifies database
+// reachability before the handler runs, and answers 503 when the database is
+// unreachable.
+//
+// It does not attempt to reconnect. *sql.DB is a pool that redials on its own;
+// a failed Ping means no healthy connection was available at that instant, not
+// that the pool is dead. The earlier implementation replaced the pool on a
+// failed ping, but every service holds the *sql.DB it was constructed with, so
+// the replacement was only ever visible here — leaving the rest of the server
+// pointed at a pool this middleware had already closed.
+func DBCheckMiddleware(db *sql.DB, alertService *services.AlertService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		mu.Lock()
-		defer mu.Unlock()
-
-		if err := (*db).Ping(); err != nil {
+		if err := db.Ping(); err != nil {
 			utils.LogError(fmt.Sprintf("Database connection lost: %s", err))
 
-			// Create an alert for the lost connection
+			// Record an alert for the lost connection. InstanceID 0 means
+			// "the OAM server itself" rather than a managed instance.
 			alertReq := models.CreateAlertRequest{
-				InstanceID: 0, // Assuming 0 for the instance ID, update as needed
+				InstanceID: 0,
 				Type:       config.AlertTypeDBDisconnect,
 				Severity:   config.SeverityCritical,
 				Message:    fmt.Sprintf("Database connection lost: %s", err),
 			}
-			_, alertErr := alertService.CreateAlert(alertReq)
-			if alertErr != nil {
+			if _, alertErr := alertService.CreateAlert(alertReq); alertErr != nil {
 				utils.LogError(fmt.Sprintf("Failed to create alert: %s", alertErr))
 			}
 
-			// Attempt to reconnect according to the SSL option
-			var newDB *sql.DB
-			var err error
-			if ssl_option == "true" {
-				newDB, err = services.ConnectWithSecureTLS(dsn, config.DbMaxRetries, config.DbRetryBackoff, sslCaCertFilePath, sslCaClientCertFilePath, sslCaClientKeyFilePath)
-			} else {
-				newDB, err = services.ConnectWithRetry(dsn, 5, 2*time.Second)
-			}
-
-			if err != nil {
-				utils.LogError(fmt.Sprintf("Reconnection failed: %s", err))
-				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database connection lost"})
-				c.Abort()
-				return
-			}
-
-			// Update the db pointer
-			*db = newDB
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database connection lost"})
+			c.Abort()
+			return
 		}
 		c.Next()
 	}

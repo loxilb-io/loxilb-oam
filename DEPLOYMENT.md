@@ -40,6 +40,7 @@ to start** if the required secrets below are unset.
 |-----------------------|-------------|
 | `SNAPSHOT_ENC_KEY`    | Base64-encoded 32-byte AES-256 key for snapshot encryption at rest. **Without it, instance snapshots — which contain IPsec PSKs and certificate private keys — are stored UNENCRYPTED.** An invalid key aborts startup; an unset key logs a prominent warning. |
 | `OAM_ALLOWED_ORIGINS` | Comma-separated CORS origin allowlist (e.g. `https://oam.example.com,http://localhost:3000`). If unset, CORS falls back to wildcard `*` without credentials — **development only**. |
+| `OAM_TRUSTED_PROXIES`  | Comma-separated IPs/CIDRs of reverse proxies whose `X-Forwarded-For` header OAM will believe (e.g. `172.16.0.0/12`). The resulting client IP keys the per-IP rate limiter and the failed-login lockout. Unset = the header is ignored and the real peer address is used, which is correct for direct access but collapses every client into one bucket when OAM sits behind a proxy. Never list an address range that untrusted callers can originate from — anyone inside it can forge the header and evade both controls. |
 
 ### Optional
 

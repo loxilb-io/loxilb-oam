@@ -19,6 +19,37 @@ image's `org.opencontainers.image.version` label.
 
 ## [Unreleased]
 
+### Security
+- The break-glass admin reset now actually revokes the account's tokens. It
+  deleted from a `user_tokens` table that does not exist, so a stolen bearer
+  token kept working for its full TTL while the CLI reported that all sessions
+  had been invalidated. Tokens are deleted from `api_tokens`, and a failure now
+  aborts the reset rather than being logged as a warning.
+- Token validity is no longer cached in the server process. A positive
+  five-minute cache meant a logged-out token kept authenticating until the entry
+  expired, and — because the break-glass reset runs as a separate binary — a
+  reset could never evict it, so a revoked token stayed valid indefinitely. The
+  `api_tokens` store is now read on every request, making logout and reset take
+  effect immediately. Removes the `github.com/patrickmn/go-cache` dependency and
+  the `CacheExpirationTime` / `CacheCleanupInterval` constants.
+- The bootstrap admin password and logged-out bearer tokens are no longer
+  written to the server log, which is served over the API.
+- `GET /oam/logs` and the log-archive endpoints now require the `admin` role
+  (new `log_read` capability). They were reachable by any authenticated user,
+  including `viewer`.
+- Added `OAM_TRUSTED_PROXIES`. The server previously trusted every proxy
+  (gin's default), so `X-Forwarded-For` — which keys the per-IP rate limiter and
+  the failed-login lockout — could be forged to evade both. Unset, the header is
+  now ignored in favour of the peer address; the Compose bundle defaults it to
+  Docker's bridge pool so the Caddy edge's client IP is still honoured.
+
+### Fixed
+- A transient database outage no longer disables the server permanently. The
+  health check closed the connection pool and replaced it, but every service
+  held the original pool, leaving all handlers on a closed one
+  (`sql: database is closed`) until restart. The pool is now left to
+  `database/sql`, which redials on its own.
+
 ## [v0.9.8.7]
 
 ### Added

@@ -42,6 +42,13 @@ services:
       # Strongly recommended: snapshots carry IPsec PSKs + cert private keys.
       SNAPSHOT_ENC_KEY: ${SNAPSHOT_ENC_KEY:-}
       OAM_ALLOWED_ORIGINS: ${OAM_ALLOWED_ORIGINS:-}
+      # OAM is reached only through the Caddy edge, so it must trust that hop's
+      # X-Forwarded-For to see real client IPs — rate limiting and login lockout
+      # key on them. The default covers Docker's bridge pool (172.16.0.0/12),
+      # which on this stack contains only the edge. Trusting nothing here would
+      # collapse every client into Caddy's single IP; trusting everything would
+      # let any caller forge the header. Narrow it if your network differs.
+      OAM_TRUSTED_PROXIES: ${OAM_TRUSTED_PROXIES:-172.16.0.0/12}
       # Database connection.
       DB_USER: ${DB_USER:-oamuser}
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}

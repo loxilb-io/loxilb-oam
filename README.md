@@ -81,6 +81,7 @@ startup if a required one is unset (there are no built-in fallback values).
 |----------|---------|
 | `SNAPSHOT_ENC_KEY` | base64 32-byte AES-256 key. **Without it, snapshots — which contain IPsec PSKs and certificate private keys — are stored unencrypted.** |
 | `OAM_ALLOWED_ORIGINS` | Comma-separated CORS allowlist. Unset = wildcard (development only). |
+| `OAM_TRUSTED_PROXIES` | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` is trusted. **Required when OAM runs behind a reverse proxy**, otherwise rate limiting and login lockout see the proxy's IP for every client. Unset = header ignored, peer address used. |
 
 ### Optional
 

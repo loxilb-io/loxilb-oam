@@ -38,12 +38,14 @@ the full environment-variable reference.
 | `DbMaxRetries`    | Maximum database connection retries            | `1` |
 | `DbRetryBackoff`  | Backoff time for database retries              | `2s` |
 
-## Token & Cache Configuration
+## Token Configuration
 
-| Constant Name          | Description                          | Value |
-|------------------------|--------------------------------------|-------|
-| `CacheExpirationTime`  | Cache expiration time (minutes)      | `5` |
-| `CacheCleanupInterval` | Cache cleanup interval (minutes)     | `10` |
+Token validity is **not** cached. `UserService.ValidateToken` reads the
+`api_tokens` store on every request, so logout and the break-glass admin reset
+revoke a token immediately. (The former `CacheExpirationTime` /
+`CacheCleanupInterval` constants are gone: caching a positive auth decision
+delayed revocation by the cache TTL, and could not be invalidated at all by the
+separate `reset_admin` process.)
 
 > The JWT / API-token lifetime is **not** a constant. It is
 > `config.TokenExpirationMinutes` in `secrets.go`, defaulting to `480` (8h) and
