@@ -6,7 +6,6 @@ import (
 	"github.com/loxilb-io/loxilb-oam/internal/handlers"
 	"github.com/loxilb-io/loxilb-oam/internal/middleware"
 	"github.com/loxilb-io/loxilb-oam/internal/services"
-	"sync"
 
 	// swagger-generated OpenAPI spec; blank import registers it for the docs route
 	_ "github.com/loxilb-io/loxilb-oam/docs"
@@ -16,7 +15,7 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
-func SetupRoutes(router *gin.Engine, db *sql.DB, dsn, ssl_option, sslCaCertFilePath, sslCaClientCertFilePath, sslCaClientKeyFilePath string, handler *handlers.Handler, userService *services.UserService, mu *sync.Mutex, alertService *services.AlertService) {
+func SetupRoutes(router *gin.Engine, db *sql.DB, handler *handlers.Handler, userService *services.UserService, alertService *services.AlertService) {
 	// Handle preflight requests
 	router.Use(middleware.CORSMiddleware())
 
@@ -48,7 +47,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, dsn, ssl_option, sslCaCertFileP
 	router.GET("/oam/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// Apply DBCheckMiddleware only to the /health endpoint
-	router.GET("/oam/health", middleware.DBCheckMiddleware(&db, dsn, mu, ssl_option, sslCaCertFilePath, sslCaClientCertFilePath, sslCaClientKeyFilePath, alertService), handler.HealthCheck)
+	router.GET("/oam/health", middleware.DBCheckMiddleware(db, alertService), handler.HealthCheck)
 
 	// Protected routes with basic auth only
 	protected := router.Group("/oam")
@@ -78,10 +77,15 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, dsn, ssl_option, sslCaCertFileP
 		protected.PUT("/loxilbs/:id", middleware.RequireCapability(userService, middleware.ActInstanceWrite), handler.UpdateLoxiLBInstance)
 		protected.DELETE("/loxilbs/:id", middleware.RequireCapability(userService, middleware.ActInstanceWrite), handler.DeleteLoxiLBInstance)
 
-		// Log Monitoring
-		protected.GET("/logs", handler.GetLogs)
-		protected.GET("/logs/archives", handler.GetLogArchives)
-		protected.GET("/logs/archives/:filename", handler.GetLogArchivesFilename)
+		// Log Monitoring — admin only. Unlike the resource GETs above, these
+		// serve the raw process log, which can incidentally contain material
+		// from any code path (credentials during bootstrap, tokens, DSN
+		// fragments in driver errors). Authentication alone is not a
+		// sufficient gate for it.
+		logRead := middleware.RequireCapability(userService, middleware.ActLogRead)
+		protected.GET("/logs", logRead, handler.GetLogs)
+		protected.GET("/logs/archives", logRead, handler.GetLogArchives)
+		protected.GET("/logs/archives/:filename", logRead, handler.GetLogArchivesFilename)
 
 		// Alert Monitoring — acknowledging/creating alerts is day-to-day
 		// operation (admin + operator); viewer is read-only

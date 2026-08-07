@@ -3,10 +3,8 @@ package services_test
 import (
 	"github.com/loxilb-io/loxilb-oam/internal/services"
 	"testing"
-	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,10 +15,7 @@ func TestValidateToken(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Initialize the in-memory cache
-	c := cache.New(5*time.Minute, 10*time.Minute)
 	userService := services.NewUserService(db)
-	userService.Cache = c
 
 	// Define the expected query
 	expectedQuery := "SELECT user_id FROM api_tokens WHERE token_value = \\? AND expires_at > NOW()"
@@ -49,10 +44,7 @@ func TestValidateTokenExpired(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Initialize the in-memory cache
-	c := cache.New(5*time.Minute, 10*time.Minute)
 	userService := services.NewUserService(db)
-	userService.Cache = c
 
 	// Define the expected query
 	expectedQuery := "SELECT user_id FROM api_tokens WHERE token_value = \\? AND expires_at > NOW()"
@@ -80,10 +72,7 @@ func TestValidateTokenInvalid(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Initialize the in-memory cache
-	c := cache.New(5*time.Minute, 10*time.Minute)
 	userService := services.NewUserService(db)
-	userService.Cache = c
 
 	// Define the expected query
 	expectedQuery := "SELECT user_id FROM api_tokens WHERE token_value = \\? AND expires_at > NOW()"

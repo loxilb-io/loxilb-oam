@@ -28,12 +28,19 @@ func TestCapabilityMatrix(t *testing.T) {
 		{models.RoleAdmin, middleware.ActGatewayWrite, true},
 		{models.RoleAdmin, middleware.ActConfigWrite, true},
 		{models.RoleAdmin, middleware.ActAlertWrite, true},
+		{models.RoleAdmin, middleware.ActLogRead, true},
 		// operator: gateway + alerts only
 		{models.RoleOperator, middleware.ActGatewayWrite, true},
 		{models.RoleOperator, middleware.ActAlertWrite, true},
 		{models.RoleOperator, middleware.ActUserAdmin, false},
 		{models.RoleOperator, middleware.ActInstanceWrite, false},
 		{models.RoleOperator, middleware.ActConfigWrite, false},
+		// the raw server log is admin-only: it can incidentally carry
+		// credentials or tokens from any code path, so a lower-privileged
+		// reader could escalate. Reads of *resources* stay ungated.
+		{models.RoleOperator, middleware.ActLogRead, false},
+		{models.RoleViewer, middleware.ActLogRead, false},
+		{models.RoleLegacyUser, middleware.ActLogRead, false},
 		// legacy "user" behaves as operator
 		{models.RoleLegacyUser, middleware.ActGatewayWrite, true},
 		{models.RoleLegacyUser, middleware.ActUserAdmin, false},

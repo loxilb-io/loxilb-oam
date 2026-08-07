@@ -21,8 +21,8 @@ const (
 
 	// TOKEN constants
 	// (TokenExpirationMinutes moved to secrets.go — now env-driven)
-	CacheExpirationTime  = 5  // 5 minutes
-	CacheCleanupInterval = 10 // 10 minutes
+	// Token validity is no longer cached: the store is authoritative on every
+	// request so revocation takes effect immediately. See UserService.ValidateToken.
 
 	// AlertType and Severity constants
 	AlertTypeDBDisconnect   = "DB_DISCONNECT"
