@@ -291,7 +291,7 @@ the new image. The container itself holds no state.
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
 | `build-image.yml` | every PR and push to `main` | Builds the image (proving the Dockerfile works, not just `go build`). Runs an **advisory** Trivy scan for HIGH+CRITICAL fixable CVEs — reports, never blocks. No registry push. |
-| `release.yml` | `v*` tag, or manual dispatch | Builds binaries + image, runs a **blocking** Trivy CRITICAL+fixable gate, pushes to GHCR, Cosign-signs the digest, attests SLSA provenance and an SPDX SBOM, and creates the GitHub Release with a tarball and `SHA256SUMS`. Requires reviewer approval via the `release` Environment. |
+| `release.yml` | `v*` tag push; or manual dispatch **on a tag ref**, which rebuilds the image only | Builds binaries + image, runs a **blocking** Trivy CRITICAL+fixable gate, pushes to GHCR, Cosign-signs the digest, attests SLSA provenance and an SPDX SBOM, and — on a tag push only — creates the GitHub Release with a tarball and `SHA256SUMS`. Requires reviewer approval via the `release` Environment, which also refuses to deploy for anything but a `v*` tag. |
 
 ## Known limitations
 
