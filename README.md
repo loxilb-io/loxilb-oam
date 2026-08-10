@@ -1,5 +1,11 @@
 # loxilb-oam
 
+[![CI](https://github.com/loxilb-io/loxilb-oam/actions/workflows/ci.yml/badge.svg)](https://github.com/loxilb-io/loxilb-oam/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/loxilb-io/loxilb-oam/actions/workflows/codeql.yml/badge.svg)](https://github.com/loxilb-io/loxilb-oam/actions/workflows/codeql.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/loxilb-io/loxilb-oam)](https://goreportcard.com/report/github.com/loxilb-io/loxilb-oam)
+[![Latest release](https://img.shields.io/github/v/release/loxilb-io/loxilb-oam)](https://github.com/loxilb-io/loxilb-oam/releases/latest)
+[![License](https://img.shields.io/github/license/loxilb-io/loxilb-oam)](LICENSE)
+
 Operations, Administration, and Management (OAM) service for
 [LoxiLB](https://github.com/loxilb-io/loxilb). `loxilb-oam` is a Go REST API that
 provides centralized authentication, role-based access control, user management,
