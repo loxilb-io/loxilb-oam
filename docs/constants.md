@@ -94,8 +94,10 @@ separate `reset_admin` process.)
 | `LoxilbContainerName` | Name of the LoxiLB Docker container  | `"loxilb"` |
 | `LoxilbImage`         | LoxiLB Docker image repository       | `"ghcr.io/loxilb-io/loxilb"` |
 | `LoxilbTag`           | Default tag/version for LoxiLB image | `"latest"` |
-| `DockerPort`          | Docker daemon port                   | `2375` |
-| `DockerHost`          | Docker host protocol                 | `"http"` |
+
+The Docker Engine API connection is environment-driven rather than constant:
+`OAM_DOCKER_PORT` overrides the port (default `2375`) and `OAM_DOCKER_TLS=true`
+switches the scheme from `http` to `https` (see `internal/config/docker.go`).
 
 ## Login Lockout & Rate Limiting
 
