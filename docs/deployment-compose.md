@@ -155,7 +155,7 @@ they are unset; always pin immutable versions — never use `latest` in
 production, or upgrades become untraceable):
 
 ```bash
-OAM_TAG=v0.1.0        # use the latest release of each repo
+OAM_TAG=v0.9.8.7      # use the latest release of each repo
 UI_TAG=v0.9.0
 ```
 
@@ -180,13 +180,13 @@ git clone https://github.com/loxilb-io/loxilb-ui.git
 docker build -t loxilb-ui:dev loxilb-ui/
 
 # 3. tag to immutable versions (use the release version or a git short-SHA)
-docker tag loxilb-oam:dev loxilb-oam:0.9.0
+docker tag loxilb-oam:dev loxilb-oam:0.9.8.7
 docker tag loxilb-ui:dev  loxilb-ui:0.9.0
 
 # 4. in .env, override the registry defaults with the local image names:
 #      OAM_IMAGE=loxilb-oam
 #      UI_IMAGE=loxilb-ui
-#      OAM_TAG=0.9.0
+#      OAM_TAG=0.9.8.7
 #      UI_TAG=0.9.0
 ```
 

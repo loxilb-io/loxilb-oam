@@ -42,6 +42,11 @@ image's `org.opencontainers.image.version` label.
   the failed-login lockout — could be forged to evade both. Unset, the header is
   now ignored in favour of the peer address; the Compose bundle defaults it to
   Docker's bridge pool so the Caddy edge's client IP is still honoured.
+- **Upgrade note for operators:** the credential-leak fixes stop *new* secrets
+  from reaching the server log, but they do not scrub what earlier builds
+  already wrote. An existing `/var/log/loxioam.log` may still contain the
+  bootstrap admin password and bearer tokens. After upgrading, truncate (or
+  delete) the old log file and rotate the admin password.
 
 ### Fixed
 - A transient database outage no longer disables the server permanently. The

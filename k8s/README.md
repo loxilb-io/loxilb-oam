@@ -11,7 +11,7 @@ Both are mandatory — the server calls `requireSecrets()` at startup and exits
 when either is unset — so the container aborts immediately and the Pod settles
 into `CrashLoopBackOff`.
 
-Two smaller problems come with it:
+A smaller problem comes with it:
 
 - `k8s/overlays/production` pins `oam-loxilb:v0.9.8.7`, an image tag that has
   never been published.

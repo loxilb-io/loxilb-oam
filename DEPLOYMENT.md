@@ -154,6 +154,14 @@ make generate-ssl-certs
 ./scripts/ssl/generate-dev-certs.sh
 ```
 
+The certificates are written to `ssl/dev_certs/`. `make run-https` reads them
+from `ssl/server_certs/`, so copy them there before starting the server:
+
+```bash
+mkdir -p ssl/server_certs
+cp ssl/dev_certs/server.crt ssl/dev_certs/server.key ssl/server_certs/
+```
+
 #### Production
 
 Use certificates from a trusted Certificate Authority (e.g. Let's Encrypt).
