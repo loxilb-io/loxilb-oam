@@ -32,7 +32,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/go-sql-driver/mysql"
+	// registers the "pgx" driver with database/sql
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // version is the release identifier, stamped at link time by the build:
@@ -86,7 +87,7 @@ func main() {
 	dbUser := flag.String("db-user", config.EnvOr("oamuser", "DB_USER"), "Database username (default: DB_USER env)")
 	dbPassword := flag.String("db-password", config.EnvOr("", "DB_PASSWORD", "OAM_DB_PASSWORD"), "Database password (default: DB_PASSWORD env)")
 	dbHost := flag.String("db-host", config.EnvOr("127.0.0.1", "DB_HOST"), "Database host (default: DB_HOST env)")
-	dbPort := flag.String("db-port", config.EnvOr("3306", "DB_PORT"), "Database port (default: DB_PORT env)")
+	dbPort := flag.String("db-port", config.EnvOr("5432", "DB_PORT"), "Database port (default: DB_PORT env)")
 	dbName := flag.String("db-name", config.EnvOr("loxioam", "DB_NAME"), "Database name (default: DB_NAME env)")
 	sslOption := flag.String("ssl-option", "false", "Enable SSL connection")
 	sslCaCertFilePath := flag.String("ssl-ca-cert-file", "./ssl/certs/root-ca.pem", "SSL CA certificate file path")
@@ -134,11 +135,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Connect to the MySQL database with retry logic. If the SSL option is enabled, connect securely
+	// Connect to the PostgreSQL database with retry logic. If the SSL option is enabled, connect securely
 	var db *sql.DB
 	var err error
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", *dbUser, dbPass, *dbHost, *dbPort, *dbName)
+	dsn := config.PostgresDSN(*dbUser, dbPass, *dbHost, *dbPort, *dbName, config.SSLModeFor(*sslOption == "true"))
 
 	// Create the DSN (Data Source Name) from the command-line flags
 	if *sslOption == "true" {

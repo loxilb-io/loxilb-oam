@@ -22,13 +22,13 @@ Docker Compose is the supported deployment path for this release:
 
 | Deployment | Path | Guide |
 |------------|------|-------|
-| Full management plane (UI + API + MySQL behind a TLS edge) — **recommended** | [`deploy/compose/`](../deploy/compose/) | [docs/deployment-compose.md](../docs/deployment-compose.md) |
-| API + MySQL over HTTP | [`docker-compose.yml`](../docker-compose.yml) | [DEPLOYMENT.md](../DEPLOYMENT.md) |
+| Full management plane (UI + API + PostgreSQL behind a TLS edge) — **recommended** | [`deploy/compose/`](../deploy/compose/) | [docs/deployment-compose.md](../docs/deployment-compose.md) |
+| API + PostgreSQL over HTTP | [`docker-compose.yml`](../docker-compose.yml) | [DEPLOYMENT.md](../DEPLOYMENT.md) |
 
 ## Status
 
 These manifests are kept as the starting point for a converged Kubernetes
-deployment (OAM + UI + MySQL + cert-manager) that is in development. The
+deployment (OAM + UI + PostgreSQL + cert-manager) that is in development. The
 certificate model it will use for the OAM→gateway hop is already defined and
 shared with the Compose path — see
 [docs/instance-tls.md](../docs/instance-tls.md).
@@ -59,7 +59,7 @@ Populate every `CHANGE_ME` placeholder out of band. Never commit real secrets.
 
 ```
 k8s/
-├── base/            # HTTPS base (MySQL + application)
+├── base/            # HTTPS base (PostgreSQL + application)
 ├── base-http/       # HTTP-only base
 └── overlays/
     ├── development/

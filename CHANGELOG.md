@@ -19,6 +19,52 @@ image's `org.opencontainers.image.version` label.
 
 ## [Unreleased]
 
+### Changed — BREAKING
+- **The datastore is now PostgreSQL 18; MySQL is no longer supported.** There is
+  no in-place upgrade: a MySQL deployment cannot be pointed at this release.
+  Stand the stack up against an empty PostgreSQL database, then move any data
+  across separately (the `MEDIUMBLOB` → `BYTEA` snapshot column and the former
+  `ENUM` columns need explicit type handling if you do).
+  - `MYSQL_ROOT_PASSWORD` is **removed**. PostgreSQL's `POSTGRES_USER` owns the
+    database, so `DB_PASSWORD` is now the only database secret. Remove the key
+    from your `.env`.
+  - `DB_PORT` defaults to `5432` (was `3306`), and `DB_HOST` defaults to the
+    `postgres` service (was `mysql`) in the bundled Compose stacks.
+  - The bundled database service, its volume, and the Kubernetes manifests are
+    renamed `mysql*` → `postgres*` (`postgres-secret` now holds `postgres-user`
+    / `postgres-password` / `postgres-database`).
+  - `database/config/my.cnf` is gone. The settings that mattered are passed as
+    server flags instead, because pointing PostgreSQL's `config_file` outside
+    `PGDATA` also moves where it looks for `pg_hba.conf`. MySQL's
+    `general_log = 1` is deliberately **not** carried over: the equivalent
+    (`log_statement = all`) would write credentials and tokens to the log.
+  - `-ssl-option=true` now means `sslmode=verify-full`, so the server
+    certificate must be valid for the hostname in `DB_HOST`. The default client
+    key/cert paths moved from `certs/mysql.*` to `certs/postgres.*`.
+  - rsyslog log shipping uses `ompgsql` (package `rsyslog-pgsql`) instead of
+    `ommysql`.
+  - The MySQL-era migrations are retained unconverted under
+    `database/migrations/legacy-mysql/` for historical reference only.
+    `database/init/00-init-complete.sql` is the entire PostgreSQL schema.
+
+### Fixed
+- The log-retrieval query could never succeed: it selected ten columns —
+  `message` twice, plus a `create_at` column that does not exist — into a
+  nine-column scan. It now selects the nine columns the reader actually expects.
+- The Kubernetes database liveness/readiness probes authenticated with the
+  literal string `CHANGE_ME`, so they failed against any real secret. They now
+  read the credentials from the pod environment.
+- The four Kubernetes database-init ConfigMaps had each drifted from the real
+  schema — the production copy was missing the `system_config` table the service
+  requires at startup. All four are now generated from the single canonical
+  schema file.
+- `isDuplicateEntryError` matched the driver error with a bare type assertion,
+  so a wrapped error was not recognised as a duplicate. It now unwraps, and
+  shares one implementation with `IsDuplicateKeyError`.
+- Database credentials are URL-escaped when building the connection string. A
+  password containing `@`, `/`, `:` or `?` previously produced an unparseable
+  DSN that surfaced as a confusing authentication failure.
+
 ### Security
 - The break-glass admin reset now actually revokes the account's tokens. It
   deleted from a `user_tokens` table that does not exist, so a stolen bearer

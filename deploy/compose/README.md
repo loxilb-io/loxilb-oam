@@ -5,11 +5,11 @@ Runs the whole management plane on one host:
 ```
 browser ──HTTP/HTTPS──▶ caddy (edge)
                           ├─ /            → static SPA (loxilb-ui)
-                          └─ /api/oam/*   → oam-loxilb (API) ──▶ mysql
+                          └─ /api/oam/*   → oam-loxilb (API) ──▶ postgres
                                                └─ TLS ──▶ managed LoxiLB instances
 ```
 
-Three long-running services — **caddy**, **oam-loxilb**, **mysql** — plus a
+Three long-running services — **caddy**, **oam-loxilb**, **postgres** — plus a
 one-shot **ui-assets** job that publishes the SPA build into the volume Caddy
 serves. **Full step-by-step operator guide:**
 [`docs/deployment-compose.md`](../../docs/deployment-compose.md).
@@ -18,7 +18,7 @@ serves. **Full step-by-step operator guide:**
 
 ```bash
 cp .env.example .env      # fill in the required secrets
-# edit .env: MYSQL_ROOT_PASSWORD, DB_PASSWORD, OAM_JWT_SECRET,
+# edit .env: DB_PASSWORD, OAM_JWT_SECRET,
 #            OAM_DEFAULT_ADMIN_PASSWORD, SNAPSHOT_ENC_KEY
 ```
 
@@ -84,7 +84,7 @@ ConfigMap/Secret. Full reference: `.env.example`. Highlights:
 |-----|---------|
 | `SITE_ADDRESS` / `EDGE_TLS` | edge listen address + TLS mode (see below) |
 | `OAM_JWT_SECRET`, `OAM_DEFAULT_ADMIN_PASSWORD`, `SNAPSHOT_ENC_KEY` | OAM secrets |
-| `MYSQL_ROOT_PASSWORD`, `DB_PASSWORD`, `DB_HOST` | database (set `DB_HOST` for an external DB) |
+| `DB_PASSWORD`, `DB_HOST` | database (set `DB_HOST` for an external DB) |
 | `OAM_INSTANCE_CA_BUNDLE`, `OAM_INSTANCE_TLS_INSECURE` | TLS to managed LoxiLB instances |
 | `OAM_TAG`, `UI_TAG` | pinned image versions (prod) |
 
@@ -130,7 +130,7 @@ docker compose ... down               # stop (keep data)
 docker compose ... down -v            # stop + destroy DB/volumes
 ```
 
-> **Layout note:** this bundle lives in the `loxilb-oam` repo so the MySQL schema
+> **Layout note:** this bundle lives in the `loxilb-oam` repo so the PostgreSQL schema
 > (`../../database/init`) and the future k8s overlays stay single-sourced. The
 > dev overlay builds only the OAM image, from this repository (`OAM_SRC`,
 > default `../..`); the console image is always pulled — set `UI_IMAGE` /

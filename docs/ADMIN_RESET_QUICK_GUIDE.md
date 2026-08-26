@@ -123,7 +123,7 @@ running the reset:
 export DB_USER=oamuser
 export DB_PASSWORD=CHANGE_ME
 export DB_HOST=127.0.0.1
-export DB_PORT=3306
+export DB_PORT=5432
 export DB_NAME=loxioam
 
 # For SSL connections
@@ -165,8 +165,8 @@ spec:
             command:
             - ./reset_admin
             - --confirm
-            - --db-host=mysql-service
-            - --db-port=3306
+            - --db-host=postgres-service
+            - --db-port=5432
           restartPolicy: OnFailure
 ```
 
@@ -207,12 +207,12 @@ Include the `--confirm` flag:
 
 ```bash
 # Check the database is running
-docker ps | grep mysql
+docker ps | grep postgres
 # Or
-kubectl get pods -n oam-loxilb | grep mysql
+kubectl get pods -n oam-loxilb | grep postgres
 
 # Check database connectivity
-docker exec -it oam-loxilb-mysql mysql -u oamuser -p -e "SELECT 1"
+docker exec -it oam-loxilb-postgres psql -U oamuser -d loxioam -c "SELECT 1"
 ```
 
 ### Binary not found in Docker

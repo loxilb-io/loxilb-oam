@@ -31,22 +31,22 @@ spec:
         - name: DB_USER
           valueFrom:
             secretKeyRef:
-              name: mysql-secret
-              key: mysql-user
+              name: postgres-secret
+              key: postgres-user
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: mysql-secret
-              key: mysql-password
+              name: postgres-secret
+              key: postgres-password
         - name: DB_HOST
-          value: "mysql-service"
+          value: "postgres-service"
         - name: DB_PORT
-          value: "3306"
+          value: "5432"
         - name: DB_NAME
           valueFrom:
             secretKeyRef:
-              name: mysql-secret
-              key: mysql-database
+              name: postgres-secret
+              key: postgres-database
         - name: TOKEN_EXPIRATION
           valueFrom:
             configMapKeyRef:

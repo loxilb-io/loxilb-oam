@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: oam-loxilb
+  labels:
+    app: postgres
+    component: database
+    environment: production
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        component: database
+        environment: production
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:18.6
+        # Tuning is passed as flags rather than a mounted postgresql.conf:
+        # pointing config_file outside PGDATA also moves where PostgreSQL looks
+        # for pg_hba.conf, which breaks authentication. These are the settings
+        # the retired MySQL my.cnf actually carried. general_log has no
+        # equivalent here on purpose — log_statement=all would write credentials
+        # and tokens into the pod log.
+        args:
+          - postgres
+          - -c
+          - max_connections=200
+          - -c
+          - shared_buffers=256MB
+          - -c
+          - timezone=UTC
+          - -c
+          - log_min_duration_statement=2000
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: postgres-database
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: postgres-password
+        volumeMounts:
+        # postgres:18 sets PGDATA=/var/lib/postgresql/18/docker and declares its
+        # volume at /var/lib/postgresql. Mounting the pre-18 .../data path here
+        # would leave the real data directory inside the container filesystem,
+        # so the database would reset on every pod restart.
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql
+        - name: postgres-init-scripts
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        # Run through sh so the probe reads the credentials from the pod's own
+        # environment. The MySQL probes this replaces had the password baked in
+        # literally as "-pCHANGE_ME", so they failed against any real secret.
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - exec pg_isready -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - exec pg_isready -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: postgres-init-scripts
+        configMap:
+          name: postgres-init-config

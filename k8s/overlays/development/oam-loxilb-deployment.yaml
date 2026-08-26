@@ -31,13 +31,13 @@ spec:
         - name: DB_USER
           valueFrom:
             secretKeyRef:
-              name: mysql-secret
-              key: mysql-user
+              name: postgres-secret
+              key: postgres-user
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: mysql-secret
-              key: mysql-password
+              name: postgres-secret
+              key: postgres-password
         - name: DB_HOST
           valueFrom:
             configMapKeyRef:

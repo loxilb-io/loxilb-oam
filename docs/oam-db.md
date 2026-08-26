@@ -1,6 +1,6 @@
-# MySQL Database Schema
+# PostgreSQL Database Schema
 
-The LoxiLB OAM system uses a MySQL database to store users, managed LoxiLB
+The LoxiLB OAM system uses a PostgreSQL database to store users, managed LoxiLB
 instances, API tokens, logs, alerts, acknowledgments, login-attempt tracking,
 instance snapshots, and system configuration.
 
@@ -17,7 +17,7 @@ This document is the schema reference. The authoritative definitions live in:
 - **Default DB User:** `oamuser` (override with `-db-user` or the `DB_USER` env
   var; the canonical connection surface is the `DB_*` family — see
   [DEPLOYMENT.md](../DEPLOYMENT.md))
-- **Default Host / Port:** `127.0.0.1` / `3306`
+- **Default Host / Port:** `127.0.0.1` / `5432`
 
 Credentials are supplied at runtime through environment variables and CLI flags;
 they are not hardcoded.
@@ -205,7 +205,7 @@ Installation-level settings (e.g. `installation_id`, `first_boot_at`).
 
 - **Fresh install:** `database/init/00-init-complete.sql` creates all tables,
   performance indexes, and seed rows. Docker Compose mounts it so it runs
-  automatically on first MySQL startup.
+  automatically on first PostgreSQL startup.
 - **Existing databases:** apply the numbered files in `database/migrations/` in
   order.
 

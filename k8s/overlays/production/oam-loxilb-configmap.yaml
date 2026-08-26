@@ -4,8 +4,8 @@ metadata:
   name: oam-loxilb-config
   namespace: oam-loxilb
 data:
-  DB_HOST: "mysql-service.cluster.local"
-  DB_PORT: "3306"
+  DB_HOST: "postgres-service.cluster.local"
+  DB_PORT: "5432"
   DB_NAME: "loxioam"
   TOKEN_EXPIRATION: "1440"
   SERVER_PORT: "8080"

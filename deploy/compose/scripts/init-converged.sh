@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Interactive bootstrap for the CONVERGED single-node deployment:
-# management plane (OAM + console + MySQL) and a local loxilb-inference-gateway
+# management plane (OAM + console + PostgreSQL) and a local loxilb-inference-gateway
 # data plane on the same host.
 #
 #   deploy/compose/scripts/init-converged.sh
@@ -126,8 +126,7 @@ if [ -f "$ENV_FILE" ]; then
   else
     BK="$ENV_FILE.bak.$(date +%Y%m%d-%H%M%S)"
     cp "$ENV_FILE" "$BK"; ok "backed up to $(basename "$BK")"
-    # Needed if a MySQL volume from this .env still exists — see "Database" below.
-    OLD_MYSQL_ROOT="$(grep -m1 '^MYSQL_ROOT_PASSWORD=' "$BK" | cut -d= -f2- || true)"
+    # Needed if a PostgreSQL volume from this .env still exists — see "Database" below.
     OLD_DB_PW="$(grep -m1 '^DB_PASSWORD=' "$BK" | cut -d= -f2- || true)"
     # Everything else becomes the DEFAULT for its prompt. Re-running and pressing
     # Enter must reproduce the deployment you already have — silently drifting to
@@ -319,18 +318,19 @@ gen_admin_pw() {
   printf 'Loxi%%Adm1n%s' "$(rand_alnum 4)"
 }
 
-# MySQL applies MYSQL_ROOT_PASSWORD / DB_PASSWORD only when it initialises an
-# EMPTY data directory. Against a volume that already exists, freshly generated
-# credentials are simply wrong: MySQL comes up fine and reports healthy (its
-# ping check does not authenticate), while OAM loops on "Database connection
-# failed" and never goes healthy. Decide this before writing .env.
+# PostgreSQL applies POSTGRES_PASSWORD only when it initialises an EMPTY data
+# directory. Against a volume that already exists, freshly generated credentials
+# are simply wrong: PostgreSQL comes up fine and reports healthy (pg_isready
+# checks that the server accepts connections, not that a password matches),
+# while OAM loops on "Database connection failed" and never goes healthy.
+# Decide this before writing .env.
 KEEP_DB=0
-MYSQL_VOL="$(docker volume ls -q --filter name=loxilb-mgmt_mysql_data 2>/dev/null | head -1 || true)"
-if [ -n "$MYSQL_VOL" ]; then
-  warn "an existing database volume was found: $MYSQL_VOL"
-  note "New database secrets would not apply to it — MySQL keeps the passwords it"
-  note "was first initialised with, and OAM would fail to authenticate."
-  if [ -n "${OLD_MYSQL_ROOT:-}" ] && [ -n "${OLD_DB_PW:-}" ]; then
+PG_VOL="$(docker volume ls -q --filter name=loxilb-mgmt_postgres_data 2>/dev/null | head -1 || true)"
+if [ -n "$PG_VOL" ]; then
+  warn "an existing database volume was found: $PG_VOL"
+  note "New database secrets would not apply to it — PostgreSQL keeps the password"
+  note "it was first initialised with, and OAM would fail to authenticate."
+  if [ -n "${OLD_DB_PW:-}" ]; then
     if confirm "Keep that database and reuse its credentials (preserves users, instances, snapshots)?" y; then
       KEEP_DB=1
     fi
@@ -339,11 +339,11 @@ if [ -n "$MYSQL_VOL" ]; then
   fi
   if [ "$KEEP_DB" = 0 ]; then
     warn "starting clean DESTROYS that database: all users, registered instances and snapshots"
-    if confirm "Delete $MYSQL_VOL and start with an empty database?" n; then
+    if confirm "Delete $PG_VOL and start with an empty database?" n; then
       docker compose "${MGMT_FILES[@]}" down >/dev/null 2>&1 || true
-      docker volume rm "$MYSQL_VOL" >/dev/null 2>&1 \
-        || die "could not remove $MYSQL_VOL — stop anything still using it and re-run."
-      ok "removed $MYSQL_VOL — a fresh database will be initialised"
+      docker volume rm "$PG_VOL" >/dev/null 2>&1 \
+        || die "could not remove $PG_VOL — stop anything still using it and re-run."
+      ok "removed $PG_VOL — a fresh database will be initialised"
     else
       die "Nothing has been changed yet.
 
@@ -355,12 +355,11 @@ matching the volume. To recover credentials by hand, they are in one of:
 fi
 
 if [ "$KEEP_DB" = 1 ]; then
-  MYSQL_ROOT_PASSWORD="$OLD_MYSQL_ROOT"; DB_PASSWORD="$OLD_DB_PW"
+  DB_PASSWORD="$OLD_DB_PW"
   ok "database credentials carried over from the previous .env"
   note "The admin password below applies only to a FRESH database; this one keeps"
   note "the password it already has. The script offers to reset it at the end."
 else
-  MYSQL_ROOT_PASSWORD="$(rand_alnum 28)"
   DB_PASSWORD="$(rand_alnum 28)"
 fi
 OAM_JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
@@ -411,7 +410,6 @@ cat > "$ENV_FILE" <<ENVEOF
 # Converged single-node deployment. Guide: docs/deployment-converged.md
 
 # ── Required secrets ─────────────────────────────────────────────────────────
-MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
 DB_PASSWORD=$DB_PASSWORD
 OAM_JWT_SECRET=$OAM_JWT_SECRET
 OAM_DEFAULT_ADMIN_PASSWORD=$ADMIN_PW
@@ -443,8 +441,8 @@ OAM_INSTANCE_TLS_INSECURE=false
 
 # ── Database ─────────────────────────────────────────────────────────────────
 DB_USER=oamuser
-DB_HOST=mysql
-DB_PORT=3306
+DB_HOST=postgres
+DB_PORT=5432
 DB_NAME=loxioam
 TOKEN_EXPIRATION=480
 
@@ -538,9 +536,9 @@ else
   docker logs loxilb-mgmt-oam-loxilb-1 2>&1 | tail -6 | sed 's/^/      /'
   if docker logs loxilb-mgmt-oam-loxilb-1 2>&1 | tail -20 | grep -qi "database connection failed"; then
     warn "OAM cannot reach the database with the credentials in .env."
-    note "Almost always: a MySQL volume initialised with DIFFERENT credentials."
-    note "Either restore DB_PASSWORD/MYSQL_ROOT_PASSWORD from an .env backup, or"
-    note "remove the volume to start clean:  docker volume rm ${MYSQL_VOL:-loxilb-mgmt_mysql_data}"
+    note "Almost always: a PostgreSQL volume initialised with DIFFERENT credentials."
+    note "Either restore DB_PASSWORD from an .env backup, or"
+    note "remove the volume to start clean:  docker volume rm ${PG_VOL:-loxilb-mgmt_postgres_data}"
   fi
   FAIL=1
 fi

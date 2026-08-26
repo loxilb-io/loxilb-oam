@@ -45,18 +45,9 @@ func (s *AlertService) CreateAlert(alertReq models.CreateAlertRequest) (int, err
 	}
 
 	err := utils.RetryOperation(func() error {
+		// PostgreSQL has no LastInsertId; the query ends in RETURNING id.
 		query := config.InsertAlertQuery
-		result, err := s.DB.Exec(query, alertReq.InstanceID, alertReq.Type, alertReq.Severity, alertReq.Message)
-		if err != nil {
-			return err
-		}
-
-		lastInsertID, err := result.LastInsertId()
-		if err != nil {
-			return err
-		}
-		alertID = int(lastInsertID)
-		return nil
+		return s.DB.QueryRow(query, alertReq.InstanceID, alertReq.Type, alertReq.Severity, alertReq.Message).Scan(&alertID)
 	}, config.MaxRetries, config.RetryDelay)
 
 	return alertID, err
@@ -128,7 +119,7 @@ func (s *AlertService) GetAlertHistory(startTime, endTime time.Time, limit, offs
 	}
 
 	err := utils.RetryOperation(func() error {
-		query := config.SelectAlertHistoryQuery + " LIMIT ? OFFSET ?"
+		query := config.SelectAlertHistoryQuery + config.SelectAlertHistoryPageSuffix
 		rows, err := s.DB.Query(query, startTime, endTime, limit, offset)
 		if err != nil {
 			return err

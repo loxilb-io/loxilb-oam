@@ -67,23 +67,24 @@ jobs:
           path: coverage.out
 
   integration:
-    name: Integration (MySQL)
+    name: Integration (PostgreSQL)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Boots the real binary against a MySQL service and runs the env-driven
+    # Boots the real binary against a PostgreSQL service and runs the env-driven
     # tests/rest_api suite — this is what protects the HTTP API contract.
     services:
-      mysql:
-        image: mysql:9.2.0  # pinned to match deploy/compose/docker-compose.yml
+      postgres:
+        image: postgres:18.6  # pinned to match deploy/compose/docker-compose.yml
         env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: loxioam
-          MYSQL_USER: oamuser
-          MYSQL_PASSWORD: oampass
+          # POSTGRES_USER owns POSTGRES_DB, so the application account can create
+          # the schema itself and no superuser credentials are needed here.
+          POSTGRES_DB: loxioam
+          POSTGRES_USER: oamuser
+          POSTGRES_PASSWORD: oampass
         ports:
-          - 3306:3306
+          - 5432:5432
         options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"
+          --health-cmd="pg_isready -q -U oamuser -d loxioam"
           --health-interval=5s
           --health-timeout=5s
           --health-retries=20
@@ -97,11 +98,16 @@ jobs:
           cache: true
 
       - name: Load database schema
-        # Run the client inside the service container (unix socket) so MySQL 9's
-        # caching_sha2 auth needs no TLS / public-key exchange over TCP.
+        # psql ships on the GitHub-hosted runners, so the schema is loaded over
+        # TCP as the application user — which is also the database owner, so the
+        # objects end up owned by the account the server connects with.
+        # ON_ERROR_STOP makes a bad statement fail the job instead of leaving a
+        # half-built schema for the integration tests to trip over.
+        env:
+          PGPASSWORD: oampass
         run: |
-          docker exec -i "${{ job.services.mysql.id }}" \
-            mysql -uroot -proot loxioam < database/init/00-init-complete.sql
+          psql -h 127.0.0.1 -p 5432 -U oamuser -d loxioam \
+            -v ON_ERROR_STOP=1 -f database/init/00-init-complete.sql
 
       - name: Build server
         run: go build -o oam-server .
@@ -112,7 +118,7 @@ jobs:
           OAM_DEFAULT_ADMIN_PASSWORD: ChangeMe-Admin1!
           DB_PASSWORD: oampass
         run: |
-          ./oam-server -db-host 127.0.0.1 -db-port 3306 -db-user oamuser \
+          ./oam-server -db-host 127.0.0.1 -db-port 5432 -db-user oamuser \
             -db-name loxioam -port 8080 > server.log 2>&1 &
           echo $! > server.pid
           # Wait until /oam/health responds (server + DB ready).

@@ -5,7 +5,7 @@ verify it, how to run it standalone, and how to build your own.
 
 > **Looking for a deployment guide, not an image reference?** Use
 > [docs/deployment-compose.md](deployment-compose.md) (full management plane —
-> UI + API + MySQL behind a TLS edge) or [DEPLOYMENT.md](../DEPLOYMENT.md)
+> UI + API + PostgreSQL behind a TLS edge) or [DEPLOYMENT.md](../DEPLOYMENT.md)
 > (single-service API stack). This document covers the image itself; those
 > cover running it as a system.
 
@@ -120,9 +120,9 @@ verified artifact and the running artifact to be provably identical.
 
 ## Run the image
 
-The service needs a MySQL 8.x+ database; the image does not contain one. On a
+The service needs a PostgreSQL 18+ database; the image does not contain one. On a
 fresh database the schema in `database/init/` must have been applied — the
-Compose stacks do this automatically via the MySQL entrypoint, so a standalone
+Compose stacks do this automatically via the PostgreSQL entrypoint, so a standalone
 `docker run` is for when you already have a prepared database (see
 [docs/database-installation.md](database-installation.md)).
 
@@ -133,7 +133,7 @@ docker run -d --name loxilb-oam \
   -e OAM_DEFAULT_ADMIN_PASSWORD='Ch4nge-me!' \
   -e SNAPSHOT_ENC_KEY="$(openssl rand -base64 32)" \
   -e OAM_ALLOWED_ORIGINS='https://oam.example.com' \
-  -e DB_HOST=10.0.0.5 -e DB_PORT=3306 \
+  -e DB_HOST=10.0.0.5 -e DB_PORT=5432 \
   -e DB_USER=oamuser -e DB_PASSWORD='…' -e DB_NAME=loxioam \
   ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7
 ```
@@ -170,7 +170,7 @@ manifests:
 | `DB_USER` | `oamuser` | `-db-user` |
 | `DB_PASSWORD` | *(required — container aborts if unset)* | `-db-password` |
 | `DB_HOST` | `127.0.0.1` | `-db-host` |
-| `DB_PORT` | `3306` | `-db-port` |
+| `DB_PORT` | `5432` | `-db-port` |
 | `DB_NAME` | `loxioam` | `-db-name` |
 | `SERVER_PORT` | `8080` | `-port` |
 | `TOKEN_EXPIRATION` | *(unset)* | `-token-expiration` |

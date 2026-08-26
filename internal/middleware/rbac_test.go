@@ -3,6 +3,7 @@ package middleware_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 	"time"
 
@@ -90,7 +91,7 @@ func gatewayRequest(t *testing.T, role, method string) int {
 	default:
 		rows := sqlmock.NewRows([]string{"id", "username", "email", "role", "created_at"}).
 			AddRow(7, "alice", "alice@test.local", role, time.Now())
-		mock.ExpectQuery("SELECT id, username, email, role, created_at FROM users WHERE username = ?").
+		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, username, email, role, created_at FROM users WHERE username = $1")).
 			WithArgs("alice").
 			WillReturnRows(rows)
 	}

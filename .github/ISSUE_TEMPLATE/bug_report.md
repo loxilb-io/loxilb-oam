@@ -23,7 +23,7 @@ What actually happened. Include error messages and logs (redact any secrets).
 - loxilb-oam version / commit:
 - Deployment (Docker Compose / Kubernetes / binary):
 - OS and architecture:
-- MySQL version:
+- PostgreSQL version:
 
 ## Additional Context
 Anything else that helps us diagnose the issue.

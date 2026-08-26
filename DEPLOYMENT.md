@@ -70,7 +70,7 @@ to start** if the required secrets below are unset.
 | `-db-user`           | Database username | `oamuser` |
 | `-db-password`       | Database password (default: `DB_PASSWORD` env; legacy alias `OAM_DB_PASSWORD`) | — |
 | `-db-host`           | Database host | `127.0.0.1` |
-| `-db-port`           | Database port | `3306` |
+| `-db-port`           | Database port | `5432` |
 | `-db-name`           | Database name | `loxioam` |
 | `-port`              | Server port | `8080` |
 | `-token-expiration`  | Token lifetime in minutes (overrides `OAM_TOKEN_TTL_MINUTES`) | — |
@@ -93,8 +93,8 @@ The repository ships two distinct Compose deployments — do not mix them:
 
 | Path | What it runs | Use it for |
 |------|--------------|------------|
-| `docker-compose.yml` (repository root) | MySQL + the OAM API over plain **HTTP**, built from local source | development, and API-only deployments |
-| [`deploy/compose/`](deploy/compose/) | the full management plane — UI + API + MySQL behind a **Caddy TLS edge** | **production** ([guide](docs/deployment-compose.md)) |
+| `docker-compose.yml` (repository root) | PostgreSQL + the OAM API over plain **HTTP**, built from local source | development, and API-only deployments |
+| [`deploy/compose/`](deploy/compose/) | the full management plane — UI + API + PostgreSQL behind a **Caddy TLS edge** | **production** ([guide](docs/deployment-compose.md)) |
 
 Running the published image directly — `docker run`, image tags, signature and
 SBOM verification, building your own image, air-gapped installs — is covered in
@@ -103,7 +103,7 @@ SBOM verification, building your own image, air-gapped installs — is covered i
 Each has its own `.env.example`; the key names are shared, so a `.env` written
 for one is largely portable to the other. Provide the required secrets
 (`OAM_JWT_SECRET`, `OAM_DEFAULT_ADMIN_PASSWORD`, `DB_PASSWORD`,
-`MYSQL_ROOT_PASSWORD`) and the recommended `SNAPSHOT_ENC_KEY` via that `.env`
+and the recommended `SNAPSHOT_ENC_KEY` via that `.env`
 file or your secret manager.
 
 The rest of this section covers the root stack. For the management-plane bundle,
@@ -201,7 +201,7 @@ sudo update-ca-certificates
 > published.
 >
 > They are retained as the starting point for a converged Kubernetes deployment
-> (OAM + UI + MySQL + cert-manager) that is being developed separately. **Do not
+> (OAM + UI + PostgreSQL + cert-manager) that is being developed separately. **Do not
 > deploy them.**
 >
 > **For a supported deployment, use Docker Compose** — either the full
@@ -213,7 +213,7 @@ If you are working on those manifests, the current layout is:
 
 ```
 k8s/
-├── base/            # HTTPS base (MySQL + application)
+├── base/            # HTTPS base (PostgreSQL + application)
 ├── base-http/       # HTTP-only base
 └── overlays/
     ├── development/
@@ -228,7 +228,7 @@ manifests is correct as-is.
 
 ## Database Initialization
 
-On first startup the MySQL container runs `database/init/00-init-complete.sql`,
+On first startup the PostgreSQL container runs `database/init/00-init-complete.sql`,
 which creates all tables (users, instances, tokens, logs, alerts,
 acknowledgments, login attempts, instance snapshots, and system config),
 performance indexes, and seed rows. For existing databases, apply the numbered
@@ -254,7 +254,7 @@ external) is covered in
 curl http://localhost:8080/oam/health
 
 # Database
-docker compose exec mysql mysqladmin ping -h localhost -u root -p
+docker compose exec postgres sh -c 'exec pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 
 ## Monitoring and Logs
@@ -275,10 +275,10 @@ docker compose logs -f oam-loxilb
 - **Invalid `SNAPSHOT_ENC_KEY`:** a malformed key aborts startup. It must be a
   base64-encoded 32-byte value. Leaving it unset (not recommended) only logs a
   warning.
-- **Database connection failed:** verify MySQL is healthy and the `-db-*` flags
+- **Database connection failed:** verify PostgreSQL is healthy and the `-db-*` flags
   / `DB_*` env vars are correct.
   ```bash
-  docker compose logs mysql
+  docker compose logs postgres
   ```
 - **Bootstrap admin not created / container restarting on a fresh install:**
   `OAM_DEFAULT_ADMIN_PASSWORD` violated the account password policy (≥9

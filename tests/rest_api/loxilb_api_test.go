@@ -86,7 +86,7 @@ func mustLogin(username, password string) string {
 }
 
 // requireLiveInstance skips tests that drive firmware operations against a real
-// LoxiLB instance. The MySQL-backed integration job has no reachable instance
+// LoxiLB instance. The PostgreSQL-backed integration job has no reachable instance
 // (the proxy call would just time out), so these run only when
 // OAM_TEST_LIVE_INSTANCE is set — e.g. locally or in the e2e context.
 func requireLiveInstance(t *testing.T) {

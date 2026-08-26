@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -79,7 +80,7 @@ func TestLogoutOK(t *testing.T) {
 	defer done()
 
 	// Logout deletes the presented token from the api_tokens store.
-	mock.ExpectExec("DELETE FROM api_tokens WHERE token_value = ?").
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM api_tokens WHERE token_value = $1")).
 		WithArgs("tok123").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -116,7 +117,7 @@ func TestGetMeOK(t *testing.T) {
 
 	rows := sqlmock.NewRows([]string{"id", "username", "email", "role", "created_at"}).
 		AddRow(7, "alice", "alice@test.local", "admin", time.Now())
-	mock.ExpectQuery("SELECT id, username, email, role, created_at FROM users WHERE username = ?").
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, username, email, role, created_at FROM users WHERE username = $1")).
 		WithArgs("alice").
 		WillReturnRows(rows)
 
@@ -136,7 +137,7 @@ func TestGetMeNotFound(t *testing.T) {
 	h, mock, done := newTestHandler(t)
 	defer done()
 
-	mock.ExpectQuery("SELECT id, username, email, role, created_at FROM users WHERE username = ?").
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, username, email, role, created_at FROM users WHERE username = $1")).
 		WithArgs("ghost").
 		WillReturnError(sql.ErrNoRows)
 

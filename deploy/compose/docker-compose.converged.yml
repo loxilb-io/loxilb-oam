@@ -38,7 +38,7 @@ services:
           cpus: "1.0"
           memory: 512M
 
-  mysql:
+  postgres:
     deploy:
       resources:
         limits:

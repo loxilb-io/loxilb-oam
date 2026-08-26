@@ -53,4 +53,4 @@ LABEL org.opencontainers.image.title="loxilb-oam" \
 EXPOSE 8080 443
 
 # Command to run the executable
-CMD ["sh", "-c", "./loxilb-oam -db-user=${DB_USER:-oamuser} -db-password=${DB_PASSWORD:?DB_PASSWORD must be set} -db-host=${DB_HOST:-127.0.0.1} -db-port=${DB_PORT:-3306} -db-name=${DB_NAME:-loxioam} -token-expiration=${TOKEN_EXPIRATION:-} -port=${SERVER_PORT:-8080}"]
+CMD ["sh", "-c", "./loxilb-oam -db-user=${DB_USER:-oamuser} -db-password=${DB_PASSWORD:?DB_PASSWORD must be set} -db-host=${DB_HOST:-127.0.0.1} -db-port=${DB_PORT:-5432} -db-name=${DB_NAME:-loxioam} -token-expiration=${TOKEN_EXPIRATION:-} -port=${SERVER_PORT:-8080}"]
