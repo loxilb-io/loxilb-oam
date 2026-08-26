@@ -145,9 +145,11 @@ data:
     VALUES ('first_boot_at', NOW())
     ON DUPLICATE KEY UPDATE setting_value = setting_value;
     
-    -- Insert dummy data into loxilb_instances table (only if empty)
-    INSERT IGNORE INTO loxilb_instances (name, host, port, protocol, description, version, api_endpoint, cimage, ctag) VALUES 
-    ('LoxiLB-Instance-1', 'llb-1.loxilb.io', '8091', 'https', 'Primary LoxiLB instance for load balancing', 'v1', 'https://llb-1.loxilb.io:8091/netlox/v1', 'ghcr.io/loxilb-io/loxilb', 'v0.9.8.7');
+    -- No instances are seeded. A placeholder row pointing at a host that does
+    -- not exist shipped here previously: every fresh deployment inherited an
+    -- instance permanently stuck in Down, which an operator had to recognise
+    -- as fake and delete by hand. Register instances from the console, or via
+    -- POST /oam/loxilbs.
     
     -- Create indexes for performance (only if they don't exist)
     -- We'll use a different approach to avoid duplicate key errors
