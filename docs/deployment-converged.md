@@ -317,6 +317,46 @@ the gateway's own REST API can still program the rule. That is why the gateway's
 plaintext `:11111` is pinned to loopback (below) — keep `:8091` reachable only
 by OAM and this is closed.
 
+#### Open follow-up: gateway-side enforcement
+
+Pinning `:11111` to loopback and restricting `:8091` closes the bypass by
+*network reachability*, not by *admission*. Anything that can reach the
+gateway's REST API — a host-local process, an operator running `loxicmd` on the
+box, a future component given access to `:8091` — can still program a rule that
+takes over the management endpoint, and OAM will never see the request.
+
+Closing it properly requires the check to live in the gateway, in
+`loxilb-inference-gateway`. The request, stated so it can be picked up
+directly:
+
+> Add a `--reserved-endpoints` flag (env `RESERVED_ENDPOINTS`) accepting a
+> comma-separated `ip:port[/proto]` list — the same syntax as OAM's
+> `OAM_RESERVED_ENDPOINTS`, so one value can be configured from one place.
+> Validate it in the load-balancer create/update handler and reject a rule
+> whose `serviceArguments.externalIP` **or** `host`, together with `port` and
+> `protocol`, matches a reserved entry. Return `400` naming the offending
+> endpoint. Treat a wildcard on either side as a match: a reservation with no
+> address covers its port on every address, and a rule with a `0.0.0.0` VIP
+> captures the reserved address too. A malformed value should abort startup
+> rather than leave the check silently inert.
+
+Two smaller asks worth bundling with it:
+
+- **`--blacklist` should default to excluding Docker's interfaces.** Today it
+  defaults to `"none"`, and `NlpIsBlackListedIntf` excludes only `lo`, so an
+  unconfigured gateway attaches to `docker0`, every `br-*` and every `veth*`
+  (see [§6](#6-keeping-the-datapath-off-dockers-interfaces)). Every containerised
+  deployment has to know to override it.
+- **Check whether `--privileged` can be dropped** in favour of
+  `NET_ADMIN + SYS_ADMIN + BPF + PERFMON + SYS_RESOURCE`. If it holds, that is
+  the single highest-value hardening available to a converged node, where the
+  gateway's privileges and the management credentials share a host
+  ([§5](#5-what-you-are-accepting)).
+
+Until the gateway enforces this, treat the OAM guard as covering operator
+mistakes rather than a determined caller, and keep `:8091` reachable only from
+the OAM bridge.
+
 ## 5. What you are accepting
 
 The gateway runs `--privileged` with `SYS_ADMIN` in the host network namespace.
