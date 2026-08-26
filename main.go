@@ -67,6 +67,16 @@ func requireSecrets() {
 	if config.InstanceTLSInsecure() {
 		utils.LogWarning("SECURITY: OAM_INSTANCE_TLS_INSECURE=true — TLS verification is DISABLED for connections to managed LoxiLB instances (proxy + snapshots). Prefer OAM_INSTANCE_CA_BUNDLE in production.")
 	}
+	// A reserved list that failed to parse is worse than no list: the operator
+	// believes the management edge is protected from a colliding VIP when it is
+	// not. Refuse to start rather than run with a silently inert guard.
+	if err := config.ReservedEndpointsError(); err != nil {
+		utils.LogError("CONFIG: " + err.Error() + ". Fix OAM_RESERVED_ENDPOINTS before starting.")
+		os.Exit(1)
+	}
+	if n := len(config.ReservedEndpoints()); n > 0 {
+		utils.LogInfo(fmt.Sprintf("Reserved host endpoints: %d configured — load-balancer rules colliding with them will be refused.", n))
+	}
 }
 
 func main() {
