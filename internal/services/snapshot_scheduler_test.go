@@ -79,7 +79,7 @@ func TestRunOnceTakesDueSnapshotAndTrims(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("ORDER BY created_at DESC")).
 		WithArgs(1).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("new-id").AddRow("mid-id").AddRow("old-id"))
-	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM instance_snapshots WHERE id = ?")).
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM instance_snapshots WHERE id = $1")).
 		WithArgs("old-id").WillReturnResult(sqlmock.NewResult(0, 1))
 
 	// Case 3 — integrity sweep runs on the first tick (lastSweep is zero).

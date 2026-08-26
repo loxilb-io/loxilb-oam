@@ -3,18 +3,17 @@ kind: Kustomization
 
 resources:
 - namespace.yaml
-- mysql-secret.yaml
-- mysql-configmap.yaml
-- mysql-init-configmap.yaml
-- mysql-service.yaml
+- postgres-secret.yaml
+- postgres-init-configmap.yaml
+- postgres-service.yaml
 - oam-loxilb-configmap.yaml
 - oam-loxilb-secret.yaml
 - ssl-secret.yaml
 - oam-loxilb-service.yaml
 - oam-loxilb-ingress.yaml
-- mysql-deployment.yaml
+- postgres-deployment.yaml
 - oam-loxilb-deployment.yaml
-- mysql-pvc.yaml
+- postgres-pvc.yaml
 
 images:
 - name: oam-loxilb

@@ -65,7 +65,7 @@ func TestGetLoxiLBInstanceByIDOK(t *testing.T) {
 	h, mock, done := newTestHandler(t)
 	defer done()
 
-	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\?").
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\$1").
 		WithArgs(1).WillReturnRows(instanceRows())
 
 	r := gin.New()
@@ -156,8 +156,9 @@ func TestCreateLoxiLBInstanceOK(t *testing.T) {
 	defer done()
 
 	expectUniquenessChecks(mock, false, false)
-	mock.ExpectExec("INSERT INTO loxilb_instances").
-		WillReturnResult(sqlmock.NewResult(42, 1))
+	// INSERT ... RETURNING id is a query, not an exec, under PostgreSQL.
+	mock.ExpectQuery("INSERT INTO loxilb_instances").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(42))
 
 	rec := postInstance(t, h, validInstanceBody)
 
@@ -236,7 +237,7 @@ func TestCreateLoxiLBInstanceDefaultsVersionAndNormalizes(t *testing.T) {
 	defer done()
 
 	expectUniquenessChecks(mock, false, false)
-	mock.ExpectExec("INSERT INTO loxilb_instances").WillReturnResult(sqlmock.NewResult(7, 1))
+	mock.ExpectQuery("INSERT INTO loxilb_instances").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
 
 	// version has never been a required field — it still defaults to v1, and
 	// surrounding whitespace / protocol casing are normalized rather than
@@ -266,7 +267,7 @@ func TestCreateLoxiLBInstanceDoesNotLeakSQLErrors(t *testing.T) {
 	defer done()
 
 	expectUniquenessChecks(mock, false, false)
-	mock.ExpectExec("INSERT INTO loxilb_instances").WillReturnError(errors.New("Error 1146: Table 'oam.loxilb_instances' doesn't exist"))
+	mock.ExpectQuery("INSERT INTO loxilb_instances").WillReturnError(errors.New(`ERROR: relation "loxilb_instances" does not exist (SQLSTATE 42P01)`))
 
 	rec := postInstance(t, h, validInstanceBody)
 
@@ -293,7 +294,7 @@ func TestUpdateLoxiLBInstanceOK(t *testing.T) {
 	defer done()
 
 	expectUniquenessChecks(mock, false, false)
-	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\?").WillReturnRows(instanceRows())
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\$1").WillReturnRows(instanceRows())
 	mock.ExpectExec("UPDATE loxilb_instances SET").WillReturnResult(sqlmock.NewResult(0, 1))
 
 	rec := putInstance(t, h, "5", `{"name":"edge","host":"10.0.0.1","port":"11111","protocol":"http","version":"v1","cimage":"loxilb","ctag":"latest"}`)
@@ -310,7 +311,7 @@ func TestUpdateLoxiLBInstanceMissingRowIs404(t *testing.T) {
 	defer done()
 
 	expectUniquenessChecks(mock, false, false)
-	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\?").WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\$1").WillReturnError(sql.ErrNoRows)
 
 	rec := putInstance(t, h, "404", validInstanceBody)
 
@@ -334,7 +335,7 @@ func TestDeleteLoxiLBInstanceOK(t *testing.T) {
 	h, mock, done := newTestHandler(t)
 	defer done()
 
-	mock.ExpectExec("DELETE FROM loxilb_instances WHERE id = \\?").
+	mock.ExpectExec("DELETE FROM loxilb_instances WHERE id = \\$1").
 		WithArgs(5).WillReturnResult(sqlmock.NewResult(0, 1))
 
 	r := gin.New()

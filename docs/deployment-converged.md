@@ -1,6 +1,6 @@
 # Converged single-node deployment
 
-Management plane (OAM + console + MySQL) and data plane
+Management plane (OAM + console + PostgreSQL) and data plane
 (`loxilb-inference-gateway`) on **one host**.
 
 ```
@@ -13,7 +13,7 @@ Management plane (OAM + console + MySQL) and data plane
                                 │ https, CA-verified, over the Docker bridge
   browser ──:8443──▶ caddy ──▶ oam-loxilb ──┘
                        │  frontend (bridge)  │
-                       └ SPA volume          └─▶ mysql   backend (internal: true)
+                       └ SPA volume          └─▶ postgres backend (internal: true)
 ```
 
 **Use this when** one node runs both the AI gateway and its own management
@@ -89,7 +89,7 @@ matching and the reserved endpoint. List a NATed public address there too: the
 host cannot discover it, and a client arriving on an address missing from the
 certificate gets a hard TLS failure.
 
-It also refuses to generate fresh database credentials when a MySQL volume
+It also refuses to generate fresh database credentials when a PostgreSQL volume
 already exists, offering to reuse the old credentials or to delete the volume
 outright — see "existing database" in the troubleshooting table.
 
@@ -398,7 +398,7 @@ Measured on a live converged node with both compose bridges and four veths up:
 | **with** `--blacklist` | `enp0s3` + loxilb's own `llb0`/`vlan*` only | 0 everywhere |
 
 Unconfigured, the datapath really does sit on the wires carrying Caddy→OAM,
-OAM→MySQL and OAM→gateway traffic.
+OAM→PostgreSQL and OAM→gateway traffic.
 
 > **Verify on the veths, not the bridge.** The filters attach to the veth, which
 > is the actual packet path — `tc filter show dev docker0` reports nothing even
@@ -462,7 +462,7 @@ contain IPsec PSKs and certificate private keys — treat them as credentials.
 | Both `:443` and `:8443` are published | `!override` missing from the overlay's `ports`. |
 | Browser gets a TLS error or 404 at the edge | `SITE_ADDRESS` must include `:${EDGE_HTTPS_PORT}`. |
 | `ERR_SSL_PROTOCOL_ERROR` when reaching the console **by address** (by name it works) | No `EDGE_SNI_FALLBACK`. An address sends no SNI, so Caddy selects no site and drops the handshake before any HTTP. Set `EDGE_SNI_FALLBACK=default_sni <primary-name>`, add the address to `SITE_ADDRESS`, and put it in the certificate as an `IP:` SAN. |
-| OAM loops on `Database connection failed`, never healthy, while MySQL reports healthy | The MySQL volume was initialised with **different** credentials. `MYSQL_ROOT_PASSWORD`/`DB_PASSWORD` apply only to an empty data directory, and MySQL's ping healthcheck does not authenticate, so it goes green regardless. Restore the old values from an `.env.bak.*`, or `docker volume rm loxilb-mgmt_mysql_data` to start clean (destroys users, instances, snapshots). |
+| OAM loops on `Database connection failed`, never healthy, while PostgreSQL reports healthy | The PostgreSQL volume was initialised with **different** credentials. `DB_PASSWORD` applies only to an empty data directory, and `pg_isready` only checks that the server accepts connections — it does not authenticate — so it goes green regardless. Restore the old value from an `.env.bak.*`, or `docker volume rm loxilb-mgmt_postgres_data` to start clean (destroys users, instances, snapshots). |
 | Instance shows **Down** right after re-running the init script | `GW_HOST` changed, so the gateway now serves a certificate for the new name and OAM pins only that name — the registered host no longer resolves. Set the instance's Host to the current `GW_HOST` (`grep GW_HOST .env`), or re-run and keep the previous name. |
 | Browser shows a certificate-name error (`curl` exit 60) but `curl -k` works | The edge certificate's SAN list does not contain the name being used. Check it: `echo \| openssl s_client -connect <host>:8443 -servername <name> \| openssl x509 -noout -ext subjectAltName`. |
 | Certificate valid today, expired later, nothing changed | ACME renewal cannot run without `:80`/`:443` — see §4. |

@@ -18,7 +18,7 @@ func TestValidateToken(t *testing.T) {
 	userService := services.NewUserService(db)
 
 	// Define the expected query
-	expectedQuery := "SELECT user_id FROM api_tokens WHERE token_value = \\? AND expires_at > NOW()"
+	expectedQuery := "SELECT user_id FROM api_tokens WHERE token_value = \\$1 AND expires_at > NOW()"
 
 	// Set up the expected query and result
 	rows := sqlmock.NewRows([]string{"user_id"}).AddRow("user_1")
@@ -47,7 +47,7 @@ func TestValidateTokenExpired(t *testing.T) {
 	userService := services.NewUserService(db)
 
 	// Define the expected query
-	expectedQuery := "SELECT user_id FROM api_tokens WHERE token_value = \\? AND expires_at > NOW()"
+	expectedQuery := "SELECT user_id FROM api_tokens WHERE token_value = \\$1 AND expires_at > NOW()"
 
 	// Set up the expected query with no results (token expired)
 	mock.ExpectQuery(expectedQuery).WithArgs("dummy_token_2").WillReturnRows(sqlmock.NewRows([]string{"user_id"}))
@@ -75,7 +75,7 @@ func TestValidateTokenInvalid(t *testing.T) {
 	userService := services.NewUserService(db)
 
 	// Define the expected query
-	expectedQuery := "SELECT user_id FROM api_tokens WHERE token_value = \\? AND expires_at > NOW()"
+	expectedQuery := "SELECT user_id FROM api_tokens WHERE token_value = \\$1 AND expires_at > NOW()"
 
 	// Set up the expected query with no results (invalid token)
 	mock.ExpectQuery(expectedQuery).WithArgs("invalid_token").WillReturnRows(sqlmock.NewRows([]string{"user_id"}))

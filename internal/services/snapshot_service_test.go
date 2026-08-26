@@ -104,7 +104,7 @@ func instanceRow(_ sqlmock.Sqlmock, id int) *sqlmock.Rows {
 }
 
 func expectInstanceFetch(mock sqlmock.Sqlmock, id int) {
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, host, port, protocol, description, version, api_endpoint, cimage, ctag, is_active, created_at FROM loxilb_instances WHERE id = ?")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, host, port, protocol, description, version, api_endpoint, cimage, ctag, is_active, created_at FROM loxilb_instances WHERE id = $1")).
 		WithArgs(id).WillReturnRows(instanceRow(mock, id))
 }
 
@@ -243,7 +243,7 @@ func TestDeleteSnapshotPinnedRequiresForce(t *testing.T) {
 	assert.ErrorIs(t, err, services.ErrSnapshotPinned)
 
 	mock.ExpectQuery("SELECT (.+) FROM instance_snapshots").WillReturnRows(pinnedRow())
-	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM instance_snapshots WHERE id = ?")).
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM instance_snapshots WHERE id = $1")).
 		WithArgs("sid-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	assert.NoError(t, svc.DeleteSnapshot("sid-1", true))
 	assert.NoError(t, mock.ExpectationsWereMet())
@@ -275,7 +275,7 @@ func TestGetSnapshotDocumentRejectsTamperedPlaintext(t *testing.T) {
 	// or bit-flipped inside the DB (plaintext-gzip mode, so gzip may still
 	// inflate fine — the checksum has to catch it).
 	expectSnapshotBlobFetch(mock, blob, "sha256:"+strings.Repeat("00", 32), false)
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE instance_snapshots SET checksum_ok = ?")).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE instance_snapshots SET checksum_ok = $1")).
 		WithArgs(false, "sid-1").WillReturnResult(sqlmock.NewResult(0, 1))
 
 	_, _, err = svc.GetSnapshotDocument("sid-1")

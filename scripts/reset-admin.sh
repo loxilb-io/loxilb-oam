@@ -12,7 +12,7 @@ set -e
 DB_USER="${DB_USER:-oamuser}"
 DB_PASSWORD="${DB_PASSWORD:-}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
-DB_PORT="${DB_PORT:-3306}"
+DB_PORT="${DB_PORT:-5432}"
 DB_NAME="${DB_NAME:-loxioam}"
 SSL_OPTION="${SSL_OPTION:-false}"
 

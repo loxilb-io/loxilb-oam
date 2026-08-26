@@ -49,7 +49,7 @@ go run ./cmd/reset_admin --confirm
 go run ./cmd/reset_admin \
   --db-user=oamuser \
   --db-host=127.0.0.1 \
-  --db-port=3306 \
+  --db-port=5432 \
   --db-name=loxioam \
   --confirm
 ```
@@ -84,7 +84,7 @@ go build -o reset_admin ./cmd/reset_admin
 | `--db-user` | Database username | `DB_USER` env, else `oamuser` |
 | `--db-password` | Database password (legacy alias `OAM_DB_PASSWORD`) | `DB_PASSWORD` env |
 | `--db-host` | Database host | `DB_HOST` env, else `127.0.0.1` |
-| `--db-port` | Database port | `DB_PORT` env, else `3306` |
+| `--db-port` | Database port | `DB_PORT` env, else `5432` |
 | `--db-name` | Database name | `DB_NAME` env, else `loxioam` |
 | `--ssl-option` | Enable a TLS connection (`true`/`false`) | `false` |
 | `--ssl-ca-cert-file` | CA certificate path | `./ssl/certs/root-ca.pem` |

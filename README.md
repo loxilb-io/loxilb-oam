@@ -10,7 +10,7 @@ Operations, Administration, and Management (OAM) service for
 [LoxiLB](https://github.com/loxilb-io/loxilb). `loxilb-oam` is a Go REST API that
 provides centralized authentication, role-based access control, user management,
 instance lifecycle operations, configuration snapshots, and a management proxy
-for one or more LoxiLB instances, backed by MySQL.
+for one or more LoxiLB instances, backed by PostgreSQL.
 
 **Version:** `v0.9.8.7`. loxilb-oam versions in lockstep with
 [loxilb](https://github.com/loxilb-io/loxilb) and uses the same
@@ -36,7 +36,7 @@ for one or more LoxiLB instances, backed by MySQL.
 ## Prerequisites
 
 - Go **1.25+** (the module targets `go 1.25`)
-- MySQL **8.x** or later (the Compose stacks ship MySQL 9.2)
+- PostgreSQL **18** or later (the Compose stacks ship PostgreSQL 18.6)
 - (Optional) Docker Engine with the Compose plugin, for containerized deployment
 
 ## Quick start
@@ -49,7 +49,7 @@ cd loxilb-oam
 cp .env.example .env
 # edit .env and set OAM_JWT_SECRET, OAM_DEFAULT_ADMIN_PASSWORD, DB_PASSWORD, ...
 
-# Run with Docker Compose (brings up MySQL + the service)
+# Run with Docker Compose (brings up PostgreSQL + the service)
 docker compose up -d
 ```
 
@@ -62,7 +62,7 @@ from `OAM_DEFAULT_ADMIN_PASSWORD`. **Change it on first login.**
 make build                 # produces the loxilb-oam binary
 export OAM_JWT_SECRET=... OAM_DEFAULT_ADMIN_PASSWORD=... DB_PASSWORD=...
 # DB connection defaults from the DB_* env family; flags override it.
-./loxilb-oam -db-user=oamuser -db-host=127.0.0.1 -db-port=3306 -db-name=loxioam -port=8080
+./loxilb-oam -db-user=oamuser -db-host=127.0.0.1 -db-port=5432 -db-name=loxioam -port=8080
 
 # or
 make run
@@ -100,7 +100,7 @@ startup if a required one is unset (there are no built-in fallback values).
 ### CLI flags
 
 `-db-user` (default `oamuser`), `-db-password`, `-db-host` (`127.0.0.1`),
-`-db-port` (`3306`), `-db-name` (`loxioam`), `-port` (`8080`),
+`-db-port` (`5432`), `-db-name` (`loxioam`), `-port` (`8080`),
 `-token-expiration`, `-enable-https`, `-ssl-cert-file`, `-ssl-key-file`,
 `-ssl-option` and the associated CA/client-cert flags.
 
@@ -114,10 +114,10 @@ Generate strong secrets with, e.g., `openssl rand -base64 48` (keys) and
 ## Deployment
 
 - **Management plane (recommended for production)** — the single-node bundle in
-  [`deploy/compose/`](deploy/compose/) runs the web console, this API, and MySQL
+  [`deploy/compose/`](deploy/compose/) runs the web console, this API, and PostgreSQL
   behind a Caddy TLS edge. Step-by-step operator guide:
   [docs/deployment-compose.md](docs/deployment-compose.md).
-- **API only** — `docker compose up -d` from the repository root runs MySQL plus
+- **API only** — `docker compose up -d` from the repository root runs PostgreSQL plus
   the service over plain HTTP. See [DEPLOYMENT.md](DEPLOYMENT.md).
 - **From source, against your own database** — see
   [docs/database-installation.md](docs/database-installation.md).
@@ -153,7 +153,7 @@ go vet ./...  # static checks
 
 Integration suites under `tests/rest_api/` and `tests/e2e/` need a live server
 and database, so they are excluded from `make test`; CI runs them against a
-MySQL service container.
+PostgreSQL service container.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and
 [SECURITY.md](SECURITY.md) for vulnerability reporting.

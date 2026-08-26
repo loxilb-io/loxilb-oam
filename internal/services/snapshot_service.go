@@ -28,7 +28,7 @@ import (
 //
 // OAM is a thin orchestrator over the gateway snapshot primitive: it stores
 // the snapshot document as an opaque blob (gzip, AES-256-GCM when
-// SNAPSHOT_ENC_KEY is set) plus envelope metadata IN MySQL — never on
+// SNAPSHOT_ENC_KEY is set) plus envelope metadata IN PostgreSQL — never on
 // container-local disk, which is what broke the legacy config-export feature.
 
 // MaxSnapshotBytes is the uncompressed size cap (matches the MEDIUMBLOB
@@ -212,7 +212,7 @@ func NewSnapshotService(db *sql.DB, loxilbService *LoxiLBService) (*SnapshotServ
 		}
 		s.encKey = key
 	} else {
-		utils.LogError("SNAPSHOT_ENC_KEY is not set — instance snapshots (which contain IPsec PSKs and certificate private keys) will be stored UNENCRYPTED in MySQL. Set a 32-byte base64 key in production.")
+		utils.LogError("SNAPSHOT_ENC_KEY is not set — instance snapshots (which contain IPsec PSKs and certificate private keys) will be stored UNENCRYPTED in PostgreSQL. Set a 32-byte base64 key in production.")
 	}
 	return s, nil
 }

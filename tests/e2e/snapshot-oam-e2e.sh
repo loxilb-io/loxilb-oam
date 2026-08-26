@@ -10,7 +10,7 @@ OAM="${OAM:-http://localhost:8080}"
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASS="${ADMIN_PASS:?set ADMIN_PASS}"
 INSTANCE_ID="${INSTANCE_ID:-1}"
-MYSQL="docker exec oam-mysql mysql -uoamuser -p${DB_PASSWORD:?DB_PASSWORD must be set} loxioam -N -s -e"
+PSQL="docker exec -e PGPASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set} oam-postgres psql -U oamuser -d loxioam -tAc"
 
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS+1)); echo "  PASS: $1"; }
@@ -97,7 +97,9 @@ check "commit: last_restore_result recorded" "ok" "$(echo "$META" | jq -r .last_
 echo "$META" | jq -e '.last_restore_response | length > 0' >/dev/null && ok "commit: audit response stored" || bad "commit: audit response stored"
 
 echo "== S4: tampered blob rejected before touching the gateway"
-$MYSQL "UPDATE instance_snapshots SET snapshot_blob = CONCAT(X'FF', SUBSTRING(snapshot_blob, 2)) WHERE id='$UPID';"
+# snapshot_blob is BYTEA: '\xff' is PostgreSQL's hex input format and || is
+# the bytea concatenation operator (MySQL's CONCAT(X'FF', SUBSTRING(...,2))).
+$PSQL "UPDATE instance_snapshots SET snapshot_blob = '\xff'::bytea || substring(snapshot_blob from 2) WHERE id='$UPID';"
 TAMPER_DL=$(curl -s -o "$TMP/tamper" -w '%{http_code}' -H "$AUTH" "$OAM/oam/snapshots/$UPID/download")
 check "tampered download rejected 422" "422" "$TAMPER_DL"
 TAMPER_RS=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" -H 'Content-Type: application/json' \
@@ -130,7 +132,7 @@ check "viewer restore 403" "403" "$(curl -s -o /dev/null -w '%{http_code}' -X PO
 echo "== S7: gateway-down passthrough (dead instance, no OAM-invented message)"
 DEADINST=$(curl -s -X POST -H "$AUTH" -H 'Content-Type: application/json' "$OAM/oam/loxilbs" \
   -d '{"name":"e2e-dead","host":"10.0.0.12","port":"19999","protocol":"http","version":"v1","cimage":"x","ctag":"x","description":"e2e dead"}')
-DEADID=$($MYSQL "SELECT id FROM loxilb_instances WHERE name='e2e-dead' ORDER BY id DESC LIMIT 1;")
+DEADID=$($PSQL "SELECT id FROM loxilb_instances WHERE name='e2e-dead' ORDER BY id DESC LIMIT 1;")
 DEADRES=$(curl -s -w '\n%{http_code}' -X POST -H "$AUTH" "$OAM/oam/instances/$DEADID/snapshots")
 DEADCODE=$(echo "$DEADRES" | tail -1)
 check "dead gateway take -> 502" "502" "$DEADCODE"
@@ -157,14 +159,14 @@ done
 [ "$RAN" != "null" ] && ok "scheduler fired (last_run_at=$RAN)" || bad "scheduler fired within 6 min"
 SCHEDSNAP=$(curl -s -H "$AUTH" "$OAM/oam/instances/$INSTANCE_ID/snapshots?limit=50" | jq '[.data[] | select(.trigger_type=="scheduled")] | length')
 [ "$SCHEDSNAP" -ge 1 ] && ok "scheduled snapshot exists" || bad "scheduled snapshot exists"
-UNPINNED=$($MYSQL "SELECT COUNT(*) FROM instance_snapshots WHERE instance_id=$INSTANCE_ID AND pinned=FALSE AND trigger_type <> 'pre_upgrade';")
+UNPINNED=$($PSQL "SELECT COUNT(*) FROM instance_snapshots WHERE instance_id=$INSTANCE_ID AND pinned=FALSE AND trigger_type <> 'pre_upgrade';")
 [ "$UNPINNED" -le 3 ] && ok "retention trimmed to retain_count ($UNPINNED)" || bad "retention trimmed to retain_count (have $UNPINNED, want <=3)"
 
 echo "== S9: container-rebuild survival (the legacy killer)"
-SURVIVOR=$($MYSQL "SELECT id FROM instance_snapshots WHERE instance_id=$INSTANCE_ID ORDER BY created_at DESC LIMIT 1;")
+SURVIVOR=$($PSQL "SELECT id FROM instance_snapshots WHERE instance_id=$INSTANCE_ID ORDER BY created_at DESC LIMIT 1;")
 docker rm -f loxioam >/dev/null
 docker run -d --name loxioam --network oam-net -p 8080:8080 \
-  -e DB_HOST=oam-mysql -e DB_PORT=3306 -e DB_USER=oamuser -e DB_PASSWORD="${DB_PASSWORD:?DB_PASSWORD must be set}" -e DB_NAME=loxioam \
+  -e DB_HOST=oam-postgres -e DB_PORT=5432 -e DB_USER=oamuser -e DB_PASSWORD="${DB_PASSWORD:?DB_PASSWORD must be set}" -e DB_NAME=loxioam \
   -e OAM_JWT_SECRET="${OAM_JWT_SECRET:?set OAM_JWT_SECRET}" \
   -e SNAPSHOT_ENC_KEY="$(cat /root/.snapshot_enc_key)" loxilb-oam:latest >/dev/null
 sleep 5
@@ -179,12 +181,12 @@ echo "== cleanup"
 curl -s -o /dev/null -X DELETE -H "$AUTH" "$OAM/oam/loxilbs/$INSTANCE_ID/netlox/v1/config/loadbalancer/externalipaddress/20.20.20.99/port/8899/protocol/tcp"
 curl -s -o /dev/null -X PUT -H "$AUTH" -H 'Content-Type: application/json' \
   "$OAM/oam/instances/$INSTANCE_ID/snapshot-schedule" -d '{"enabled":false,"interval_hours":1,"retain_count":3}'
-$MYSQL "DELETE FROM instance_snapshots; DELETE FROM instance_snapshot_schedules;"
-$MYSQL "DELETE FROM loxilb_instances WHERE name IN ('e2e-dead');"
-VID=$($MYSQL "SELECT id FROM users WHERE username='e2e_snap_viewer';")
+$PSQL "DELETE FROM instance_snapshots; DELETE FROM instance_snapshot_schedules;"
+$PSQL "DELETE FROM loxilb_instances WHERE name IN ('e2e-dead');"
+VID=$($PSQL "SELECT id FROM users WHERE username='e2e_snap_viewer';")
 [ -n "$VID" ] && curl -s -o /dev/null -X DELETE -H "$AUTH" "$OAM/oam/users/$VID"
 check "gateway clean (0 LB)" "0" "$(lb_count)"
-check "snapshot table empty" "0" "$($MYSQL 'SELECT COUNT(*) FROM instance_snapshots;')"
+check "snapshot table empty" "0" "$($PSQL 'SELECT COUNT(*) FROM instance_snapshots;')"
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

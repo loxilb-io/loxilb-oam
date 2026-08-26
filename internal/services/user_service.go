@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-
-	"github.com/go-sql-driver/mysql"
 )
 
 type UserService struct {
@@ -35,7 +33,7 @@ func (s *UserService) AddUserWithArgs(name, email, password string) (int, error)
 	err := utils.RetryOperation(func() error {
 		// Check if username already exists BEFORE validating password
 		var existingUserID int
-		checkQuery := `SELECT id FROM users WHERE username = ?`
+		checkQuery := `SELECT id FROM users WHERE username = $1`
 		err := s.DB.QueryRow(checkQuery, name).Scan(&existingUserID)
 		if err == nil {
 			// Username already exists
@@ -61,9 +59,9 @@ func (s *UserService) AddUserWithArgs(name, email, password string) (int, error)
 
 		// Users now get licenses through proper license management system
 		// No automatic license generation - admin must install licenses manually
+		// PostgreSQL has no LastInsertId; the query ends in RETURNING id.
 		query := config.InsertUserQuery
-		result, err := s.DB.Exec(query, name, email, hashedPasswordBase64)
-		if err != nil {
+		if err := s.DB.QueryRow(query, name, email, hashedPasswordBase64).Scan(&userID); err != nil {
 			if isDuplicateEntryError(err) {
 				utils.LogWarning("Duplicate username: " + name)
 				return errors.New("username already exists")
@@ -71,13 +69,6 @@ func (s *UserService) AddUserWithArgs(name, email, password string) (int, error)
 			utils.LogError("Failed to insert user: " + err.Error())
 			return err
 		}
-
-		lastInsertID, err := result.LastInsertId()
-		if err != nil {
-			utils.LogError("Failed to get last insert ID: " + err.Error())
-			return err
-		}
-		userID = int(lastInsertID)
 
 		utils.LogInfo("User created: " + name)
 		return nil
@@ -93,7 +84,7 @@ func (s *UserService) AddUser(user models.User) (int, error) {
 	err := utils.RetryOperation(func() error {
 		// Check if username already exists BEFORE validating password
 		var existingUserID int
-		checkQuery := `SELECT id FROM users WHERE username = ?`
+		checkQuery := `SELECT id FROM users WHERE username = $1`
 		err := s.DB.QueryRow(checkQuery, user.Username).Scan(&existingUserID)
 		if err == nil {
 			// Username already exists
@@ -119,9 +110,9 @@ func (s *UserService) AddUser(user models.User) (int, error) {
 
 		// Users now get licenses through proper license management system
 		// No automatic license generation - admin must install licenses manually
+		// PostgreSQL has no LastInsertId; the query ends in RETURNING id.
 		query := config.InsertUserQuery
-		result, err := s.DB.Exec(query, user.Username, user.Email, hashedPasswordBase64)
-		if err != nil {
+		if err := s.DB.QueryRow(query, user.Username, user.Email, hashedPasswordBase64).Scan(&userID); err != nil {
 			if isDuplicateEntryError(err) {
 				utils.LogWarning("Duplicate username: " + user.Username)
 				return errors.New("username already exists")
@@ -129,13 +120,6 @@ func (s *UserService) AddUser(user models.User) (int, error) {
 			utils.LogError("Failed to insert user: " + err.Error())
 			return err
 		}
-
-		lastInsertID, err := result.LastInsertId()
-		if err != nil {
-			utils.LogError("Failed to get last insert ID: " + err.Error())
-			return err
-		}
-		userID = int(lastInsertID)
 
 		utils.LogInfo("User created: " + user.Username)
 		return nil
@@ -196,7 +180,7 @@ func (s *UserService) GetUserByUsername(username string) (*models.User, error) {
 	var email sql.NullString
 
 	err := utils.RetryOperation(func() error {
-		query := "SELECT id, username, email, role, created_at FROM users WHERE username = ?"
+		query := "SELECT id, username, email, role, created_at FROM users WHERE username = $1"
 		err := s.DB.QueryRow(query, username).Scan(&user.ID, &user.Username, &email, &user.Role, &user.CreatedAt)
 		if err != nil {
 			if err == sql.ErrNoRows {
@@ -221,12 +205,12 @@ func (s *UserService) GetUserByUsername(username string) (*models.User, error) {
 	return &user, nil
 }
 
+// isDuplicateEntryError reports whether err is a unique-constraint violation.
+// It delegates to IsDuplicateKeyError so there is a single definition of what
+// a duplicate looks like; the old copy here also used a bare type assertion,
+// which missed the violation whenever the driver error arrived wrapped.
 func isDuplicateEntryError(err error) bool {
-	// Check if the error is a MySQL duplicate entry error
-	if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == 1062 {
-		return true
-	}
-	return false
+	return IsDuplicateKeyError(err)
 }
 
 // UpdateUser updates specific user fields dynamically based on provided updates map.
@@ -237,7 +221,7 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 	return utils.RetryOperation(func() error {
 		// Check if the user exists first
 		var existingUsername string
-		checkQuery := "SELECT username FROM users WHERE id = ?"
+		checkQuery := "SELECT username FROM users WHERE id = $1"
 		err := s.DB.QueryRow(checkQuery, userID).Scan(&existingUsername)
 		if err != nil {
 			if err == sql.ErrNoRows {
@@ -257,13 +241,13 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 			switch field {
 			case "username":
 				if username, ok := value.(string); ok && username != "" {
-					setParts = append(setParts, "username = ?")
+					setParts = append(setParts, "username")
 					args = append(args, username)
 					updatedFields = append(updatedFields, "username")
 				}
 			case "email":
 				if email, ok := value.(string); ok {
-					setParts = append(setParts, "email = ?")
+					setParts = append(setParts, "email")
 					args = append(args, email)
 					updatedFields = append(updatedFields, "email")
 				}
@@ -273,7 +257,7 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 					if !models.IsValidRole(role) {
 						return fmt.Errorf("invalid role: %s. Must be 'admin', 'operator', or 'viewer'", role)
 					}
-					setParts = append(setParts, "role = ?")
+					setParts = append(setParts, "role")
 					args = append(args, role)
 					updatedFields = append(updatedFields, "role")
 				}
@@ -299,7 +283,7 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 						return fmt.Errorf("failed to hash password: %w", err)
 					}
 
-					setParts = append(setParts, "password = ?")
+					setParts = append(setParts, "password")
 					args = append(args, hashedPasswordBase64)
 					updatedFields = append(updatedFields, "password")
 				}
@@ -310,8 +294,15 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 			return errors.New("no valid fields provided for update")
 		}
 
-		// Build and execute the dynamic update query
-		query := fmt.Sprintf("UPDATE users SET %s WHERE id = ?", strings.Join(setParts, ", "))
+		// Build and execute the dynamic update query. PostgreSQL placeholders are
+		// positional, so the assignments are numbered in the order their values
+		// were appended to args, and the WHERE binds the next number after them.
+		assignments := make([]string, len(setParts))
+		for i, column := range setParts {
+			assignments[i] = fmt.Sprintf("%s = $%d", column, i+1)
+		}
+		query := fmt.Sprintf("UPDATE users SET %s WHERE id = $%d",
+			strings.Join(assignments, ", "), len(setParts)+1)
 		args = append(args, userID)
 
 		result, err := s.DB.Exec(query, args...)
@@ -323,9 +314,10 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 			return err
 		}
 
-		// A 0-row result means the submitted values already match what's stored
-		// (MySQL reports 0 affected rows for a no-op UPDATE). The user is known to
-		// exist (checked above), so treat this as success rather than a 500.
+		// PostgreSQL reports 1 affected row even when an UPDATE writes identical
+		// values, so 0 rows here effectively means the row vanished between the
+		// existence check above and this write. The user was known to exist, so
+		// treat it as success rather than a 500.
 		if _, err := result.RowsAffected(); err != nil {
 			return fmt.Errorf("failed to get affected rows: %w", err)
 		}
@@ -343,7 +335,7 @@ func (s *UserService) DeleteUser(id string) error {
 	return utils.RetryOperation(func() error {
 		// First, check if the user has admin role
 		var role string
-		checkRoleQuery := "SELECT role FROM users WHERE id = ?"
+		checkRoleQuery := "SELECT role FROM users WHERE id = $1"
 		err := s.DB.QueryRow(checkRoleQuery, id).Scan(&role)
 		if err != nil {
 			if err == sql.ErrNoRows {
@@ -733,7 +725,7 @@ func (s *UserService) CreateUserWithRole(username, email, password, role string)
 
 		// Check if username already exists BEFORE validating password
 		var existingUserID int
-		checkQuery := `SELECT id FROM users WHERE username = ?`
+		checkQuery := `SELECT id FROM users WHERE username = $1`
 		err = tx.QueryRow(checkQuery, username).Scan(&existingUserID)
 		if err == nil {
 			// Username already exists
@@ -756,20 +748,13 @@ func (s *UserService) CreateUserWithRole(username, email, password, role string)
 		}
 
 		// Insert user with role
-		insertQuery := `INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)`
-		result, err := tx.Exec(insertQuery, username, email, hashedPasswordBase64, role)
-		if err != nil {
+		insertQuery := `INSERT INTO users (username, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id`
+		if err := tx.QueryRow(insertQuery, username, email, hashedPasswordBase64, role).Scan(&userID); err != nil {
 			if isDuplicateEntryError(err) {
 				return fmt.Errorf("username already exists")
 			}
 			return fmt.Errorf("failed to insert user: %w", err)
 		}
-
-		userIDInt64, err := result.LastInsertId()
-		if err != nil {
-			return fmt.Errorf("failed to get user ID: %w", err)
-		}
-		userID = int(userIDInt64)
 
 		if err = tx.Commit(); err != nil {
 			return fmt.Errorf("failed to commit transaction: %w", err)
@@ -790,7 +775,7 @@ func (s *UserService) GetSystemInstallationID() (string, error) {
 	if err == sql.ErrNoRows {
 		// Create new installation ID if not exists
 		installationID = s.generateInstallationID()
-		insertQuery := "INSERT INTO system_settings (setting_key, setting_value) VALUES ('installation_id', ?)"
+		insertQuery := "INSERT INTO system_settings (setting_key, setting_value) VALUES ('installation_id', $1)"
 		_, err = s.DB.Exec(insertQuery, installationID)
 		if err != nil {
 			return "", fmt.Errorf("failed to create installation ID: %w", err)
@@ -816,7 +801,7 @@ func (s *UserService) CheckDefaultAdminCredentials() (bool, int, error) {
 	var userID int
 	var hashedPassword string
 
-	query := "SELECT id, password FROM users WHERE username = ? AND role = ?"
+	query := "SELECT id, password FROM users WHERE username = $1 AND role = $2"
 	err := s.DB.QueryRow(query, "admin", "admin").Scan(&userID, &hashedPassword)
 
 	if err == sql.ErrNoRows {
@@ -848,7 +833,7 @@ func (s *UserService) GetAdminCredentialStatus() (*models.AdminCredentialStatus,
 	// Check if credentials have been updated
 	var credentialsUpdated bool
 	if adminExists {
-		query := "SELECT COALESCE(credentials_updated, FALSE) FROM users WHERE id = ?"
+		query := "SELECT COALESCE(credentials_updated, FALSE) FROM users WHERE id = $1"
 		err = s.DB.QueryRow(query, adminUserID).Scan(&credentialsUpdated)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check credentials updated status: %w", err)
@@ -884,7 +869,7 @@ func (s *UserService) UpdateAdminCredentials(currentUsername, currentPassword, n
 		// Verify current credentials
 		var userID int
 		var hashedPassword string
-		query := "SELECT id, password FROM users WHERE username = ? AND role = ?"
+		query := "SELECT id, password FROM users WHERE username = $1 AND role = $2"
 		err = tx.QueryRow(query, currentUsername, "admin").Scan(&userID, &hashedPassword)
 		if err == sql.ErrNoRows {
 			return errors.New("admin user not found")
@@ -910,7 +895,7 @@ func (s *UserService) UpdateAdminCredentials(currentUsername, currentPassword, n
 		// Check if new username already exists (if different from current)
 		if newUsername != currentUsername {
 			var existingID int
-			checkQuery := "SELECT id FROM users WHERE username = ? AND id != ?"
+			checkQuery := "SELECT id FROM users WHERE username = $1 AND id != $2"
 			err = tx.QueryRow(checkQuery, newUsername, userID).Scan(&existingID)
 			if err == nil {
 				return errors.New("username already exists")
@@ -927,10 +912,10 @@ func (s *UserService) UpdateAdminCredentials(currentUsername, currentPassword, n
 
 		// Update user credentials
 		updateQuery := `UPDATE users
-			SET username = ?, password = ?, email = ?,
+			SET username = $1, password = $2, email = $3,
 			    credentials_updated = TRUE, credentials_updated_at = NOW(),
 			    must_change_password = FALSE
-			WHERE id = ?`
+			WHERE id = $4`
 		_, err = tx.Exec(updateQuery, newUsername, newHashedPasswordBase64, newEmail, userID)
 		if err != nil {
 			return fmt.Errorf("failed to update user credentials: %w", err)
@@ -939,7 +924,7 @@ func (s *UserService) UpdateAdminCredentials(currentUsername, currentPassword, n
 		// Update system config to mark admin credentials as updated
 		configQuery := `INSERT INTO system_config (config_key, config_value)
 			VALUES ('admin_credentials_updated', 'true')
-			ON DUPLICATE KEY UPDATE config_value = 'true', updated_at = NOW()`
+			ON CONFLICT (config_key) DO UPDATE SET config_value = 'true', updated_at = NOW()`
 		_, err = tx.Exec(configQuery)
 		if err != nil {
 			return fmt.Errorf("failed to update system config: %w", err)
@@ -958,7 +943,7 @@ func (s *UserService) UpdateAdminCredentials(currentUsername, currentPassword, n
 // HasDefaultCredentials checks if a specific user has default credentials
 func (s *UserService) HasDefaultCredentials(userID int) (bool, error) {
 	var hashedPassword string
-	query := "SELECT password FROM users WHERE id = ?"
+	query := "SELECT password FROM users WHERE id = $1"
 	err := s.DB.QueryRow(query, userID).Scan(&hashedPassword)
 	if err != nil {
 		return false, fmt.Errorf("failed to query user password: %w", err)
@@ -973,7 +958,7 @@ func (s *UserService) HasDefaultCredentials(userID int) (bool, error) {
 func (s *UserService) MarkCredentialsUpdated(userID int) error {
 	query := `UPDATE users
 		SET credentials_updated = TRUE, credentials_updated_at = NOW()
-		WHERE id = ?`
+		WHERE id = $1`
 	_, err := s.DB.Exec(query, userID)
 	if err != nil {
 		return fmt.Errorf("failed to mark credentials as updated: %w", err)
@@ -1002,7 +987,7 @@ func (s *UserService) ResetAdminToDefault() (int, error) {
 		// Check if admin user exists
 		var existingUserID int
 		var currentUsername string
-		checkQuery := "SELECT id, username FROM users WHERE role = ? LIMIT 1"
+		checkQuery := "SELECT id, username FROM users WHERE role = $1 LIMIT 1"
 		err = tx.QueryRow(checkQuery, "admin").Scan(&existingUserID, &currentUsername)
 
 		if err == sql.ErrNoRows {
@@ -1017,17 +1002,10 @@ func (s *UserService) ResetAdminToDefault() (int, error) {
 
 			// Insert new admin user
 			insertQuery := `INSERT INTO users (username, email, password, role, credentials_updated) 
-				VALUES (?, ?, ?, 'admin', FALSE)`
-			result, err := tx.Exec(insertQuery, defaultUsername, defaultEmail, hashedPasswordBase64)
-			if err != nil {
+				VALUES ($1, $2, $3, 'admin', FALSE) RETURNING id`
+			if err := tx.QueryRow(insertQuery, defaultUsername, defaultEmail, hashedPasswordBase64).Scan(&existingUserID); err != nil {
 				return fmt.Errorf("failed to create admin user: %w", err)
 			}
-
-			adminIDInt64, err := result.LastInsertId()
-			if err != nil {
-				return fmt.Errorf("failed to get admin user ID: %w", err)
-			}
-			existingUserID = int(adminIDInt64)
 
 			utils.LogInfo(fmt.Sprintf("Created default admin account (ID: %d)", existingUserID))
 		} else if err != nil {
@@ -1044,8 +1022,8 @@ func (s *UserService) ResetAdminToDefault() (int, error) {
 
 			// Update admin to default credentials
 			updateQuery := `UPDATE users 
-				SET username = ?, email = ?, password = ?, credentials_updated = FALSE 
-				WHERE id = ?`
+				SET username = $1, email = $2, password = $3, credentials_updated = FALSE 
+				WHERE id = $4`
 			_, err = tx.Exec(updateQuery, defaultUsername, defaultEmail, hashedPasswordBase64, existingUserID)
 			if err != nil {
 				return fmt.Errorf("failed to reset admin credentials: %w", err)
@@ -1062,7 +1040,7 @@ func (s *UserService) ResetAdminToDefault() (int, error) {
 		// than no reset, because the operator is told the account is secured.
 		// Tokens live in api_tokens keyed by the user ID as a string
 		// (see saveToken, which stores strconv.Itoa(user_id)).
-		deleteTokenQuery := "DELETE FROM api_tokens WHERE user_id = ?"
+		deleteTokenQuery := "DELETE FROM api_tokens WHERE user_id = $1"
 		if _, err = tx.Exec(deleteTokenQuery, strconv.Itoa(existingUserID)); err != nil {
 			return fmt.Errorf("failed to invalidate existing admin tokens: %w", err)
 		}

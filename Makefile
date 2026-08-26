@@ -13,7 +13,7 @@ SSL_OPTION=false
 DB_USER ?= oamuser
 DB_PASSWORD ?= CHANGE_ME
 DB_HOST=127.0.0.1
-DB_PORT=3306
+DB_PORT=5432
 DB_NAME=loxioam
 TOKEN_EXPIRATION=1440
 SERVER_PORT=8080
@@ -31,7 +31,7 @@ SSL_OPTION=false
 AWS_DB_USER ?= root
 AWS_DB_PASSWORD ?= CHANGE_ME
 AWS_DB_HOST ?= 127.0.0.1
-AWS_DB_PORT=3306
+AWS_DB_PORT=5432
 AWS_DB_NAME=loxilb_db
 AWS_TOKEN_EXPIRATION=1440
 AWS_SERVER_PORT=8080
@@ -144,7 +144,7 @@ docker-run:
 # Docker Compose management
 #
 # These drive the root docker-compose.yml (the single-service HTTP stack).
-# The full management plane — UI + API + MySQL behind a TLS edge — is the
+# The full management plane — UI + API + PostgreSQL behind a TLS edge — is the
 # bundle in deploy/compose/; drive that one with its own overlay pair
 # (see docs/deployment-compose.md), not with these targets.
 docker-compose-up:
@@ -185,3 +185,7 @@ version:
 	version docker-build docker-push docker-run build-image \
 	docker-compose-up docker-compose-down docker-compose-logs \
 	generate-ssl-certs generate-simple-ssl-certs update-k8s-ssl-secret
+
+.PHONY: k8s-init-configmap
+k8s-init-configmap: ## Regenerate the k8s database-init ConfigMaps from the canonical schema
+	@bash scripts/gen-k8s-init-configmap.sh

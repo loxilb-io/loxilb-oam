@@ -64,7 +64,7 @@ func TestFetchLoxiLBInstanceByID(t *testing.T) {
 	)
 
 	// Expect the query to be executed
-	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\?").
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\$1").
 		WithArgs(1).
 		WillReturnRows(row)
 
@@ -92,7 +92,7 @@ func TestFetchLoxiLBInstanceByIDNotFound(t *testing.T) {
 	loxilbService := services.NewLoxiLBService(db)
 
 	// Expect the query to be executed but return no rows
-	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\?").
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\$1").
 		WithArgs(999).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "name", "host", "port", "protocol", "description", "version", "api_endpoint", "cimage", "ctag", "is_active", "created_at",
@@ -135,10 +135,11 @@ func TestAddLoxiLBInstance(t *testing.T) {
 	}
 
 	// Expect the insert query to be executed
-	mock.ExpectExec("INSERT INTO loxilb_instances").
+	// INSERT ... RETURNING id is a query, not an exec, under PostgreSQL.
+	mock.ExpectQuery("INSERT INTO loxilb_instances").
 		WithArgs(instance.Name, instance.Host, instance.Port, instance.Protocol, instance.Description,
 			instance.Version, instance.ApiEndpoint, instance.Cimage, instance.Ctag, instance.IsActive).
-		WillReturnResult(sqlmock.NewResult(3, 1))
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(3))
 
 	// Call the AddLoxiLBInstance function
 	_, err = loxilbService.AddLoxiLBInstance(instance)
@@ -177,7 +178,7 @@ func TestUpdateLoxiLBInstance(t *testing.T) {
 	}
 
 	// UpdateLoxiLBInstance first verifies the instance exists
-	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\?").
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances WHERE id = \\$1").
 		WithArgs(instance.ID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "name", "host", "port", "protocol", "description", "version", "api_endpoint", "cimage", "ctag", "is_active", "created_at",
@@ -213,7 +214,7 @@ func TestDeleteLoxiLBInstance(t *testing.T) {
 	loxilbService := services.NewLoxiLBService(db)
 
 	// Expect the delete query to be executed
-	mock.ExpectExec("DELETE FROM loxilb_instances WHERE id = \\?").
+	mock.ExpectExec("DELETE FROM loxilb_instances WHERE id = \\$1").
 		WithArgs(1).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 

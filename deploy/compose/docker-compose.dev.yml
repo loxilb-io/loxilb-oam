@@ -9,9 +9,9 @@
 # ${UI_IMAGE}:${UI_TAG} reference. To run a UI you built yourself, point
 # UI_IMAGE / UI_TAG at that image in .env.
 services:
-  mysql:
+  postgres:
     ports:
-      - "${MYSQL_HOST_PORT:-3306}:3306"   # exposed for local DB inspection
+      - "${POSTGRES_HOST_PORT:-5432}:5432"   # exposed for local DB inspection
 
   oam-loxilb:
     build:

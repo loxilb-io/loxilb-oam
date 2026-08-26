@@ -1,36 +1,58 @@
-# loxilb-oam — API-only stack: MySQL + the OAM service over plain HTTP.
+# loxilb-oam — API-only stack: PostgreSQL + the OAM service over plain HTTP.
 #
 #   1. cp .env.example .env   and set the required secrets
 #   2. docker compose up -d
 #
-#   DB only : docker compose up -d mysql   (e.g. when running the binary from
+#   DB only : docker compose up -d postgres   (e.g. when running the binary from
 #             source — see docs/database-installation.md)
 #
 # This stack serves HTTP and does NOT include the web console. For a production
-# deployment — UI + API + MySQL behind a Caddy TLS edge — use the bundle in
+# deployment — UI + API + PostgreSQL behind a Caddy TLS edge — use the bundle in
 # deploy/compose/ (guide: docs/deployment-compose.md).
 
 services:
-  mysql:
-    image: mysql:9.2.0
-    container_name: oam-loxilb-mysql
+  postgres:
+    image: postgres:18.6
+    container_name: oam-loxilb-postgres
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in .env}
-      MYSQL_DATABASE: ${DB_NAME:-loxioam}
-      MYSQL_USER: ${DB_USER:-oamuser}
+      POSTGRES_DB: ${DB_NAME:-loxioam}
       # Single-sourced from DB_PASSWORD (same key the bundle uses) — provisions
-      # the oamuser account and is what OAM connects with. No separate MYSQL_PASSWORD.
-      MYSQL_PASSWORD: ${DB_PASSWORD:?set in .env}
+      # the oamuser account, which owns the database and is what OAM connects
+      # with. PostgreSQL has no separate root account to password here.
+      POSTGRES_USER: ${DB_USER:-oamuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set in .env}
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      # postgres:18 keeps PGDATA at /var/lib/postgresql/18/docker and declares
+      # its volume one level up; mounting the pre-18 .../data path would not
+      # persist anything.
+      - postgres_data:/var/lib/postgresql
       - ./database/init:/docker-entrypoint-initdb.d
-      - ./database/config/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    # Tuning is passed as flags rather than a mounted postgresql.conf: pointing
+    # config_file at a file outside PGDATA also moves where PostgreSQL looks for
+    # pg_hba.conf (it defaults to the config file's own directory), which breaks
+    # authentication unless every path is repeated. These few settings are the
+    # MySQL my.cnf equivalents that actually mattered.
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - timezone=UTC
+      # Log statements slower than 2s — the analogue of MySQL's
+      # slow_query_log + long_query_time=2. The old my.cnf also set
+      # general_log=1 (log every statement); that is deliberately not carried
+      # over, because the equivalent (log_statement=all) writes credentials and
+      # token values into the log. Add it explicitly if you need it.
+      - -c
+      - log_min_duration_statement=2000
     networks:
       - oam-loxilb-network
     healthcheck:
-      test: ["CMD", "sh", "-c", "mysqladmin ping -h localhost -u root -p\"${MYSQL_ROOT_PASSWORD:?set in .env}\""]
+      test: ["CMD-SHELL", "pg_isready -q -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       timeout: 20s
       retries: 10
       interval: 10s
@@ -56,8 +78,8 @@ services:
       # Database connection.
       DB_USER: ${DB_USER:-oamuser}
       DB_PASSWORD: ${DB_PASSWORD:?set in .env}
-      DB_HOST: ${DB_HOST:-mysql}
-      DB_PORT: ${DB_PORT:-3306}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${DB_NAME:-loxioam}
       SERVER_PORT: 8080
       TOKEN_EXPIRATION: ${TOKEN_EXPIRATION:-480}
@@ -70,7 +92,7 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
     networks:
       - oam-loxilb-network
@@ -93,7 +115,7 @@ networks:
     driver: bridge
 
 volumes:
-  mysql_data:
+  postgres_data:
     driver: local
   oam_logs:
     driver: local

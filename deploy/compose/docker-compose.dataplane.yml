@@ -60,7 +60,7 @@ services:
       # Keep the datapath off Docker's own interfaces. NlpIsBlackListedIntf
       # (api/loxinlp/nlp.go) excludes only `lo` by default, so without this the
       # gateway attaches to docker0, the compose bridges (br-*) and every veth —
-      # i.e. the wires carrying Caddy->OAM, OAM->MySQL and OAM->gateway traffic.
+      # i.e. the wires carrying Caddy->OAM, OAM->PostgreSQL and OAM->gateway traffic.
       # `$$` escapes compose interpolation; loxilb receives a literal `$`.
       - --blacklist=^docker0$$|^br-|^veth
       # Run the Prometheus collector thread. ON BY DEFAULT: without it

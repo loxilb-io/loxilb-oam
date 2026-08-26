@@ -40,8 +40,8 @@ const (
 
 	// SSL Service
 	CaCertFilePath       = "certs/ca.crt"
-	CaClientCertFilePath = "certs/mysql.crt"
-	CaClientKeyFilePath  = "certs/mysql.key"
+	CaClientCertFilePath = "certs/postgres.crt"
+	CaClientKeyFilePath  = "certs/postgres.key"
 
 	// Log Service
 	DefaultLogLines       = 100

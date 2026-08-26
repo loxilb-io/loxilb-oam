@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
 	"github.com/loxilb-io/loxilb-oam/internal/models"
 	"github.com/loxilb-io/loxilb-oam/internal/utils"
 )
+
+// pgUniqueViolation is PostgreSQL SQLSTATE 23505, raised when an insert or
+// update conflicts with a unique constraint. It replaces MySQL error 1062.
+const pgUniqueViolation = "23505"
 
 type LoxiLBService struct {
 	DB *sql.DB
@@ -119,9 +123,9 @@ func (s *LoxiLBService) countInstances(query, value string, excludeID int) (bool
 // concurrent creates both pass the check, and the loser must still get a 409
 // rather than a 500 carrying raw SQL.
 func IsDuplicateKeyError(err error) bool {
-	var mysqlErr *mysql.MySQLError
-	if errors.As(err, &mysqlErr) {
-		return mysqlErr.Number == 1062
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == pgUniqueViolation
 	}
 	return false
 }
@@ -133,20 +137,14 @@ func (s *LoxiLBService) AddLoxiLBInstance(instance models.LoxiLBInstance) (int, 
 
 	var instanceID int
 	err := utils.RetryOperation(func() error {
+		// PostgreSQL has no LastInsertId; the query ends in RETURNING id.
 		query := config.InsertLoxiLBInstanceQuery
-		result, err := s.DB.Exec(query, instance.Name, instance.Host, instance.Port, instance.Protocol,
-			instance.Description, instance.Version, instance.ApiEndpoint, instance.Cimage, instance.Ctag, instance.IsActive)
+		err := s.DB.QueryRow(query, instance.Name, instance.Host, instance.Port, instance.Protocol,
+			instance.Description, instance.Version, instance.ApiEndpoint, instance.Cimage, instance.Ctag, instance.IsActive).Scan(&instanceID)
 		if err != nil {
 			utils.LogError("Failed to add LoxiLB instance: " + err.Error())
 			return err
 		}
-
-		lastInsertID, err := result.LastInsertId()
-		if err != nil {
-			utils.LogError("Failed to get last insert ID: " + err.Error())
-			return err
-		}
-		instanceID = int(lastInsertID)
 
 		utils.LogInfo("LoxiLB instance added: " + instance.Name)
 		return nil
@@ -164,9 +162,10 @@ func (s *LoxiLBService) AddLoxiLBInstanceWithArgs(name, host, port, protocol, de
 	var instanceID int
 	var conflict error
 	err := utils.RetryOperation(func() error {
+		// PostgreSQL has no LastInsertId; the query ends in RETURNING id.
 		query := config.InsertLoxiLBInstanceQuery
-		result, err := s.DB.Exec(query, name, host, port, protocol,
-			description, version, ApiEndpoint, cimage, ctag, isActive)
+		err := s.DB.QueryRow(query, name, host, port, protocol,
+			description, version, ApiEndpoint, cimage, ctag, isActive).Scan(&instanceID)
 		if err != nil {
 			utils.LogError("Failed to add LoxiLB instance: " + err.Error())
 			// A unique violation is a verdict, not a transient fault —
@@ -178,13 +177,6 @@ func (s *LoxiLBService) AddLoxiLBInstanceWithArgs(name, host, port, protocol, de
 			}
 			return err
 		}
-
-		lastInsertID, err := result.LastInsertId()
-		if err != nil {
-			utils.LogError("Failed to get last insert ID: " + err.Error())
-			return err
-		}
-		instanceID = int(lastInsertID)
 
 		utils.LogInfo("LoxiLB instance added: " + name)
 		return nil
@@ -205,7 +197,7 @@ func (s *LoxiLBService) UpdateLoxiLBInstance(instance models.LoxiLBInstance) err
 		// Check if the instance exists
 		var existingInstance models.LoxiLBInstance
 
-		query := "SELECT id, name, host, port, protocol, description, version, api_endpoint, cimage, ctag, is_active, created_at FROM loxilb_instances WHERE id = ?"
+		query := "SELECT id, name, host, port, protocol, description, version, api_endpoint, cimage, ctag, is_active, created_at FROM loxilb_instances WHERE id = $1"
 		err := s.DB.QueryRow(query, instance.ID).Scan(&existingInstance.ID, &existingInstance.Name,
 			&existingInstance.Host, &existingInstance.Port, &existingInstance.Protocol, &existingInstance.Description,
 			&existingInstance.Version, &existingInstance.ApiEndpoint, &existingInstance.Cimage, &existingInstance.Ctag, &existingInstance.IsActive, &existingInstance.CreatedAt)

@@ -12,7 +12,7 @@ services:
     image: ${UI_IMAGE:-ghcr.io/loxilb-io/loxilb-ui}:${UI_TAG:?pin UI_TAG to a released version in .env}
 
 networks:
-  # Isolate the data tier: no host reachability, no external egress. MySQL is
+  # Isolate the data tier: no host reachability, no external egress. PostgreSQL is
   # reachable only by OAM over this network. (OAM keeps egress via `frontend`.)
   backend:
     internal: true

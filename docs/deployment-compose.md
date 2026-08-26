@@ -1,14 +1,14 @@
 # LoxiLB Management Plane — Docker Compose Deployment Guide
 
 This guide walks an operator through deploying the complete LoxiLB management
-plane — the **loxilb-ui** web console, the **loxilb-oam** API, and its MySQL
+plane — the **loxilb-ui** web console, the **loxilb-oam** API, and its PostgreSQL
 database — on a single host with Docker Compose, behind a Caddy edge that
 serves the UI, proxies the API, and terminates TLS.
 
 ```
 browser ──HTTP/HTTPS──▶ caddy (edge, the only exposed service)
                           ├─ /            → static SPA (loxilb-ui)
-                          └─ /api/oam/*   → oam-loxilb (API) ──▶ mysql
+                          └─ /api/oam/*   → oam-loxilb (API) ──▶ postgres
                                                └─ TLS ──▶ managed LoxiLB instances
 ```
 
@@ -69,7 +69,6 @@ echo "OAM_JWT_SECRET=$(openssl rand -base64 48)"
 # which contain IPsec PSKs and certificate private keys — are stored UNENCRYPTED.
 echo "SNAPSHOT_ENC_KEY=$(openssl rand -base64 32)"
 # Database passwords
-echo "MYSQL_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')"
 echo "DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')"
 ```
 
@@ -95,7 +94,7 @@ Key reference (full comments in `.env.example`):
 |-----|---------|
 | `OAM_JWT_SECRET` | JWT signing key (required) |
 | `OAM_DEFAULT_ADMIN_PASSWORD` | bootstrap admin password (required) |
-| `MYSQL_ROOT_PASSWORD`, `DB_PASSWORD` | database credentials (required) |
+| `DB_PASSWORD` | database credentials (required) |
 | `SNAPSHOT_ENC_KEY` | snapshot encryption at rest (strongly recommended) |
 | `OAM_ALLOWED_ORIGINS` | CORS allowlist, e.g. `https://oam.example.internal` (production) |
 | `OAM_TRUSTED_PROXIES` | proxies whose `X-Forwarded-For` OAM trusts; defaults to `172.16.0.0/12` so the Caddy edge's client IP reaches rate limiting and login lockout |
@@ -103,7 +102,7 @@ Key reference (full comments in `.env.example`):
 | `EDGE_SNI_FALLBACK` | site to serve clients that send no SNI — required only when the edge is reached by IP (see Troubleshooting) |
 | `OAM_INSTANCE_CA_BUNDLE`, `OAM_INSTANCE_TLS_INSECURE` | TLS to managed LoxiLB instances (§6) |
 | `OAM_TAG`, `UI_TAG` | pinned image versions (Mode 2) |
-| `DB_HOST` | `mysql` = bundled DB; set a hostname to use an external database |
+| `DB_HOST` | `postgres` = bundled DB; set a hostname to use an external database |
 
 > Never commit your filled-in `.env`. It is gitignored by the bundle.
 
@@ -123,8 +122,8 @@ The first run takes a few minutes (Go build plus the console image pull). Then:
 docker compose -f docker-compose.yml -f docker-compose.dev.yml ps
 ```
 
-Expected steady state: `caddy`, `oam-loxilb`, `mysql` running (`oam-loxilb`
-and `mysql` **healthy**), and `ui-assets` exited with code **0** (it is a
+Expected steady state: `caddy`, `oam-loxilb`, `postgres` running (`oam-loxilb`
+and `postgres` **healthy**), and `ui-assets` exited with code **0** (it is a
 one-shot job that publishes the SPA build, then stops).
 
 **Verify** (replace `localhost` with the host's address as needed):
@@ -139,13 +138,13 @@ Open `http://<host>/netlox/` in a browser and log in as `admin` with
 `OAM_DEFAULT_ADMIN_PASSWORD`.
 
 Dev conveniences (dev overlay only): the API is also reachable directly at
-`http://<host>:8080` and MySQL at `<host>:3306`; instance-certificate
+`http://<host>:8080` and PostgreSQL at `<host>:5432`; instance-certificate
 verification is off (`OAM_INSTANCE_TLS_INSECURE=true`).
 
 ## 5. Mode 2 — Production (end-to-end HTTPS)
 
 Uses pinned, pre-built release images; publishes only ports 80/443; places
-MySQL on an isolated internal network; encrypts every wire that leaves the
+PostgreSQL on an isolated internal network; encrypts every wire that leaves the
 host. Three steps: pin images → edge certificate → bring up.
 
 ### 5.1 Pin the release images
@@ -253,7 +252,7 @@ openssl s_client -connect $IP:443 -servername $H </dev/null 2>/dev/null \
 
 # 4. Neither the API nor the database is reachable from outside
 curl -s -m 3 http://$IP:8080/ || echo "8080 closed (expected)"
-nc -z -w 3 $IP 3306          || echo "3306 closed (expected)"
+nc -z -w 3 $IP 5432          || echo "5432 closed (expected)"
 ```
 
 Log in at `https://<hostname>/netlox/` and proceed to §6 and §7.
@@ -337,8 +336,8 @@ release notes will call out migrations when they exist.
 (`caddy_data` only caches ACME material, `ui_build` is rebuilt on every `up`):
 
 ```bash
-docker compose ... exec mysql sh -c \
-  'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction loxioam' \
+docker compose ... exec postgres sh -c \
+  'exec pg_dump -U "$POSTGRES_USER" --clean --if-exists "$POSTGRES_DB"' \
   > oam-backup-$(date +%F).sql
 ```
 
@@ -348,8 +347,16 @@ what you need to rebuild the host from scratch).
 **Restore** (into a fresh stack after `down -v` + `up -d`):
 
 ```bash
-docker compose ... exec -T mysql sh -c \
-  'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" loxioam' < oam-backup-YYYY-MM-DD.sql
+docker compose ... exec -T postgres sh -c \
+  'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+  < oam-backup-YYYY-MM-DD.sql
+```
+
+The dump is taken with `--clean --if-exists`, so it drops and recreates its own
+objects; it can be restored over the schema the entrypoint has already created
+without conflicting with it.
+
+```bash
 ```
 
 **Certificate renewal (self-signed / BYO).** Replace the two files in
@@ -376,7 +383,7 @@ All variants are the same two `.env` knobs; only the values differ.
 | `ui-assets` exits non-zero / UI shows Caddy 404 | The SPA was not published. Check `docker compose ... logs ui-assets`; re-run `up -d`. Ensure the bundle is at a version that includes the ui-assets `entrypoint` override. |
 | `Error response from daemon: … unauthorized` pulling images | The GHCR package isn't public from your network — `docker login ghcr.io` with a token that has `read:packages`, or mirror the images. |
 | Port 80/443 already in use | Another web server on the host — stop it, or set `HTTP_PORT`/`HTTPS_PORT` in `.env` and re-run `up -d`. |
-| `mysql` unhealthy right after first `up` | First-boot initialization can take ~40 s (`start_period`); `oam-loxilb` waits for it. Only investigate if it stays unhealthy after a minute: `docker compose ... logs mysql`. |
+| `postgres` unhealthy right after first `up` | First-boot initialization can take ~40 s (`start_period`); `oam-loxilb` waits for it. Only investigate if it stays unhealthy after a minute: `docker compose ... logs postgres`. |
 | `oam-loxilb` exits / keeps restarting on a fresh install | `OAM_DEFAULT_ADMIN_PASSWORD` violated the password policy, so the initial admin account could not be created and the API refuses to run — the log shows `failed to set up the initial admin account`. Set a compliant password (§3) and run `up -d` again. (Older releases instead started with **no** admin account, making every login return 401 — same cause, same fix.) |
 | Login returns HTTP 500 immediately after a previous login | Known upstream issue: two logins by the same user within the same minute can collide on token storage. Wait a minute and retry; the first token is valid. |
 | Instance shows unreachable after enabling TLS | On the instance: loxilb running with `--tls` and the cert/key in place? Endpoint registered as `https://<host>:8091/netlox/v1`? On OAM: `OAM_INSTANCE_CA_BUNDLE` pointing at the CA that signed the instance cert, cert SAN matching the registered host? Errors appear in `docker compose ... logs oam-loxilb`. |

@@ -84,8 +84,8 @@ separate `reset_admin` process.)
 | Constant Name          | Description                      | Value |
 |------------------------|----------------------------------|-------|
 | `CaCertFilePath`       | Path to CA certificate file      | `"certs/ca.crt"` |
-| `CaClientCertFilePath` | Path to client certificate file  | `"certs/mysql.crt"` |
-| `CaClientKeyFilePath`  | Path to client key file          | `"certs/mysql.key"` |
+| `CaClientCertFilePath` | Path to client certificate file  | `"certs/postgres.crt"` |
+| `CaClientKeyFilePath`  | Path to client key file          | `"certs/postgres.key"` |
 
 ## LoxiLB Instance Configuration
 

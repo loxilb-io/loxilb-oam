@@ -6,7 +6,7 @@ set up a development environment and the conventions we follow.
 ## Getting started
 
 1. Fork the repository and clone your fork.
-2. Install Go 1.25+ and MySQL 8.x or later.
+2. Install Go 1.25+ and PostgreSQL 18 or later.
 3. Copy `.env.example` to `.env` and fill in the required secrets.
 4. Download dependencies and run the tests:
 
