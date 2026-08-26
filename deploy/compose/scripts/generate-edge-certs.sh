@@ -13,7 +13,20 @@
 set -euo pipefail
 
 CN="${1:-oam.local}"
-SAN="${2:-DNS:${CN},DNS:localhost,IP:127.0.0.1}"
+
+# An IP has to appear in the SAN list as IP:, never DNS: — a DNS entry holding a
+# dotted quad matches nothing and the browser rejects the certificate outright.
+# Deployments reached only by address (no DNS name at all) are common, so detect
+# that here rather than leaving the caller to discover it from a TLS error.
+if [[ "$CN" =~ ^[0-9]+(\.[0-9]+){3}$ || "$CN" == *:*[0-9a-fA-F]* ]]; then
+  DEFAULT_SAN="IP:${CN},DNS:localhost,IP:127.0.0.1"
+  CN_IS_IP=1
+else
+  DEFAULT_SAN="DNS:${CN},DNS:localhost,IP:127.0.0.1"
+  CN_IS_IP=0
+fi
+
+SAN="${2:-$DEFAULT_SAN}"
 DAYS="${3:-825}"
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)/certs/edge"
@@ -35,7 +48,9 @@ Wrote:
 
 Set in .env:
   SITE_ADDRESS=https://${CN}
-  EDGE_TLS=tls /certs/edge/cert.pem /certs/edge/key.pem
+  EDGE_TLS=tls /certs/edge/cert.pem /certs/edge/key.pem$(
+  if [ "$CN_IS_IP" = 1 ]; then printf '\n  EDGE_SNI_FALLBACK=default_sni %s' "$CN"; fi)$(
+  if [ "$CN_IS_IP" = 1 ]; then printf '\n\nReached by address, so clients send no SNI — the EDGE_SNI_FALLBACK line above\nis required, not optional. No public CA will issue for a private address, so\ntrust cert.pem on each client (or issue the edge cert from your own CA).'; fi)
 
 To silence browser warnings, trust cert.pem on clients:
   macOS: sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$DIR/cert.pem"

@@ -1,0 +1,63 @@
+# Converged single-node overlay — management plane co-located with a local
+# loxilb-inference-gateway data plane on the same host.
+#
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.prod.yml \
+#                  -f docker-compose.converged.yml up -d
+#
+# The gateway itself is deliberately NOT in this file. It runs as its own
+# compose project (see docker-compose.dataplane.yml) so that a management-plane
+# `down` can never take the data plane — and live inference traffic — with it.
+# This overlay only carries the management-side wiring that co-location needs.
+#
+# Prerequisites: Linux host (network_mode: host is a no-op on Docker Desktop),
+# and GW_HOST / EDGE_BIND_IP / EDGE_HTTPS_PORT set in .env.
+services:
+  oam-loxilb:
+    # The gateway runs in the host network namespace, so it has no name on any
+    # compose network — `https://loxilb-gw:8091` can never resolve. Pin the
+    # gateway's certificate SAN to the Docker host-gateway address instead: the
+    # instance is registered as https://${GW_HOST}:8091/netlox/v1, byte-identical
+    # to how a remote gateway is registered, but the traffic never leaves the
+    # bridge. The cert needs no extra SAN, and no hairpin through the host NIC.
+    extra_hosts:
+      - "${GW_HOST:?set GW_HOST to the gateway certificate SAN in .env}:host-gateway"
+    environment:
+      # Refuse to program an LB rule whose VIP would collide with the Caddy
+      # edge. On a single-NIC host the gateway's eBPF datapath sits on the same
+      # wire as the management traffic, and an L4 rule on the edge address:port
+      # is processed before netfilter — it would silently swallow the console
+      # instead of failing to bind. See docs/deployment-converged.md §4.
+      OAM_RESERVED_ENDPOINTS: ${OAM_RESERVED_ENDPOINTS:-}
+    # Bound so a traffic spike on the data plane cannot be starved by, nor
+    # starve, the management plane. The gateway itself is deliberately
+    # unlimited: it is the workload this node exists to run.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  mysql:
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+  caddy:
+    # `ports` MERGES by default when overlays are layered — without !override
+    # this would publish the base file's 80/443 *in addition* to the ports
+    # below, re-creating exactly the collision this overlay exists to prevent.
+    #
+    # Host and container port are kept identical (no 8443->443 remap) so that
+    # SITE_ADDRESS can name the port Caddy actually listens on and its site
+    # block matches the Host header the browser sends. Converged mode publishes
+    # HTTPS only: port 80 belongs to the data plane.
+    ports: !override
+      - "${EDGE_BIND_IP:-0.0.0.0}:${EDGE_HTTPS_PORT:-8443}:${EDGE_HTTPS_PORT:-8443}"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
