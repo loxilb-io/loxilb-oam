@@ -1516,7 +1516,13 @@ func (h *Handler) ProxyToLoxiLB(c *gin.Context) {
 	err = h.proxyService.ForwardRequest(c, instanceID, targetPath)
 	if err != nil {
 		// Error handling with appropriate HTTP status codes
+		var reservedErr *services.ReservedEndpointError
 		switch {
+		// Surface the guard's own message: it names the offending VIP and the
+		// reservation it hit, which is what the operator needs to fix .env or
+		// pick another port. The generic default below would hide both.
+		case errors.As(err, &reservedErr):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		case strings.Contains(err.Error(), "not found"):
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		case strings.Contains(err.Error(), "failed to connect"):

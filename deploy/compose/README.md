@@ -52,6 +52,29 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 Open the UI at `http(s)://<host>/netlox/`. Edge liveness: `/healthz`.
 
+**Mode 3 — Converged single node.** Everything in Mode 2, plus the
+`loxilb-inference-gateway` data plane on the *same* host (host network,
+privileged, eBPF on the host NIC). The gateway runs as a **separate compose
+project** so a management-plane `down` cannot drop live inference traffic.
+
+One interactive command does the whole thing — secrets, certificates, `.env`,
+both stacks, and verification:
+```bash
+scripts/init-converged.sh          # -y for defaults, --no-start to set up only
+```
+By hand:
+```bash
+# data plane — deployed once, upgraded deliberately
+docker compose -f docker-compose.dataplane.yml up -d
+# management plane — upgraded freely
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+               -f docker-compose.converged.yml up -d
+```
+Linux only, and it needs its own `.env` section (`GW_HOST`, `EDGE_BIND_IP`,
+`OAM_RESERVED_ENDPOINTS`, `IGW_TAG`). Read
+[`docs/deployment-converged.md`](../../docs/deployment-converged.md) first —
+co-locating the data plane changes the port, privilege and upgrade story.
+
 ## Configuration
 
 One `.env` file drives everything; the same key names carry over to the k8s
@@ -77,6 +100,7 @@ are supported variants.
 | Self-signed, zero-file | `https://localhost` | `tls internal` |
 | Automatic HTTPS (public DNS) | `your.domain` | *(empty)* |
 | Official / commercial cert | `https://your.domain` | `tls /certs/edge/cert.pem /certs/edge/key.pem` |
+| **No DNS name — reached by IP** | `https://203.0.113.10` | `tls /certs/edge/cert.pem /certs/edge/key.pem` (+ `EDGE_SNI_FALLBACK=default_sni 203.0.113.10`) |
 
 Generate a self-signed edge cert:
 ```bash

@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
 	"github.com/loxilb-io/loxilb-oam/internal/utils"
@@ -97,6 +98,16 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 		}
 		// Restore body for potential re-reading
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
+	}
+
+	// Refuse rules that would take over a host endpoint the management plane
+	// depends on. This runs before the request leaves OAM: on a converged node
+	// an L4 rule on the edge address:port is processed in eBPF ahead of
+	// netfilter, so once the gateway has accepted it there is no error to
+	// observe — only a console that stopped answering.
+	if err := checkReservedEndpoint(config.ReservedEndpoints(), c.Request.Method, targetPath, requestBody); err != nil {
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), http.StatusConflict, time.Since(startTime).Milliseconds(), err.Error())
+		return err
 	}
 
 	// Create new request
@@ -209,4 +220,99 @@ func (p *ProxyService) logProxyRequest(c *gin.Context, instanceID int, originalU
 	// logEntry can be forwarded to a database or external logging system;
 	// it is currently served by the logging utility used above.
 	_ = logEntry
+}
+
+// ReservedEndpointError reports that a load-balancer rule was refused because
+// its VIP would collide with a host endpoint listed in OAM_RESERVED_ENDPOINTS.
+// The handler maps it to 409 Conflict.
+type ReservedEndpointError struct {
+	VIP      string                  // the address the rejected rule asked for
+	Port     int                     // the port the rejected rule asked for
+	Protocol string                  // the protocol the rejected rule asked for
+	Reserved config.ReservedEndpoint // the reservation it collided with
+}
+
+func (e *ReservedEndpointError) Error() string {
+	vip := e.VIP
+	if vip == "" {
+		vip = "*"
+	}
+	return fmt.Sprintf(
+		"load-balancer VIP %s:%d/%s collides with reserved host endpoint %s "+
+			"(OAM_RESERVED_ENDPOINTS); choose a different VIP address or port",
+		vip, e.Port, e.Protocol, e.Reserved)
+}
+
+// lbRuleEnvelope is the slice of the LoxiLB load-balancer rule body the guard
+// needs. Everything else in the rule is passed through untouched.
+type lbRuleEnvelope struct {
+	ServiceArguments struct {
+		ExternalIP string          `json:"externalIP"`
+		Host       string          `json:"host"`
+		Port       json.RawMessage `json:"port"`
+		Protocol   string          `json:"protocol"`
+	} `json:"serviceArguments"`
+}
+
+// checkReservedEndpoint refuses a load-balancer rule whose VIP would take over a
+// host endpoint the management plane depends on.
+//
+// It runs on the OAM side because that is the path the console and every
+// scripted client use. It is NOT airtight on its own: a caller with network
+// access to the gateway's own REST API can still program the rule directly. On a
+// converged node, keep the gateway's plaintext listener on loopback (HOST=
+// 127.0.0.1) and restrict its TLS listener, so OAM is the only reachable path.
+//
+// Fails open on request shapes it does not recognise — a body with no usable
+// port is left for the gateway to validate — but fails closed on the address:
+// once a reserved port is in play, a VIP that cannot be parsed is refused
+// rather than waved through.
+func checkReservedEndpoint(reserved []config.ReservedEndpoint, method, targetPath string, body []byte) error {
+	if len(reserved) == 0 || len(body) == 0 {
+		return nil
+	}
+	if method != http.MethodPost && method != http.MethodPut {
+		return nil
+	}
+	if !strings.Contains(strings.ToLower(targetPath), "config/loadbalancer") {
+		return nil
+	}
+
+	var rule lbRuleEnvelope
+	if err := json.Unmarshal(body, &rule); err != nil {
+		return nil // not a shape we understand; the gateway will validate it
+	}
+
+	port, ok := parseRulePort(rule.ServiceArguments.Port)
+	if !ok {
+		return nil
+	}
+	proto := rule.ServiceArguments.Protocol
+
+	// externalIP is the VIP; host is the address the L7 fullproxy (mode 4)
+	// actually binds. They are normally equal, but check both so a rule cannot
+	// slip through by naming the edge address in only one of them.
+	for _, vip := range []string{rule.ServiceArguments.ExternalIP, rule.ServiceArguments.Host} {
+		if vip == "" && rule.ServiceArguments.ExternalIP != "" {
+			continue // host omitted; externalIP already covered it
+		}
+		if match, hit := config.MatchReservedEndpoint(reserved, vip, port, proto); hit {
+			return &ReservedEndpointError{VIP: vip, Port: port, Protocol: proto, Reserved: match}
+		}
+	}
+	return nil
+}
+
+// parseRulePort reads the rule's port, which LoxiLB accepts as either a JSON
+// number or a quoted string.
+func parseRulePort(raw json.RawMessage) (int, bool) {
+	s := strings.Trim(strings.TrimSpace(string(raw)), `"`)
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 || n > 65535 {
+		return 0, false
+	}
+	return n, true
 }

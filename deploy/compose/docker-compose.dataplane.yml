@@ -1,0 +1,83 @@
+# Converged single-node data plane — loxilb-inference-gateway.
+#
+# Deliberately a SEPARATE compose project from the management plane, on the same
+# host. The management bundle is upgraded often; this is not. Keeping them in one
+# project would mean a routine `docker compose down` for an OAM upgrade also tears
+# down the eBPF datapath and drops live inference traffic. Compose has no way to
+# exempt a service from `down`, so separation is the only real protection.
+#
+#   # data plane — deployed once, upgraded deliberately
+#   docker compose -f docker-compose.dataplane.yml up -d
+#
+#   # management plane — upgraded freely, never touches traffic
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#                  -f docker-compose.converged.yml up -d
+#
+# This file deliberately sits NEXT TO .env rather than in a subdirectory:
+# Compose resolves .env relative to the compose file's own directory, so a
+# subdirectory copy would need --env-file on every single invocation — and the
+# one people forget is `down`, which then fails with "required variable GW_HOST
+# is missing a value" at the moment they most want it to work.
+#
+# `name: loxilb-data` is what keeps the projects separate, not the directory:
+# a plain `docker compose down` in this directory targets loxilb-mgmt and
+# cannot touch the gateway.
+#
+# Linux only: network_mode: host is a no-op on Docker Desktop, and the stack
+# would come up "healthy" with a gateway that sees no host NICs.
+name: loxilb-data
+
+services:
+  gateway:
+    image: ${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:?pin IGW_TAG to a released version in .env}
+    container_name: loxilb-gateway
+    # The gateway is a data plane: it attaches eBPF to host NICs and its L7
+    # fullproxy binds VIPs in the host network namespace. Neither is possible
+    # from a bridge network. This is also why it is the highest-privilege
+    # component on the node — see docs/deployment-converged.md §5 for what that
+    # means for the management credentials that live on the same host.
+    network_mode: host
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+    restart: unless-stopped
+    environment:
+      # Plaintext REST API on loopback only. The gateway's :11111 listener is
+      # unauthenticated by default, and in converged mode it would otherwise be
+      # published on the host's real address. This replaces the "firewall :11111"
+      # advice in docs/instance-tls.md with a bind-level guarantee.
+      # Host-local Prometheus scrapes and loxicmd are unaffected; off-host
+      # tooling that expects :11111 (e.g. loxilb-mcp --target-url) is not.
+      HOST: 127.0.0.1
+      PORT: "11111"
+      # Verified-TLS management listener — this is the one OAM talks to.
+      TLS: "true"
+      TLS_HOST: ${IGW_TLS_HOST:-0.0.0.0}
+      TLS_PORT: "8091"
+      TLS_CERTIFICATE: /opt/loxilb/cert/server.crt
+      TLS_PRIVATE_KEY: /opt/loxilb/cert/server.key
+    command:
+      # Keep the datapath off Docker's own interfaces. NlpIsBlackListedIntf
+      # (api/loxinlp/nlp.go) excludes only `lo` by default, so without this the
+      # gateway attaches to docker0, the compose bridges (br-*) and every veth —
+      # i.e. the wires carrying Caddy->OAM, OAM->MySQL and OAM->gateway traffic.
+      # `$$` escapes compose interpolation; loxilb receives a literal `$`.
+      - --blacklist=^docker0$$|^br-|^veth
+      # Run the Prometheus collector thread. ON BY DEFAULT: without it
+      # /netlox/v1/metrics answers "503 Prometheus option is disabled", and a
+      # converged production node is exactly where you want the AI-gateway
+      # metrics (KV routing, P/D, SSE, TTFT, rate-limit enforcement) available
+      # from the start — turning it on later costs a data-plane restart.
+      # Only --peer (BGP-peer-only) mode forces it back off; that mode has no
+      # datapath, so it does not apply here.
+      - --prometheus
+    volumes:
+      - /dev/log:/dev/log
+      # Configuration snapshot. Without this bind mount the gateway's config
+      # survives a restart but is LOST on image upgrade (container recreate).
+      - ${IGW_CONFIG_DIR:-/opt/loxilb/config}:/etc/loxilb
+      # The management CA script already emits certs where loxilb expects them
+      # (server.crt / server.key), so on a converged node the instance
+      # certificate mounts straight in — nothing is copied between hosts.
+      #   scripts/generate-instance-certs.sh ${GW_HOST}
+      - ./certs/instance-ca/${GW_HOST:?set GW_HOST in .env}:/opt/loxilb/cert:ro
