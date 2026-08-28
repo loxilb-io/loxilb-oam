@@ -5,6 +5,11 @@ plane — the **loxilb-ui** web console, the **loxilb-oam** API, and its Postgre
 database — on a single host with Docker Compose, behind a Caddy edge that
 serves the UI, proxies the API, and terminates TLS.
 
+This guide describes the standalone management bundle. In
+[converged single-node mode](deployment-converged.md), PostgreSQL moves to the
+independent `loxilb-state` project and one logical database is shared with the
+Gateway through isolated `public`, `aigw`, and `aigw_mgmt` schemas.
+
 ```
 browser ──HTTP/HTTPS──▶ caddy (edge, the only exposed service)
                           ├─ /            → static SPA (loxilb-ui)

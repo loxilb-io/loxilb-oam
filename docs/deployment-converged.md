@@ -1,7 +1,7 @@
 # Converged single-node deployment
 
-Management plane (OAM + console + PostgreSQL) and data plane
-(`loxilb-inference-gateway`) on **one host**.
+Shared state (one PostgreSQL server), management plane (OAM + console), and
+data plane (`loxilb-inference-gateway`) on **one host**.
 
 ```
                        host network namespace — privileged, eBPF on the host NIC
@@ -9,12 +9,20 @@ Management plane (OAM + console + PostgreSQL) and data plane
    (:80/:443, VIPs)      L7 fullproxy binds VIPs · L4 modes run in eBPF at TC ingress
                          :11111 plaintext API  → bound to 127.0.0.1
                          :8091  verified-TLS API → OAM's only way in
-                                ▲
-                                │ https, CA-verified, over the Docker bridge
+                                ▲                         │
+                                │ https, CA-verified      │ PostgreSQL over
+                                │ over the Docker bridge  │ 127.0.0.1 only
   browser ──:8443──▶ caddy ──▶ oam-loxilb ──┘
                        │  frontend (bridge)  │
-                       └ SPA volume          └─▶ postgres backend (internal: true)
+                       └ SPA volume          └─▶ postgres ◀─┘
+                                                database network (internal)
 ```
+
+PostgreSQL also joins a state-project-only bridge so Docker can implement the
+loopback host publication used by the host-network Gateway. Docker Engine does
+not activate published ports for a container attached only to an internal
+network. No application joins that auxiliary bridge, and the published address
+remains `127.0.0.1`.
 
 **Use this when** one node runs both the AI gateway and its own management
 console. **Do not use it** when that OAM instance also manages *other* gateways
@@ -25,18 +33,23 @@ up "healthy" with a gateway that sees no host NICs.
 
 ---
 
-## 1. Two projects, one host, one `.env`
+## 1. Three projects, one host, one PostgreSQL database
 
-Converged means **co-located, not co-managed**. The gateway runs as its own
-compose project:
+Converged means **co-located, not co-managed**. PostgreSQL, the gateway, and
+the management plane each have an independent Compose lifecycle:
 
 ```
 deploy/compose/
 ├── docker-compose.yml            # base (unchanged)
 ├── docker-compose.prod.yml       # prod overlay (unchanged)
 ├── docker-compose.converged.yml  # management-side wiring for a local gateway
+├── docker-compose.converged-local-ui.yml # dev: direct HTTP OAM, no bundled UI/edge
+├── docker-compose.database.yml   # shared state (project: loxilb-state)
 ├── docker-compose.dataplane.yml  # the gateway (project: loxilb-data)
-└── .env                          # shared by both projects
+├── database/
+│   └── aigw-db-bootstrap.sql     # reviewed Gateway bootstrap snapshot
+├── secrets/                      # ignored 0600 Gateway DB password files
+└── .env                          # shared by all three projects
 ```
 
 The gateway's compose file deliberately sits **beside** `.env`, not in a
@@ -44,25 +57,106 @@ subdirectory. Compose resolves `.env` relative to the compose file's own
 directory, so a subdirectory copy needs `--env-file ../.env` on every single
 invocation — and the one people forget is `down`, which then fails with
 `required variable GW_HOST is missing a value` exactly when they want it to
-work. What separates the projects is `name: loxilb-data` inside the file, not
-the directory it lives in: a plain `docker compose down` here targets
-`loxilb-mgmt` and cannot touch the gateway.
+work. What separates the projects is each file's `name:` value, not the
+directory it lives in: management is `loxilb-mgmt`, data is `loxilb-data`, and
+shared state is `loxilb-state`.
 
-Compose has no way to exempt a service from `down`. If the gateway lived in the
-management project, a routine `docker compose down` during an OAM upgrade would
-also tear down the eBPF datapath and drop live inference traffic. Splitting the
-projects is the only real protection, and it costs one extra command:
+Compose has no way to exempt a service from `down`. A routine management
+upgrade must not tear down either the eBPF datapath or the database both planes
+use. Splitting the projects provides that boundary:
 
 ```bash
 cd deploy/compose
 
-# data plane — deployed once, upgraded deliberately
+# shared state — start first; never use `down -v` during routine maintenance
+docker compose -f docker-compose.database.yml up -d postgres
+docker compose -f docker-compose.database.yml run --rm gateway-db-bootstrap
+
+# data plane — starts after database bootstrap; upgraded deliberately
 docker compose -f docker-compose.dataplane.yml up -d
 
 # management plane — upgraded freely, never touches traffic
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
                -f docker-compose.converged.yml up -d
 ```
+
+### Developer variant: remote converged backend, local UI over HTTP
+
+Use `docker-compose.converged-local-ui.yml` when the React development server
+runs on a developer workstation while PostgreSQL, the Gateway, and OAM remain
+on the Linux testbed:
+
+```
+browser ── http://localhost:3000 ──▶ local loxilb-ui dev server
+                  │
+                  └── HTTP + CORS ──▶ remote-host:8080/oam ──▶ OAM
+                                                              ├─▶ PostgreSQL
+                                                              └─▶ local Gateway
+```
+
+The final overlay publishes `oam-loxilb:8080` directly and puts inherited
+`ui-assets` and `caddy` services behind inactive profiles. No Caddy container,
+edge certificate, `/netlox/` route, or `/api/oam` rewrite exists in this mode.
+
+Set these values in the remote `deploy/compose/.env`:
+
+```dotenv
+OAM_DEV_BIND_IP=0.0.0.0
+OAM_DEV_HTTP_PORT=8080
+LOCAL_UI_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+LOCAL_UI_RESERVED_ENDPOINTS=:8080
+```
+
+`LOCAL_UI_ORIGINS` contains browser origins, not URLs: do not add `/netlox`,
+`/oam`, or a trailing slash. Add the workstation's actual origin if it uses a
+different hostname or port. `:8080` reserves the direct management port on
+every inference VIP; it can be narrowed to comma-separated
+`address:port[/protocol]` entries if required.
+
+Switch only the management project; the independent state and data projects
+remain running:
+
+```bash
+cd deploy/compose
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+               -f docker-compose.converged.yml down
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+               -f docker-compose.converged.yml \
+               -f docker-compose.converged-local-ui.yml \
+               up -d --remove-orphans
+```
+
+In the local `loxilb-ui` checkout, development mode calls OAM directly. The URL
+must end in `/oam`; `/api/oam` exists only behind the omitted Caddy edge:
+
+```dotenv
+REACT_APP_API_URL=http://<remote-testbed>:8080/oam
+REACT_APP_ENV=local
+REACT_APP_PUBLIC_URL=/netlox
+PORT=3000
+HTTPS=false
+```
+
+Run `npm start`, open `http://localhost:3000/netlox/`, and verify the remote
+contract before login:
+
+```bash
+curl http://<remote-testbed>:8080/oam/health
+curl -i -X OPTIONS \
+  -H 'Origin: http://localhost:3000' \
+  -H 'Access-Control-Request-Method: GET' \
+  http://<remote-testbed>:8080/oam/setup/status
+```
+
+The preflight response must include
+`Access-Control-Allow-Origin: http://localhost:3000`. A different origin gets
+no allow-origin header.
+
+> **Development only:** this path deliberately has no transport encryption.
+> Login credentials, JWTs, and API responses are visible to anyone able to
+> observe the link. Restrict port 8080 to the developer workstation with the
+> testbed firewall/security group or use a trusted VPN. Use the normal
+> Caddy/TLS converged deployment for shared, staging, or production systems.
 
 ## 2. Setup
 
@@ -75,8 +169,9 @@ deploy/compose/scripts/init-converged.sh
 Interactive. It checks the prerequisites (Linux, Compose 2.24+ for `!override`),
 shows the host's real addresses and picks the port profile from how many there
 are, generates every secret and certificate, creates the snapshot directory,
-writes a `0600` `.env`, starts both projects in the right order, verifies seven
-things, and optionally registers the local gateway.
+writes a `0600` `.env`, starts all three projects in database → data →
+management order, verifies the schema/role/network/runtime contracts, and
+optionally registers the local gateway.
 
 Re-running is safe: it offers to keep an existing `.env` and reuses existing
 certificates. `-y` accepts every default; `--no-start` sets up without bringing
@@ -89,9 +184,11 @@ matching and the reserved endpoint. List a NATed public address there too: the
 host cannot discover it, and a client arriving on an address missing from the
 certificate gets a hard TLS failure.
 
-It also refuses to generate fresh database credentials when a PostgreSQL volume
-already exists, offering to reuse the old credentials or to delete the volume
-outright — see "existing database" in the troubleshooting table.
+It also refuses to generate fresh OAM credentials when a PostgreSQL volume
+already exists, offering to reuse the old credentials or explicitly delete the
+volume — see "existing database" in the troubleshooting table. A legacy
+`loxilb-mgmt_postgres_data` volume is adopted in place as the shared-state
+volume; it is not copied or silently deleted.
 
 **Re-running keeps your answers.** Every prompt defaults to the value already in
 `.env`, so pressing Enter reproduces the deployment you have. This matters most
@@ -112,14 +209,25 @@ what the script does, for when you would rather do it by hand.
 
 ### By hand
 
-**1. Host paths.** The gateway's config snapshot must survive a container
+**1. Database credentials.** The gateway reads its AI-key-store password from a
+Compose secret file; the management-store role is provisioned for future use
+but deliberately not enabled in converged mode. Keep both files out of Git:
+
+```bash
+install -d -m 0700 secrets
+openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32 > secrets/aigw_db_password
+openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32 > secrets/aigw_mgmt_db_password
+chmod 0600 secrets/aigw_db_password secrets/aigw_mgmt_db_password
+```
+
+**2. Host paths.** The gateway's config snapshot must survive a container
 recreate, or configuration is lost on every image upgrade:
 
 ```bash
 sudo mkdir -p /opt/loxilb/config
 ```
 
-**2. Certificates.** One command issues the management CA and the gateway's
+**3. Certificates.** One command issues the management CA and the gateway's
 server certificate. On a converged node the output directory mounts straight
 into the gateway — nothing is copied between hosts:
 
@@ -129,7 +237,7 @@ scripts/generate-instance-certs.sh gw.example.internal   # = GW_HOST
 # → certs/instance-ca/gw.example.internal/server.{crt,key}  (mounted at /opt/loxilb/cert)
 ```
 
-**3. `.env`.** See the "Converged single-node mode" section of `.env.example`.
+**4. `.env`.** See the "Converged single-node mode" section of `.env.example`.
 Minimum:
 
 ```bash
@@ -137,14 +245,41 @@ GW_HOST=gw.example.internal
 EDGE_BIND_IP=192.168.0.8          # the management address
 EDGE_HTTPS_PORT=8443
 OAM_RESERVED_ENDPOINTS=192.168.0.8:8443
-IGW_TAG=latest-u24                # pin to a release
+IGW_TAG=latest-u24                # approved integration image; record its digest
+CONVERGED_PG_HOST_PORT=5432       # published on 127.0.0.1 only
+CONVERGED_DB_NETWORK=loxilb-converged-db
+CONVERGED_PG_VOLUME=loxilb-state-postgres-data
+AIGW_DB_PASSWORD_FILE=./secrets/aigw_db_password
+AIGW_MGMT_DB_PASSWORD_FILE=./secrets/aigw_mgmt_db_password
 SITE_ADDRESS=https://gw.example.internal:8443   # MUST carry the port
 EDGE_TLS=tls /certs/edge/cert.pem /certs/edge/key.pem   # see "ACME renewal" below
 OAM_INSTANCE_CA_BUNDLE=/etc/loxilb-oam/certs/instance-ca.pem
 OAM_INSTANCE_TLS_INSECURE=false
 ```
 
-**4. Register the gateway** in the console as
+`latest-u24` is the approved image for this integration cycle. Record the
+resolved repository digest in test evidence; replace it with an immutable
+release tag or digest for production promotion.
+
+**5. Start the database and bootstrap Gateway roles before applications.** One
+PostgreSQL database (default `loxioam`) contains three isolated schemas:
+`public` for OAM, `aigw` for AI API keys and tenant quotas, and dormant
+`aigw_mgmt` for Gateway users/session tokens.
+
+```bash
+docker compose -f docker-compose.database.yml up -d postgres
+docker compose -f docker-compose.database.yml run --rm gateway-db-bootstrap
+docker compose -f docker-compose.dataplane.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+               -f docker-compose.converged.yml up -d
+```
+
+The bootstrap is idempotent and is the password-rotation path. The Gateway uses
+only `aigw`; do **not** add `--userservice` merely because `aigw_mgmt` exists.
+OAM forwards its own JWT in `Authorization`, which is a different identity
+plane from Gateway management tokens.
+
+**6. Register the gateway** in the console as
 `https://${GW_HOST}:8091/netlox/v1` — host `gw.example.internal`, port `8091`,
 protocol `https`.
 
@@ -439,20 +574,28 @@ Verified on the live converged node, through OAM's verified-TLS proxy:
 
 ```bash
 cd deploy/compose
+S="-f docker-compose.database.yml"
+D="-f docker-compose.dataplane.yml"
 M="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.converged.yml"
 
 docker compose $M up -d --no-deps oam-loxilb   # upgrade OAM only — traffic untouched
 docker compose $M up -d --no-deps caddy        # upgrade the edge only
-docker compose $M down                         # SAFE: gateway is a separate project
+docker compose $M down                         # SAFE: gateway and DB are separate projects
 
 # gateway upgrade — a real traffic event, schedule it
-D="-f docker-compose.dataplane.yml"
 curl -s http://127.0.0.1:11111/netlox/v1/config/snapshot > snapshot-$(date +%F).json
 docker compose $D pull && docker compose $D up -d
+
+# database maintenance — affects both planes; schedule and back up first
+docker compose $S exec -T postgres pg_dump -U oamuser -d loxioam -Fc > loxioam-$(date +%F).dump
+docker compose $S up -d postgres
+docker compose $S run --rm gateway-db-bootstrap
 ```
 
 The gateway boot-restores from `/opt/loxilb/config/snapshot.json`. Snapshots
 contain IPsec PSKs and certificate private keys — treat them as credentials.
+The PostgreSQL volume is the single durable state source for both applications.
+Never run `docker compose $S down -v` as part of an OAM or Gateway upgrade.
 
 ## 9. Troubleshooting
 
@@ -462,7 +605,10 @@ contain IPsec PSKs and certificate private keys — treat them as credentials.
 | Both `:443` and `:8443` are published | `!override` missing from the overlay's `ports`. |
 | Browser gets a TLS error or 404 at the edge | `SITE_ADDRESS` must include `:${EDGE_HTTPS_PORT}`. |
 | `ERR_SSL_PROTOCOL_ERROR` when reaching the console **by address** (by name it works) | No `EDGE_SNI_FALLBACK`. An address sends no SNI, so Caddy selects no site and drops the handshake before any HTTP. Set `EDGE_SNI_FALLBACK=default_sni <primary-name>`, add the address to `SITE_ADDRESS`, and put it in the certificate as an `IP:` SAN. |
-| OAM loops on `Database connection failed`, never healthy, while PostgreSQL reports healthy | The PostgreSQL volume was initialised with **different** credentials. `DB_PASSWORD` applies only to an empty data directory, and `pg_isready` only checks that the server accepts connections — it does not authenticate — so it goes green regardless. Restore the old value from an `.env.bak.*`, or `docker volume rm loxilb-mgmt_postgres_data` to start clean (destroys users, instances, snapshots). |
+| OAM loops on `Database connection failed`, never healthy, while PostgreSQL reports healthy | The PostgreSQL volume was initialised with **different** credentials. `DB_PASSWORD` applies only to an empty data directory. Restore the old value from an `.env.bak.*`. Starting clean requires stopping the state project and explicitly removing `CONVERGED_PG_VOLUME`; this destroys OAM users, instances, snapshots, AI keys, and quotas. |
+| Gateway logs an AI-key database connection or preflight error | Confirm `127.0.0.1:${CONVERGED_PG_HOST_PORT}` is listening, the `aigw` schema exists, and `secrets/aigw_db_password` is the value last applied by `gateway-db-bootstrap`. Re-run the idempotent bootstrap, then restart the Gateway. |
+| `gateway-db-bootstrap` succeeds but Gateway management requests return 401/403 | Do not enable `--userservice` in this topology. OAM JWT and Gateway management tokens are separate authentication planes; only the AI-key store is enabled. |
+| `docker compose $M down` leaves PostgreSQL and the Gateway running | Expected. They are independent `loxilb-state` and `loxilb-data` projects. Stop either only during an explicitly scheduled state/data maintenance event. |
 | Instance shows **Down** right after re-running the init script | `GW_HOST` changed, so the gateway now serves a certificate for the new name and OAM pins only that name — the registered host no longer resolves. Set the instance's Host to the current `GW_HOST` (`grep GW_HOST .env`), or re-run and keep the previous name. |
 | Browser shows a certificate-name error (`curl` exit 60) but `curl -k` works | The edge certificate's SAN list does not contain the name being used. Check it: `echo \| openssl s_client -connect <host>:8443 -servername <name> \| openssl x509 -noout -ext subjectAltName`. |
 | Certificate valid today, expired later, nothing changed | ACME renewal cannot run without `:80`/`:443` — see §4. |

@@ -17,6 +17,8 @@ Then, optionally, [TLS to the database](#3-tls-to-the-database).
 >   [deployment-compose.md](deployment-compose.md)
 > - API + PostgreSQL only, over HTTP: `docker compose up -d` from the repository root
 >   (see [DEPLOYMENT.md](../DEPLOYMENT.md)).
+> - Converged OAM + Gateway sharing one database:
+>   [deployment-converged.md](deployment-converged.md).
 
 ## The schema is single-sourced
 
@@ -125,6 +127,24 @@ export OAM_DEFAULT_ADMIN_PASSWORD='<bootstrap-admin-password>'
 
 In the Compose bundles, set `DB_HOST` in `.env` to your external host — the
 bundled `postgres` service is then unused.
+
+### Converged shared database
+
+Converged mode uses one PostgreSQL server and one `loxioam` database with three
+schema tenants: OAM in `public`, Gateway API keys/quotas in `aigw`, and the
+currently dormant Gateway management store in `aigw_mgmt`. Run the idempotent
+bootstrap after authenticated PostgreSQL readiness:
+
+```bash
+cd deploy/compose
+docker compose -f docker-compose.database.yml up -d postgres
+docker compose -f docker-compose.database.yml run --rm gateway-db-bootstrap
+```
+
+For an existing volume, mounting another init file is insufficient because
+`/docker-entrypoint-initdb.d` runs only on an empty data directory. The explicit
+bootstrap command above is the fresh and existing-volume path. Back up the
+database before adopting an existing volume into `loxilb-state`.
 
 ### Upgrading an existing database
 

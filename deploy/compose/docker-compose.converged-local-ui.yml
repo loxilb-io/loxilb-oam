@@ -1,0 +1,35 @@
+# Converged developer overlay — run PostgreSQL, Gateway, and OAM remotely while
+# loxilb-ui runs from a developer checkout on another machine.
+#
+# This mode intentionally exposes the OAM API over plain HTTP. It does not start
+# the bundled UI publisher or Caddy, so no edge certificate is generated or
+# required. Use it only on a trusted development network or testbed.
+#
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.prod.yml \
+#                  -f docker-compose.converged.yml \
+#                  -f docker-compose.converged-local-ui.yml up -d
+
+services:
+  oam-loxilb:
+    environment:
+      # The React development server calls OAM directly, so allow its browser
+      # origin explicitly. Multiple origins may be comma-separated.
+      OAM_ALLOWED_ORIGINS: ${LOCAL_UI_ORIGINS:-http://localhost:3000}
+      # There is no reverse proxy in this mode. Ignore caller-controlled
+      # X-Forwarded-For headers so rate limits use the real socket peer.
+      OAM_TRUSTED_PROXIES: ""
+      # Reserve the directly published management port on every VIP by default.
+      # Override with exact address:port entries only when the node design
+      # requires a narrower reservation.
+      OAM_RESERVED_ENDPOINTS: "${LOCAL_UI_RESERVED_ENDPOINTS:-:8080}"
+    ports: !override
+      - "${OAM_DEV_BIND_IP:-0.0.0.0}:${OAM_DEV_HTTP_PORT:-8080}:8080"
+
+  # Profiles that are never enabled by the documented command remove the two
+  # browser-edge services inherited from the base bundle.
+  ui-assets:
+    profiles: [bundled-ui-disabled-in-local-ui]
+
+  caddy:
+    profiles: [edge-disabled-in-local-ui]

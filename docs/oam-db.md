@@ -4,6 +4,12 @@ The LoxiLB OAM system uses a PostgreSQL database to store users, managed LoxiLB
 instances, API tokens, logs, alerts, acknowledgments, login-attempt tracking,
 instance snapshots, and system configuration.
 
+In converged mode this same logical database also contains two schemas owned by
+the Gateway: `aigw` for API keys and tenant quotas, and `aigw_mgmt` for the
+provisioned-but-disabled Gateway user service. They are not OAM tables. OAM
+continues to use `public`; the Gateway runtime roles are denied access to OAM
+tables and to each other's schema.
+
 This document is the schema reference. The authoritative definitions live in:
 
 - `database/init/00-init-complete.sql` — full schema for fresh installs (runs

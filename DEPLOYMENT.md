@@ -95,6 +95,8 @@ The repository ships two distinct Compose deployments — do not mix them:
 |------|--------------|------------|
 | `docker-compose.yml` (repository root) | PostgreSQL + the OAM API over plain **HTTP**, built from local source | development, and API-only deployments |
 | [`deploy/compose/`](deploy/compose/) | the full management plane — UI + API + PostgreSQL behind a **Caddy TLS edge** | **production** ([guide](docs/deployment-compose.md)) |
+| `deploy/compose/docker-compose.database.yml` plus converged/data-plane files | one shared PostgreSQL database, local Gateway, and OAM/UI/edge in independent projects | converged single-node ([guide](docs/deployment-converged.md)) |
+| `deploy/compose/docker-compose.converged-local-ui.yml` (final overlay) | converged PostgreSQL + Gateway + OAM, with direct HTTP OAM and no remote UI/Caddy | trusted-testbed development with a local React UI ([guide](docs/deployment-converged.md#developer-variant-remote-converged-backend-local-ui-over-http)) |
 
 Running the published image directly — `docker run`, image tags, signature and
 SBOM verification, building your own image, air-gapped installs — is covered in

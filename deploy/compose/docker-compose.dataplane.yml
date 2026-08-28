@@ -29,7 +29,7 @@ name: loxilb-data
 
 services:
   gateway:
-    image: ${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:?pin IGW_TAG to a released version in .env}
+    image: ${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}
     container_name: loxilb-gateway
     # The gateway is a data plane: it attaches eBPF to host NICs and its L7
     # fullproxy binds VIPs in the host network namespace. Neither is possible
@@ -71,6 +71,14 @@ services:
       # Only --peer (BGP-peer-only) mode forces it back off; that mode has no
       # datapath, so it does not apply here.
       - --prometheus
+      # AI API keys and tenant quotas live in the shared PostgreSQL database,
+      # isolated in schema aigw under role aigwuser. The Gateway is in the host
+      # network namespace, so it reaches the state project's loopback-only port.
+      - --aikey-db-host=127.0.0.1
+      - --aikey-db-port=${CONVERGED_PG_HOST_PORT:-5432}
+      - --aikey-db-user=${AIGW_DB_USER:-aigwuser}
+      - --aikey-db-name=${DB_NAME:-loxioam}
+      - --aikey-db-password-file=/run/secrets/aigw_db_password
     volumes:
       - /dev/log:/dev/log
       # Configuration snapshot. Without this bind mount the gateway's config
@@ -81,3 +89,9 @@ services:
       # certificate mounts straight in — nothing is copied between hosts.
       #   scripts/generate-instance-certs.sh ${GW_HOST}
       - ./certs/instance-ca/${GW_HOST:?set GW_HOST in .env}:/opt/loxilb/cert:ro
+    secrets:
+      - aigw_db_password
+
+secrets:
+  aigw_db_password:
+    file: ${AIGW_DB_PASSWORD_FILE:-./secrets/aigw_db_password}

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Interactive bootstrap for the CONVERGED single-node deployment:
-# management plane (OAM + console + PostgreSQL) and a local loxilb-inference-gateway
-# data plane on the same host.
+# shared state (PostgreSQL), management plane (OAM + console), and a local
+# loxilb-inference-gateway data plane on the same host.
 #
 #   deploy/compose/scripts/init-converged.sh
 #
 # It writes .env, generates the secrets and certificates, creates the host
-# paths, starts both compose projects in the right order, verifies them, and
+# paths, starts all three compose projects in the right order, verifies them, and
 # optionally registers the local gateway in OAM.
 #
 # Safe to re-run: an existing .env is never overwritten without asking, and
@@ -27,6 +27,7 @@ DO_START=1
 
 MGMT_FILES=(-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.converged.yml)
 DATA_FILES=(-f docker-compose.dataplane.yml)
+STATE_FILES=(-f docker-compose.database.yml)
 
 # ── output helpers ───────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -39,6 +40,7 @@ ok()    { printf '  %s✓%s %s\n' "$GRN" "$N" "$*"; }
 warn()  { printf '  %s!%s %s\n' "$YEL" "$N" "$*"; }
 die()   { printf '\n%sERROR:%s %s\n\n' "$RED" "$N" "$*" >&2; exit 1; }
 note()  { printf '  %s%s%s\n' "$DIM" "$*" "$N"; }
+rand_alnum() { openssl rand -base64 "$1" | tr -dc 'A-Za-z0-9' | head -c "$1"; }
 
 # ask VAR "prompt" "default"
 ask() {
@@ -138,6 +140,8 @@ if [ -f "$ENV_FILE" ]; then
     PREV_EDGE_PORT="$(envget "$BK" EDGE_HTTPS_PORT)"
     PREV_IGW_TAG="$(envget "$BK" IGW_TAG)"
     PREV_IGW_CONFIG_DIR="$(envget "$BK" IGW_CONFIG_DIR)"
+    PREV_PG_HOST_PORT="$(envget "$BK" CONVERGED_PG_HOST_PORT)"
+    PREV_PG_VOLUME="$(envget "$BK" CONVERGED_PG_VOLUME)"
     PREV_OAM_TAG="$(envget "$BK" OAM_TAG)"
     PREV_UI_TAG="$(envget "$BK" UI_TAG)"
     # SITE_ADDRESS is "https://name:port[, https://other:port]" — take the first host.
@@ -151,12 +155,33 @@ if [ "$REUSE_ENV" = 1 ]; then
   GW_HOST="$(get GW_HOST)";                 EDGE_BIND_IP="$(get EDGE_BIND_IP)"
   EDGE_HTTPS_PORT="$(get EDGE_HTTPS_PORT)"; IGW_CONFIG_DIR="$(get IGW_CONFIG_DIR)"
   SITE_ADDRESS="$(get SITE_ADDRESS)";       IGW_TAG="$(get IGW_TAG)"
+  DB_PASSWORD="$(get DB_PASSWORD)"
+  CONVERGED_PG_HOST_PORT="$(get CONVERGED_PG_HOST_PORT)"
+  CONVERGED_PG_VOLUME="$(get CONVERGED_PG_VOLUME)"
   EDGE_NAME="$(printf '%s' "$SITE_ADDRESS" | sed 's/,.*//; s#^https\?://##; s/:[0-9]*$//')"
   EDGE_TLS_MODE="reuse"
   : "${EDGE_HTTPS_PORT:=8443}"; : "${IGW_CONFIG_DIR:=/opt/loxilb/config}"
   : "${EDGE_BIND_IP:=0.0.0.0}"; : "${IGW_TAG:=latest-u24}"
+  : "${CONVERGED_PG_HOST_PORT:=5432}"
+  : "${CONVERGED_PG_VOLUME:=loxilb-state-postgres-data}"
   : "${SITE_ADDRESS:=https://${EDGE_BIND_IP}:${EDGE_HTTPS_PORT}}"
   [ -n "$GW_HOST" ] || die "the existing .env has no GW_HOST — it is not a converged .env. Re-run and choose to recreate it."
+
+  # An .env created by the former two-project layout has no state-volume key,
+  # while its durable data still lives under the management project's volume
+  # name. Adopt that exact volume even on the "keep existing .env" path; using
+  # the new default here would silently initialise an empty database beside it.
+  if ! docker volume inspect "$CONVERGED_PG_VOLUME" >/dev/null 2>&1 \
+     && docker volume inspect loxilb-mgmt_postgres_data >/dev/null 2>&1; then
+    CONVERGED_PG_VOLUME=loxilb-mgmt_postgres_data
+    if grep -q '^CONVERGED_PG_VOLUME=' "$ENV_FILE"; then
+      sed -i "s/^CONVERGED_PG_VOLUME=.*/CONVERGED_PG_VOLUME=$CONVERGED_PG_VOLUME/" "$ENV_FILE"
+    else
+      printf '\nCONVERGED_PG_VOLUME=%s\n' "$CONVERGED_PG_VOLUME" >> "$ENV_FILE"
+    fi
+    chmod 600 "$ENV_FILE"
+    warn "adopting legacy management database volume as shared state: $CONVERGED_PG_VOLUME"
+  fi
   ok "GW_HOST=$GW_HOST  edge=${EDGE_BIND_IP:-0.0.0.0}:$EDGE_HTTPS_PORT"
 fi
 
@@ -248,7 +273,7 @@ while :; do
   ask EDGE_TLS_MODE "Choose 1-$(( ACME_OK ? 3 : 2 ))" "1"
   case "$EDGE_TLS_MODE" in
     1|2) break ;;
-    3) [ "$ACME_OK" = 1 ] && break || warn "option 3 is not available with this address/port" ;;
+    3) if [ "$ACME_OK" = 1 ]; then break; else warn "option 3 is not available with this address/port"; fi ;;
     *) warn "enter 1, 2$([ "$ACME_OK" = 1 ] && echo " or 3")" ;;
   esac
 done
@@ -279,6 +304,8 @@ Any name works — it never needs to resolve in public DNS."
 
 ask IGW_TAG "loxilb-inference-gateway image tag" "${PREV_IGW_TAG:-latest-u24}"
 ask IGW_CONFIG_DIR "Host directory for the gateway config snapshot" "${PREV_IGW_CONFIG_DIR:-/opt/loxilb/config}"
+ask CONVERGED_PG_HOST_PORT "Loopback port for the shared PostgreSQL service" "${PREV_PG_HOST_PORT:-5432}"
+CONVERGED_PG_VOLUME="${PREV_PG_VOLUME:-loxilb-state-postgres-data}"
 
 step "Management plane images"
 warn "pin these to released versions in production; 'latest' is not reproducible"
@@ -287,7 +314,6 @@ ask UI_TAG  "loxilb-ui image tag"  "${PREV_UI_TAG:-latest}"
 
 # ── 6. secrets ───────────────────────────────────────────────────────────────
 step "Generating secrets"
-rand_alnum() { openssl rand -base64 "$1" | tr -dc 'A-Za-z0-9' | head -c "$1"; }
 
 # Mirrors internal/services.validatePassword so a bad password fails here rather
 # than aborting the server on first boot.
@@ -298,7 +324,7 @@ valid_admin_pw() {
   [[ "$p" == *[[:upper:]]* ]] || return 1
   [[ "$p" == *[[:lower:]]* ]] || return 1
   [[ "$p" == *[[:digit:]]* ]] || return 1
-  [[ "$p" == *[\!\%\*\+\,\-\.\:\=\?\@\^\_\~]* ]] || return 1
+  case "$p" in *['!%*+,-.:=?@^_~']*) ;; *) return 1 ;; esac
   # no character three times in a row
   local i c prev="" run=1
   for ((i=0; i<${#p}; i++)); do
@@ -325,7 +351,18 @@ gen_admin_pw() {
 # while OAM loops on "Database connection failed" and never goes healthy.
 # Decide this before writing .env.
 KEEP_DB=0
-PG_VOL="$(docker volume ls -q --filter name=loxilb-mgmt_postgres_data 2>/dev/null | head -1 || true)"
+PG_VOL="$(docker volume ls -q --filter "name=^${CONVERGED_PG_VOLUME}$" 2>/dev/null | head -1 || true)"
+if [ -z "$PG_VOL" ]; then
+  # Adopt the pre-state-project converged volume in place. Naming it in .env
+  # lets the state project use the existing data without a copy or destructive
+  # rename; Docker volumes are independent of their original Compose project.
+  LEGACY_PG_VOL="$(docker volume ls -q --filter name=loxilb-mgmt_postgres_data 2>/dev/null | head -1 || true)"
+  if [ -n "$LEGACY_PG_VOL" ]; then
+    PG_VOL="$LEGACY_PG_VOL"
+    CONVERGED_PG_VOLUME="$LEGACY_PG_VOL"
+    warn "adopting legacy management database volume as shared state: $LEGACY_PG_VOL"
+  fi
+fi
 if [ -n "$PG_VOL" ]; then
   warn "an existing database volume was found: $PG_VOL"
   note "New database secrets would not apply to it — PostgreSQL keeps the password"
@@ -338,9 +375,11 @@ if [ -n "$PG_VOL" ]; then
     note "There is no previous .env to recover the credentials from."
   fi
   if [ "$KEEP_DB" = 0 ]; then
-    warn "starting clean DESTROYS that database: all users, registered instances and snapshots"
+    warn "starting clean DESTROYS that database: OAM users/instances/snapshots and Gateway API keys/quotas"
     if confirm "Delete $PG_VOL and start with an empty database?" n; then
       docker compose "${MGMT_FILES[@]}" down >/dev/null 2>&1 || true
+      docker compose "${DATA_FILES[@]}" down >/dev/null 2>&1 || true
+      docker compose "${STATE_FILES[@]}" down >/dev/null 2>&1 || true
       docker volume rm "$PG_VOL" >/dev/null 2>&1 \
         || die "could not remove $PG_VOL — stop anything still using it and re-run."
       ok "removed $PG_VOL — a fresh database will be initialised"
@@ -349,7 +388,7 @@ if [ -n "$PG_VOL" ]; then
 
 Re-run and choose to keep the existing .env, so its database credentials keep
 matching the volume. To recover credentials by hand, they are in one of:
-  $(ls -1 "$ENV_FILE".bak.* 2>/dev/null | tail -3 | tr '\n' ' ')"
+  $(find "$(dirname "$ENV_FILE")" -maxdepth 1 -type f -name "$(basename "$ENV_FILE").bak.*" -print 2>/dev/null | sort | tail -3 | tr '\n' ' ')"
     fi
   fi
 fi
@@ -364,7 +403,7 @@ else
 fi
 OAM_JWT_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
 SNAPSHOT_ENC_KEY="$(openssl rand -base64 32 | tr -d '\n')"
-ok "database, JWT and snapshot-encryption secrets generated"
+ok "OAM database, JWT and snapshot-encryption secrets generated"
 
 ADMIN_PW=""
 if confirm "Generate the bootstrap admin password too?" y; then
@@ -435,6 +474,14 @@ IGW_TAG=$IGW_TAG
 IGW_CONFIG_DIR=$IGW_CONFIG_DIR
 IGW_TLS_HOST=0.0.0.0
 
+# ── Shared PostgreSQL state ──────────────────────────────────────────────────
+CONVERGED_PG_HOST_PORT=$CONVERGED_PG_HOST_PORT
+CONVERGED_DB_NETWORK=loxilb-converged-db
+CONVERGED_PG_VOLUME=$CONVERGED_PG_VOLUME
+AIGW_DB_USER=aigwuser
+AIGW_DB_PASSWORD_FILE=./secrets/aigw_db_password
+AIGW_MGMT_DB_PASSWORD_FILE=./secrets/aigw_mgmt_db_password
+
 # ── TLS to the gateway (verified) ────────────────────────────────────────────
 OAM_INSTANCE_CA_BUNDLE=/etc/loxilb-oam/certs/instance-ca.pem
 OAM_INSTANCE_TLS_INSECURE=false
@@ -457,6 +504,30 @@ chmod 600 "$ENV_FILE"
 ok ".env written (0600) — it holds every secret for this node, keep it that way"
 
 fi  # end of "$REUSE_ENV" = 0
+
+# Runtime Gateway DB credentials live in files, not .env or the process command
+# line. Preserve existing files on every re-run; bootstrap rotates the database
+# roles to the file values, so deleting and regenerating one unintentionally
+# would be an availability event.
+step "Gateway database credential files"
+SECRETS_DIR="$COMPOSE_DIR/secrets"
+mkdir -p "$SECRETS_DIR"
+chmod 700 "$SECRETS_DIR"
+ensure_secret_file() {
+  local path="$1" label="$2"
+  if [ -s "$path" ]; then
+    chmod 600 "$path"
+    ok "$label preserved"
+  else
+    umask 077
+    rand_alnum 32 > "$path"
+    chmod 600 "$path"
+    umask 022
+    ok "$label generated"
+  fi
+}
+ensure_secret_file "$SECRETS_DIR/aigw_db_password" "Gateway AI-store credential"
+ensure_secret_file "$SECRETS_DIR/aigw_mgmt_db_password" "Gateway management-store credential (provisioned, dormant)"
 
 # ── 8. host paths and certificates ───────────────────────────────────────────
 step "Host directory for the gateway snapshot"
@@ -500,14 +571,28 @@ fi
 
 if [ "$DO_START" = 0 ]; then
   step "Set up, not started (--no-start)"
+  note "Shared state:     docker compose ${STATE_FILES[*]} up -d postgres"
+  note "DB bootstrap:     docker compose ${STATE_FILES[*]} run --rm gateway-db-bootstrap"
   note "Data plane:       docker compose ${DATA_FILES[*]} up -d"
   note "Management plane: docker compose ${MGMT_FILES[*]} up -d"
   exit 0
 fi
 
 # ── 9. start ─────────────────────────────────────────────────────────────────
-# Data plane first and as its OWN compose project: a management-plane `down`
-# must never be able to tear down the eBPF datapath and drop live traffic.
+# PostgreSQL owns an independent lifecycle. Bring it up and prove the canonical
+# Gateway bootstrap before either application is allowed to start.
+step "Starting shared PostgreSQL state (project: loxilb-state)"
+docker compose "${STATE_FILES[@]}" up -d postgres \
+  || die "shared PostgreSQL did not start. 'docker compose ${STATE_FILES[*]} logs postgres' will say why."
+ok "shared PostgreSQL container up"
+
+step "Provisioning Gateway schemas and roles"
+docker compose "${STATE_FILES[@]}" run --rm gateway-db-bootstrap \
+  || die "Gateway database bootstrap failed. No application containers were started."
+ok "aigw and aigw_mgmt bootstrap complete"
+
+# Data plane next and as its OWN compose project: a management-plane `down`
+# must never tear down the eBPF datapath or its PostgreSQL dependency.
 step "Starting the data plane (project: loxilb-data)"
 docker compose "${DATA_FILES[@]}" up -d \
   || die "the gateway did not start. 'docker compose ${DATA_FILES[*]} logs' will say why."
@@ -521,6 +606,30 @@ ok "management plane up"
 # ── 10. verify ───────────────────────────────────────────────────────────────
 step "Verifying"
 FAIL=0
+
+# Authenticated SQL readiness plus the schema/privilege contract. pg_isready by
+# itself does not prove the password works and would miss an old-volume mismatch.
+DB_CHECK="$(docker compose "${STATE_FILES[@]}" exec -T postgres sh -ec \
+  'PGPASSWORD="$POSTGRES_PASSWORD" psql -qAt -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT array_to_string(array_agg(nspname ORDER BY nspname), chr(44)) FROM pg_namespace WHERE nspname IN ('\''aigw'\'','\''aigw_mgmt'\'','\''public'\'')"' 2>/dev/null || true)"
+if [ "$DB_CHECK" = "aigw,aigw_mgmt,public" ]; then
+  ok "one database contains public, aigw and aigw_mgmt schemas"
+else
+  warn "shared database schema contract failed (observed: ${DB_CHECK:-none})"; FAIL=1
+fi
+
+DB_ISOLATION="$(docker compose "${STATE_FILES[@]}" exec -T postgres sh -ec \
+  'PGPASSWORD="$POSTGRES_PASSWORD" psql -qAt -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT has_schema_privilege('\''aigwuser'\'','\''aigw'\'','\''CREATE'\'') AND NOT has_schema_privilege('\''aigwuser'\'','\''aigw_mgmt'\'','\''USAGE'\'') AND NOT has_schema_privilege('\''aigw_mgmt_user'\'','\''aigw'\'','\''USAGE'\'')"' 2>/dev/null || true)"
+if [ "$DB_ISOLATION" = t ]; then
+  ok "Gateway database roles are schema-isolated"
+else
+  warn "Gateway database role isolation check failed"; FAIL=1
+fi
+
+if ss -lntH 2>/dev/null | grep -q "127.0.0.1:${CONVERGED_PG_HOST_PORT}\b"; then
+  ok "PostgreSQL published on loopback only (${CONVERGED_PG_HOST_PORT})"
+else
+  warn "PostgreSQL loopback listener not found on ${CONVERGED_PG_HOST_PORT}"; FAIL=1
+fi
 
 printf '  waiting for OAM to become healthy '
 for _ in $(seq 1 30); do
@@ -538,10 +647,22 @@ else
     warn "OAM cannot reach the database with the credentials in .env."
     note "Almost always: a PostgreSQL volume initialised with DIFFERENT credentials."
     note "Either restore DB_PASSWORD from an .env backup, or"
-    note "remove the volume to start clean:  docker volume rm ${PG_VOL:-loxilb-mgmt_postgres_data}"
+    note "remove the volume to start clean:  docker volume rm ${PG_VOL:-$CONVERGED_PG_VOLUME}"
   fi
   FAIL=1
 fi
+
+# eBPF attachment can take several seconds after the container is running. Wait
+# for both API listeners before evaluating the binding and TLS checks below.
+printf '  waiting for Gateway APIs '
+for _ in $(seq 1 30); do
+  if ss -lntH 2>/dev/null | grep -q '127.0.0.1:11111' \
+     && ss -lntH 2>/dev/null | grep -q ':8091'; then
+    break
+  fi
+  printf '.'; sleep 2
+done
+echo
 
 # The plaintext gateway API must be loopback-only; the TLS one must be reachable.
 if ss -lntH 2>/dev/null | grep -q '127.0.0.1:11111'; then
@@ -549,24 +670,41 @@ if ss -lntH 2>/dev/null | grep -q '127.0.0.1:11111'; then
 else
   warn "gateway :11111 is NOT loopback-only — check HOST=127.0.0.1 in docker-compose.dataplane.yml"; FAIL=1
 fi
-ss -lntH 2>/dev/null | grep -q ':8091' && ok "gateway TLS API listening on :8091" || { warn "gateway :8091 not listening — is TLS=true set?"; FAIL=1; }
+if ss -lntH 2>/dev/null | grep -q ':8091'; then
+  ok "gateway TLS API listening on :8091"
+else
+  warn "gateway :8091 not listening — is TLS=true set?"; FAIL=1
+fi
 
 # The edge must own exactly one address:port, or the port policy has slipped.
 EDGE_LISTEN="$(ss -lntH 2>/dev/null | grep -c ":${EDGE_HTTPS_PORT}\b" || true)"
-[ "${EDGE_LISTEN:-0}" -ge 1 ] && ok "console listening on ${EDGE_BIND_IP}:${EDGE_HTTPS_PORT}" || { warn "nothing listening on ${EDGE_HTTPS_PORT}"; FAIL=1; }
+if [ "${EDGE_LISTEN:-0}" -ge 1 ]; then
+  ok "console listening on ${EDGE_BIND_IP}:${EDGE_HTTPS_PORT}"
+else
+  warn "nothing listening on ${EDGE_HTTPS_PORT}"; FAIL=1
+fi
 if ss -lntH 2>/dev/null | grep -qE ':(80|443)\b.*docker-proxy'; then
   warn "something is publishing :80/:443 — those belong to the data plane in converged mode"
 fi
 
 # The datapath must not have attached to Docker's own interfaces.
 TAKEN="$(docker exec loxilb-gateway loxicmd get port 2>/dev/null | grep -coE '\| (docker0|br-[a-f0-9]+|veth[a-z0-9]+) ' || true)"
-[ "${TAKEN:-0}" -eq 0 ] && ok "datapath is off docker0/br-*/veth*" || { warn "datapath attached to $TAKEN Docker interface(s) — check --blacklist"; FAIL=1; }
+if [ "${TAKEN:-0}" -eq 0 ]; then
+  ok "datapath is off docker0/br-*/veth*"
+else
+  warn "datapath attached to $TAKEN Docker interface(s) — check --blacklist"; FAIL=1
+fi
 
 # Metrics should be live from first boot.
-docker exec loxilb-gateway sh -c 'command -v curl >/dev/null' 2>/dev/null \
-  && { docker exec loxilb-gateway curl -sf -o /dev/null http://127.0.0.1:11111/netlox/v1/metrics 2>/dev/null \
-       && ok "gateway metrics enabled" || warn "metrics not answering (is --prometheus set?)"; } \
-  || note "skipped metrics probe (no curl in the gateway image)"
+if docker exec loxilb-gateway sh -c 'command -v curl >/dev/null' 2>/dev/null; then
+  if docker exec loxilb-gateway curl -sf -o /dev/null http://127.0.0.1:11111/netlox/v1/metrics 2>/dev/null; then
+    ok "gateway metrics enabled"
+  else
+    warn "metrics not answering (is --prometheus set?)"
+  fi
+else
+  note "skipped metrics probe (no curl in the gateway image)"
+fi
 
 # Exactly what OAM will do: chain the gateway certificate to the management CA
 # and match the hostname against GW_HOST. A failure here is the difference
@@ -679,6 +817,7 @@ note "recovered, and without it stored snapshots cannot be decrypted."
 printf '\n  %sUpgrading later%s\n' "$B" "$N"
 note "management only, traffic untouched:  docker compose ${MGMT_FILES[*]} up -d --no-deps oam-loxilb"
 note "gateway (a real traffic event):      docker compose ${DATA_FILES[*]} pull && docker compose ${DATA_FILES[*]} up -d"
+note "database (explicit maintenance only): docker compose ${STATE_FILES[*]} up -d postgres"
 if [ "$FAIL" -ne 0 ]; then
   printf '\n  %sSome checks did not pass%s — see the warnings above and\n' "$YEL" "$N"
   note "docs/deployment-converged.md section 9 (Troubleshooting)."

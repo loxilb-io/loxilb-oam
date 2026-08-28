@@ -19,6 +19,21 @@ image's `org.opencontainers.image.version` label.
 
 ## [Unreleased]
 
+### Added
+- Converged single-node deployment now uses one independent `loxilb-state`
+  PostgreSQL service and one `loxioam` database for OAM plus the Gateway's
+  isolated `aigw` and dormant `aigw_mgmt` schemas. The bundle includes the
+  idempotent Gateway bootstrap, file-backed Gateway database credentials,
+  source-drift validation, existing-volume adoption, and database → data →
+  management startup/verification automation.
+- The approved converged integration image defaults to
+  `ghcr.io/loxilb-io/loxilb-inference-gateway:latest-u24`; validation records
+  the resolved digest before promotion to an immutable release identity.
+- A dedicated `docker-compose.converged-local-ui.yml` developer overlay keeps
+  converged PostgreSQL, Gateway, and OAM on a remote testbed while disabling
+  the bundled UI and Caddy. It exposes OAM directly over HTTP with an explicit
+  local-development CORS allowlist and reserved-port protection.
+
 ### Changed — BREAKING
 - **The datastore is now PostgreSQL 18; MySQL is no longer supported.** There is
   no in-place upgrade: a MySQL deployment cannot be pointed at this release.
