@@ -117,6 +117,11 @@ Generate strong secrets with, e.g., `openssl rand -base64 48` (keys) and
   [`deploy/compose/`](deploy/compose/) runs the web console, this API, and PostgreSQL
   behind a Caddy TLS edge. Step-by-step operator guide:
   [docs/deployment-compose.md](docs/deployment-compose.md).
+- **Converged single node** — OAM and the inference Gateway share one PostgreSQL
+  database through isolated schemas and independent Compose lifecycles. See
+  [docs/deployment-converged.md](docs/deployment-converged.md). Its dedicated
+  local-UI developer overlay runs only the remote backend and exposes OAM on
+  plain HTTP for a React dev server on the developer workstation.
 - **API only** — `docker compose up -d` from the repository root runs PostgreSQL plus
   the service over plain HTTP. See [DEPLOYMENT.md](DEPLOYMENT.md).
 - **From source, against your own database** — see

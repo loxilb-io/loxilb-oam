@@ -29,6 +29,14 @@ services:
       # is processed before netfilter — it would silently swallow the console
       # instead of failing to bind. See docs/deployment-converged.md §4.
       OAM_RESERVED_ENDPOINTS: ${OAM_RESERVED_ENDPOINTS:-}
+      # In converged mode PostgreSQL belongs to the independent state project.
+      # Its `postgres` alias exists only on the shared internal network.
+      DB_HOST: postgres
+      DB_PORT: "5432"
+    depends_on: !reset []
+    networks:
+      - frontend
+      - database
     # Bound so a traffic spike on the data plane cannot be starved by, nor
     # starve, the management plane. The gateway itself is deliberately
     # unlimited: it is the workload this node exists to run.
@@ -39,11 +47,9 @@ services:
           memory: 512M
 
   postgres:
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1G
+    # The base bundle's database is disabled only for converged mode. The one
+    # PostgreSQL service is started from docker-compose.database.yml instead.
+    profiles: [bundled-database-disabled-in-converged]
 
   caddy:
     # `ports` MERGES by default when overlays are layered — without !override
@@ -61,3 +67,8 @@ services:
         limits:
           cpus: "0.5"
           memory: 256M
+
+networks:
+  database:
+    external: true
+    name: ${CONVERGED_DB_NETWORK:-loxilb-converged-db}
