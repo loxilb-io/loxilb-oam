@@ -79,11 +79,12 @@ type SnapshotGatewayClient interface {
 
 // httpGatewayClient is the production SnapshotGatewayClient.
 type httpGatewayClient struct {
-	take    *http.Client
-	restore *http.Client
+	take     *http.Client
+	restore  *http.Client
+	identity GatewayServiceIdentity
 }
 
-func newHTTPGatewayClient() *httpGatewayClient {
+func newHTTPGatewayClient(identity GatewayServiceIdentity) *httpGatewayClient {
 	// Same TLS posture as ProxyService, centralized in config.InstanceTLSConfig
 	// (verify by default; CA-bundle or explicit-insecure opt-in via env).
 	tr := func() *http.Transport {
@@ -96,7 +97,8 @@ func newHTTPGatewayClient() *httpGatewayClient {
 		take: &http.Client{Transport: tr(), Timeout: 60 * time.Second},
 		// A commit restore runs the gateway's full preserve→wipe→apply→verify
 		// pipeline; give it far more headroom than a normal proxy call.
-		restore: &http.Client{Transport: tr(), Timeout: 5 * time.Minute},
+		restore:  &http.Client{Transport: tr(), Timeout: 5 * time.Minute},
+		identity: identity,
 	}
 }
 
@@ -106,7 +108,14 @@ func gatewayBaseURL(instance *models.LoxiLBInstance) string {
 
 func (g *httpGatewayClient) FetchSnapshot(instance *models.LoxiLBInstance) ([]byte, http.Header, error) {
 	url := gatewayBaseURL(instance) + "/config/snapshot"
-	resp, err := g.take.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, nil, &GatewayError{Body: fmt.Sprintf("creating gateway request: %v", err)}
+	}
+	if err := g.identity.Authorize(req); err != nil {
+		return nil, nil, err
+	}
+	resp, err := g.take.Do(req)
 	if err != nil {
 		return nil, nil, &GatewayError{Body: err.Error()}
 	}
@@ -123,7 +132,15 @@ func (g *httpGatewayClient) FetchSnapshot(instance *models.LoxiLBInstance) ([]by
 
 func (g *httpGatewayClient) Restore(instance *models.LoxiLBInstance, doc []byte, mode string) (int, []byte, error) {
 	url := gatewayBaseURL(instance) + "/config/restore?mode=" + mode
-	resp, err := g.restore.Post(url, "application/json", bytes.NewReader(doc))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(doc))
+	if err != nil {
+		return 0, nil, &GatewayError{Body: fmt.Sprintf("creating gateway request: %v", err)}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := g.identity.Authorize(req); err != nil {
+		return 0, nil, err
+	}
+	resp, err := g.restore.Do(req)
 	if err != nil {
 		return 0, nil, &GatewayError{Body: err.Error()}
 	}
@@ -197,10 +214,20 @@ type SnapshotService struct {
 // is a hard error — silently downgrading to plaintext when the operator
 // asked for encryption would be worse than failing to boot.
 func NewSnapshotService(db *sql.DB, loxilbService *LoxiLBService) (*SnapshotService, error) {
+	identity, err := GatewayServiceIdentityFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return NewSnapshotServiceWithGatewayIdentity(db, loxilbService, identity)
+}
+
+// NewSnapshotServiceWithGatewayIdentity wires the same validated service
+// identity used by the generic Gateway proxy.
+func NewSnapshotServiceWithGatewayIdentity(db *sql.DB, loxilbService *LoxiLBService, identity GatewayServiceIdentity) (*SnapshotService, error) {
 	s := &SnapshotService{
 		DB:            db,
 		loxilbService: loxilbService,
-		gateway:       newHTTPGatewayClient(),
+		gateway:       newHTTPGatewayClient(identity),
 	}
 	if v := os.Getenv(snapshotEncKeyEnv); v != "" {
 		key, err := base64.StdEncoding.DecodeString(v)

@@ -42,12 +42,13 @@ services:
       - SYS_ADMIN
     restart: unless-stopped
     environment:
-      # Plaintext REST API on loopback only. The gateway's :11111 listener is
-      # unauthenticated by default, and in converged mode it would otherwise be
-      # published on the host's real address. This replaces the "firewall :11111"
+      # Plaintext REST API on loopback only. Management authentication still
+      # applies; the bind restriction adds host-level exposure control. This
+      # replaces the "firewall :11111"
       # advice in docs/instance-tls.md with a bind-level guarantee.
-      # Host-local Prometheus scrapes and loxicmd are unaffected; off-host
-      # tooling that expects :11111 (e.g. loxilb-mcp --target-url) is not.
+      # Host-local Prometheus and loxicmd can still use the endpoint with the
+      # mounted token; off-host tooling that expects :11111 (for example
+      # loxilb-mcp --target-url) cannot reach it.
       HOST: 127.0.0.1
       PORT: "11111"
       # Verified-TLS management listener — this is the one OAM talks to.
@@ -71,6 +72,16 @@ services:
       # Only --peer (BGP-peer-only) mode forces it back off; that mode has no
       # datapath, so it does not apply here.
       - --prometheus
+      # Legacy/local management profiles leave metrics anonymous under the
+      # Gateway's `auto` policy. Require the same bearer identity explicitly so
+      # tenant labels are not exposed through either listener.
+      - --metrics-auth=require
+      # Authenticate both REST listeners with the same dedicated service token
+      # OAM reads from its own read-only mount. This is intentionally
+      # --manualtoken, not --userservice: browser JWTs and Gateway user/session
+      # authentication remain separate identity planes.
+      - --manualtoken
+      - --manualtokenvalue=/run/secrets/gateway_service_token
       # AI API keys and tenant quotas live in the shared PostgreSQL database,
       # isolated in schema aigw under role aigwuser. The Gateway is in the host
       # network namespace, so it reaches the state project's loopback-only port.
@@ -91,7 +102,12 @@ services:
       - ./certs/instance-ca/${GW_HOST:?set GW_HOST in .env}:/opt/loxilb/cert:ro
     secrets:
       - aigw_db_password
+      - source: gateway_service_token
+        target: gateway_service_token
+        mode: 0400
 
 secrets:
   aigw_db_password:
     file: ${AIGW_DB_PASSWORD_FILE:-./secrets/aigw_db_password}
+  gateway_service_token:
+    file: ${GATEWAY_SERVICE_TOKEN_FILE:-./secrets/gateway_service_token}

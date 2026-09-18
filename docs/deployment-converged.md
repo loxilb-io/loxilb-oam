@@ -48,7 +48,7 @@ deploy/compose/
 ├── docker-compose.dataplane.yml  # the gateway (project: loxilb-data)
 ├── database/
 │   └── aigw-db-bootstrap.sql     # reviewed Gateway bootstrap snapshot
-├── secrets/                      # ignored 0600 Gateway DB password files
+├── secrets/                      # ignored 0600 Gateway DB + service-token files
 └── .env                          # shared by all three projects
 ```
 
@@ -209,15 +209,18 @@ what the script does, for when you would rather do it by hand.
 
 ### By hand
 
-**1. Database credentials.** The gateway reads its AI-key-store password from a
+**1. Gateway credentials.** The gateway reads its AI-key-store password from a
 Compose secret file; the management-store role is provisioned for future use
-but deliberately not enabled in converged mode. Keep both files out of Git:
+but deliberately not enabled in converged mode. OAM and Gateway also read the
+same dedicated management service token from separate read-only mounts. Keep
+all three files out of Git:
 
 ```bash
 install -d -m 0700 secrets
 openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32 > secrets/aigw_db_password
 openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32 > secrets/aigw_mgmt_db_password
-chmod 0600 secrets/aigw_db_password secrets/aigw_mgmt_db_password
+openssl rand -hex 32 > secrets/gateway_service_token
+chmod 0600 secrets/aigw_db_password secrets/aigw_mgmt_db_password secrets/gateway_service_token
 ```
 
 **2. Host paths.** The gateway's config snapshot must survive a container
@@ -251,10 +254,14 @@ CONVERGED_DB_NETWORK=loxilb-converged-db
 CONVERGED_PG_VOLUME=loxilb-state-postgres-data
 AIGW_DB_PASSWORD_FILE=./secrets/aigw_db_password
 AIGW_MGMT_DB_PASSWORD_FILE=./secrets/aigw_mgmt_db_password
+GATEWAY_SERVICE_TOKEN_FILE=./secrets/gateway_service_token
 SITE_ADDRESS=https://gw.example.internal:8443   # MUST carry the port
 EDGE_TLS=tls /certs/edge/cert.pem /certs/edge/key.pem   # see "ACME renewal" below
 OAM_INSTANCE_CA_BUNDLE=/etc/loxilb-oam/certs/instance-ca.pem
 OAM_INSTANCE_TLS_INSECURE=false
+OAM_GATEWAY_AUTH_MODE=service-token
+OAM_GATEWAY_SERVICE_TOKEN=
+OAM_GATEWAY_SERVICE_TOKEN_FILE=/run/secrets/gateway_service_token
 ```
 
 `latest-u24` is the approved image for this integration cycle. Record the
@@ -276,8 +283,18 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml \
 
 The bootstrap is idempotent and is the password-rotation path. The Gateway uses
 only `aigw`; do **not** add `--userservice` merely because `aigw_mgmt` exists.
-OAM forwards its own JWT in `Authorization`, which is a different identity
-plane from Gateway management tokens.
+OAM never forwards its browser JWT or inference `X-Api-Key` to Gateway. The
+Gateway starts with `--manualtoken` and reads
+`/run/secrets/gateway_service_token`; OAM independently reads the same mounted
+file and injects `Authorization: Bearer <token>` only on outbound management
+requests. OAM fails startup if the file is missing, unsafe, empty, malformed,
+or configured together with the raw `OAM_GATEWAY_SERVICE_TOKEN` fallback.
+`GET /oam/health` reports only the non-secret mode as `gateway_auth_mode`.
+
+This enforced overlay setting is specific to the converged/NCP assembly. Generic
+remote-Gateway Compose remains explicitly `disabled` unless an operator enables
+Gateway auth and supplies exactly one token source, leaving the same contract
+available to future CSP-specific overlays.
 
 **6. Register the gateway** in the console as
 `https://${GW_HOST}:8091/netlox/v1` — host `gw.example.internal`, port `8091`,
@@ -546,14 +563,19 @@ OAM→PostgreSQL and OAM→gateway traffic.
 
 ## 7. Metrics
 
-The dataplane compose passes `--prometheus` **by default**. Without it
+The dataplane compose passes `--prometheus` and `--metrics-auth=require` **by
+default**. Without the first flag
 `/netlox/v1/metrics` answers `503 Prometheus option is disabled`, and turning it
-on afterwards costs a data-plane restart — so it is on from the first boot.
-Confirm with:
+on afterwards costs a data-plane restart. The second flag prevents metrics and
+tenant labels from bypassing the manual-token boundary. Confirm with:
 
 ```bash
-curl -s http://127.0.0.1:11111/netlox/v1/config/metrics    # {"prometheus":true}
-curl -s http://127.0.0.1:11111/netlox/v1/metrics | head    # ~95 series
+curl --config <(printf 'header = "Authorization: Bearer %s"\n' \
+  "$(cat secrets/gateway_service_token)") \
+  http://127.0.0.1:11111/netlox/v1/config/metrics   # {"prometheus":true}
+curl --config <(printf 'header = "Authorization: Bearer %s"\n' \
+  "$(cat secrets/gateway_service_token)") \
+  http://127.0.0.1:11111/netlox/v1/metrics | head   # ~95 series
 ```
 
 `POST /netlox/v1/config/metrics` toggles collection at runtime, but that state
@@ -583,7 +605,9 @@ docker compose $M up -d --no-deps caddy        # upgrade the edge only
 docker compose $M down                         # SAFE: gateway and DB are separate projects
 
 # gateway upgrade — a real traffic event, schedule it
-curl -s http://127.0.0.1:11111/netlox/v1/config/snapshot > snapshot-$(date +%F).json
+curl --config <(printf 'header = "Authorization: Bearer %s"\n' \
+  "$(cat secrets/gateway_service_token)") \
+  http://127.0.0.1:11111/netlox/v1/config/snapshot > snapshot-$(date +%F).json
 docker compose $D pull && docker compose $D up -d
 
 # database maintenance — affects both planes; schedule and back up first
@@ -597,6 +621,13 @@ contain IPsec PSKs and certificate private keys — treat them as credentials.
 The PostgreSQL volume is the single durable state source for both applications.
 Never run `docker compose $S down -v` as part of an OAM or Gateway upgrade.
 
+The service token is durable configuration, not a boot-time disposable value.
+The initializer preserves it and rejects an existing malformed file instead of
+silently replacing it. To rotate it, schedule a management interruption,
+atomically replace `secrets/gateway_service_token` with a new 64-character hex
+value, and recreate both `$D` and `$M`. Restarting only one side creates an
+intentional fail-closed token mismatch.
+
 ## 9. Troubleshooting
 
 | Symptom | Check |
@@ -607,7 +638,7 @@ Never run `docker compose $S down -v` as part of an OAM or Gateway upgrade.
 | `ERR_SSL_PROTOCOL_ERROR` when reaching the console **by address** (by name it works) | No `EDGE_SNI_FALLBACK`. An address sends no SNI, so Caddy selects no site and drops the handshake before any HTTP. Set `EDGE_SNI_FALLBACK=default_sni <primary-name>`, add the address to `SITE_ADDRESS`, and put it in the certificate as an `IP:` SAN. |
 | OAM loops on `Database connection failed`, never healthy, while PostgreSQL reports healthy | The PostgreSQL volume was initialised with **different** credentials. `DB_PASSWORD` applies only to an empty data directory. Restore the old value from an `.env.bak.*`. Starting clean requires stopping the state project and explicitly removing `CONVERGED_PG_VOLUME`; this destroys OAM users, instances, snapshots, AI keys, and quotas. |
 | Gateway logs an AI-key database connection or preflight error | Confirm `127.0.0.1:${CONVERGED_PG_HOST_PORT}` is listening, the `aigw` schema exists, and `secrets/aigw_db_password` is the value last applied by `gateway-db-bootstrap`. Re-run the idempotent bootstrap, then restart the Gateway. |
-| `gateway-db-bootstrap` succeeds but Gateway management requests return 401/403 | Do not enable `--userservice` in this topology. OAM JWT and Gateway management tokens are separate authentication planes; only the AI-key store is enabled. |
+| OAM-proxied Gateway requests return 401/403 | Confirm both projects mount the same `GATEWAY_SERVICE_TOKEN_FILE`, the file is a regular 64-character lowercase hex token, and OAM health reports `gateway_auth_mode: service-token`. Recreate both projects after a rotation. Do not enable `--userservice`; it is a different identity plane. |
 | `docker compose $M down` leaves PostgreSQL and the Gateway running | Expected. They are independent `loxilb-state` and `loxilb-data` projects. Stop either only during an explicitly scheduled state/data maintenance event. |
 | Instance shows **Down** right after re-running the init script | `GW_HOST` changed, so the gateway now serves a certificate for the new name and OAM pins only that name — the registered host no longer resolves. Set the instance's Host to the current `GW_HOST` (`grep GW_HOST .env`), or re-run and keep the previous name. |
 | Browser shows a certificate-name error (`curl` exit 60) but `curl -k` works | The edge certificate's SAN list does not contain the name being used. Check it: `echo \| openssl s_client -connect <host>:8443 -servername <name> \| openssl x509 -noout -ext subjectAltName`. |
@@ -617,5 +648,6 @@ Never run `docker compose $S down -v` as part of an OAM or Gateway upgrade.
 | Intermittent, unexplained management-plane packet loss | Datapath attached to the veths — see §6. |
 | Gateway config lost after an upgrade | `IGW_CONFIG_DIR` was not bind-mounted. |
 | `/netlox/v1/metrics` returns `503 Prometheus option is disabled` | `--prometheus` missing from the gateway's `command:`. |
+| `/netlox/v1/metrics` returns 401 | Expected without the service token: converged mode sets `--metrics-auth=require`. Configure the scraper with the token file rather than disabling authentication. |
 | Prometheus cannot scrape the gateway | `:11111` is loopback-only by design — run Prometheus with `network_mode: host` (see §7). |
 | Everything "healthy" but no traffic is handled | Docker Desktop. `network_mode: host` is Linux-only. |

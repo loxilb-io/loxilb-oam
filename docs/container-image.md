@@ -180,7 +180,10 @@ Note that `TOKEN_EXPIRATION` is the containerized spelling of the bare binary's
 
 **Read directly by the server** — `OAM_JWT_SECRET`, `OAM_DEFAULT_ADMIN_PASSWORD`,
 `SNAPSHOT_ENC_KEY`, `OAM_ALLOWED_ORIGINS`, `OAM_INSTANCE_CA_BUNDLE`,
-`OAM_INSTANCE_TLS_INSECURE`, `OAM_DOCKER_*`. These pass straight through and
+`OAM_INSTANCE_TLS_INSECURE`, `OAM_GATEWAY_AUTH_MODE`,
+`OAM_GATEWAY_SERVICE_TOKEN`, `OAM_GATEWAY_SERVICE_TOKEN_FILE`, `OAM_DOCKER_*`.
+The token file path is preferred over the raw value for container deployments;
+configure exactly one source. These pass straight through and
 behave identically to the bare binary.
 
 Full semantics and defaults for every variable and flag:

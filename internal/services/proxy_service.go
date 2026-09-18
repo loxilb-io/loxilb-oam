@@ -18,6 +18,7 @@ import (
 type ProxyService struct {
 	loxilbService *LoxiLBService
 	client        *http.Client
+	identity      GatewayServiceIdentity
 }
 
 // ProxyLogEntry represents a proxy request/response log entry
@@ -35,7 +36,17 @@ type ProxyLogEntry struct {
 	Error        string    `json:"error,omitempty"`
 }
 
-func NewProxyService(loxilbService *LoxiLBService) *ProxyService {
+func NewProxyService(loxilbService *LoxiLBService) (*ProxyService, error) {
+	identity, err := GatewayServiceIdentityFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return NewProxyServiceWithGatewayIdentity(loxilbService, identity), nil
+}
+
+// NewProxyServiceWithGatewayIdentity wires an already validated identity so
+// proxy and snapshot clients can share one immutable startup configuration.
+func NewProxyServiceWithGatewayIdentity(loxilbService *LoxiLBService, identity GatewayServiceIdentity) *ProxyService {
 	// TLS posture for managed instances is centralized in config.InstanceTLSConfig
 	// (verify by default; CA-bundle or explicit-insecure opt-in via env).
 	// DisableKeepAlives prevents connection reuse issues when instance endpoints change.
@@ -53,7 +64,14 @@ func NewProxyService(loxilbService *LoxiLBService) *ProxyService {
 	return &ProxyService{
 		loxilbService: loxilbService,
 		client:        client,
+		identity:      identity,
 	}
+}
+
+// GatewayAuthMode returns the non-secret outbound authentication mode for
+// health/status reporting.
+func (p *ProxyService) GatewayAuthMode() string {
+	return p.identity.Mode()
 }
 
 // ForwardRequest forwards the request in c to targetPath on the LoxiLB instance
@@ -117,8 +135,14 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 		return fmt.Errorf("failed to create request")
 	}
 
-	// Copy relevant headers (excluding hop-by-hop headers)
+	// Copy only explicitly safe end-to-end headers. In particular, browser
+	// Authorization/Cookie/API-key credentials must never cross the OAM user
+	// identity boundary into the Gateway management plane.
 	p.copyHeaders(c.Request.Header, req.Header)
+	if err := p.identity.Authorize(req); err != nil {
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), http.StatusServiceUnavailable, time.Since(startTime).Milliseconds(), "Gateway service identity unavailable")
+		return err
+	}
 
 	// Set content length if we have a body
 	if len(requestBody) > 0 {
@@ -157,26 +181,29 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	return nil
 }
 
+// safeGatewayRequestHeaders is an allowlist, rather than a denylist, because
+// new browser credentials must not become transitively trusted by Gateway.
+var safeGatewayRequestHeaders = map[string]bool{
+	"Accept":           true,
+	"Accept-Encoding":  true,
+	"Accept-Language":  true,
+	"Cache-Control":    true,
+	"Content-Encoding": true,
+	"Content-Type":     true,
+	"If-Match":         true,
+	"If-None-Match":    true,
+	"X-Correlation-Id": true,
+	"X-Request-Id":     true,
+}
+
 /*
-copyHeaders copies HTTP headers from source to destination, excluding hop-by-hop headers
+copyHeaders copies explicitly safe HTTP headers from source to destination.
 */
 func (p *ProxyService) copyHeaders(src, dst http.Header) {
-	// Headers that should not be forwarded
-	hopByHopHeaders := map[string]bool{
-		"Connection":          true,
-		"Keep-Alive":          true,
-		"Proxy-Authenticate":  true,
-		"Proxy-Authorization": true,
-		"Te":                  true,
-		"Trailers":            true,
-		"Transfer-Encoding":   true,
-		"Upgrade":             true,
-	}
-
 	for key, values := range src {
-		if !hopByHopHeaders[key] {
+		if safeGatewayRequestHeaders[http.CanonicalHeaderKey(key)] {
 			for _, value := range values {
-				dst.Add(key, value)
+				dst.Add(http.CanonicalHeaderKey(key), value)
 			}
 		}
 	}

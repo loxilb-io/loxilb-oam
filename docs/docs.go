@@ -2738,6 +2738,9 @@ const docTemplate = `{
         "models.HealthCheckResponse": {
             "type": "object",
             "properties": {
+                "gateway_auth_mode": {
+                    "type": "string"
+                },
                 "status": {
                     "type": "string"
                 }

@@ -939,13 +939,17 @@ func (h *Handler) StoptLoxiLBInstanceFirmware(c *gin.Context) {
 // @Failure 500 {object} models.HealthCheckResponse
 // @Router /oam/health [get]
 func (h *Handler) HealthCheck(c *gin.Context) {
+	gatewayAuthMode := services.GatewayAuthModeDisabled
+	if h.proxyService != nil {
+		gatewayAuthMode = h.proxyService.GatewayAuthMode()
+	}
 	err := h.userService.PingDB()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "unhealthy"})
+		c.JSON(http.StatusInternalServerError, models.HealthCheckResponse{Status: "unhealthy", GatewayAuthMode: gatewayAuthMode})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "healthy"})
+	c.JSON(http.StatusOK, models.HealthCheckResponse{Status: "healthy", GatewayAuthMode: gatewayAuthMode})
 }
 
 func (h *Handler) GetLogsFromDB(c *gin.Context) {
@@ -1523,6 +1527,8 @@ func (h *Handler) ProxyToLoxiLB(c *gin.Context) {
 		// pick another port. The generic default below would hide both.
 		case errors.As(err, &reservedErr):
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		case errors.Is(err, services.ErrGatewayServiceIdentityUnavailable):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Gateway service identity unavailable"})
 		case strings.Contains(err.Error(), "not found"):
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		case strings.Contains(err.Error(), "failed to connect"):

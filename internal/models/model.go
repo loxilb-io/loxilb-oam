@@ -126,7 +126,8 @@ type ErrorResponse struct {
 
 // HealthCheckResponse represents the health check response.
 type HealthCheckResponse struct {
-	Status string `json:"status"`
+	Status          string `json:"status"`
+	GatewayAuthMode string `json:"gateway_auth_mode"`
 }
 
 // =================== Log Monitoring Models ===================

@@ -469,6 +469,10 @@ OAM_UPSTREAM=http://oam-loxilb:8080
 # ── Converged single-node ────────────────────────────────────────────────────
 GW_HOST=$GW_HOST
 OAM_RESERVED_ENDPOINTS=$RESERVED
+OAM_GATEWAY_AUTH_MODE=service-token
+OAM_GATEWAY_SERVICE_TOKEN=
+OAM_GATEWAY_SERVICE_TOKEN_FILE=/run/secrets/gateway_service_token
+GATEWAY_SERVICE_TOKEN_FILE=./secrets/gateway_service_token
 IGW_IMAGE=ghcr.io/loxilb-io/loxilb-inference-gateway
 IGW_TAG=$IGW_TAG
 IGW_CONFIG_DIR=$IGW_CONFIG_DIR
@@ -501,15 +505,14 @@ UI_TAG=$UI_TAG
 ENVEOF
 umask 022
 chmod 600 "$ENV_FILE"
-ok ".env written (0600) — it holds every secret for this node, keep it that way"
+ok ".env written (0600) — keep it and the secrets directory protected"
 
 fi  # end of "$REUSE_ENV" = 0
 
-# Runtime Gateway DB credentials live in files, not .env or the process command
-# line. Preserve existing files on every re-run; bootstrap rotates the database
-# roles to the file values, so deleting and regenerating one unintentionally
-# would be an availability event.
-step "Gateway database credential files"
+# Runtime Gateway credentials live in files, not .env or process arguments.
+# Preserve existing files on every re-run: an accidental regeneration would
+# break either database access or the OAM-to-Gateway management channel.
+step "Gateway credential files"
 SECRETS_DIR="$COMPOSE_DIR/secrets"
 mkdir -p "$SECRETS_DIR"
 chmod 700 "$SECRETS_DIR"
@@ -528,6 +531,38 @@ ensure_secret_file() {
 }
 ensure_secret_file "$SECRETS_DIR/aigw_db_password" "Gateway AI-store credential"
 ensure_secret_file "$SECRETS_DIR/aigw_mgmt_db_password" "Gateway management-store credential (provisioned, dormant)"
+
+valid_gateway_service_token_file() {
+  local path="$1" bytes lines
+  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  bytes="$(wc -c < "$path" | tr -d '[:space:]')"
+  lines="$(grep -c '^' "$path" || true)"
+  { [ "$bytes" = 64 ] || [ "$bytes" = 65 ]; } || return 1
+  [ "$lines" = 1 ] || return 1
+  LC_ALL=C grep -Eq '^[0-9a-f]{64}$' "$path"
+}
+
+ensure_gateway_service_token_file() {
+  local path="$1" tmp
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    valid_gateway_service_token_file "$path" \
+      || die "existing $(basename "$path") is invalid; expected one 64-character lowercase hex token in a regular file. It was not overwritten."
+    chmod 600 "$path"
+    ok "Gateway OAM service token preserved"
+    return
+  fi
+
+  tmp="$(mktemp "$SECRETS_DIR/.gateway_service_token.XXXXXX")"
+  if ! openssl rand -hex 32 > "$tmp"; then
+    rm -f "$tmp"
+    die "could not generate the Gateway OAM service token"
+  fi
+  chmod 600 "$tmp"
+  mv "$tmp" "$path"
+  ok "Gateway OAM service token generated (value not displayed)"
+}
+
+ensure_gateway_service_token_file "$SECRETS_DIR/gateway_service_token"
 
 # ── 8. host paths and certificates ───────────────────────────────────────────
 step "Host directory for the gateway snapshot"
@@ -640,6 +675,12 @@ done
 echo
 if [ "${st:-none}" = healthy ]; then
   ok "OAM healthy"
+  if docker exec loxilb-mgmt-oam-loxilb-1 wget -qO- http://localhost:8080/oam/health 2>/dev/null \
+       | grep -Eq '"gateway_auth_mode"[[:space:]]*:[[:space:]]*"service-token"'; then
+    ok "OAM reports service-token Gateway identity mode"
+  else
+    warn "OAM health does not report gateway_auth_mode=service-token"; FAIL=1
+  fi
 else
   warn "OAM did not become healthy. Last lines from it:"
   docker logs loxilb-mgmt-oam-loxilb-1 2>&1 | tail -6 | sed 's/^/      /'
@@ -687,23 +728,44 @@ if ss -lntH 2>/dev/null | grep -qE ':(80|443)\b.*docker-proxy'; then
   warn "something is publishing :80/:443 — those belong to the data plane in converged mode"
 fi
 
-# The datapath must not have attached to Docker's own interfaces.
-TAKEN="$(docker exec loxilb-gateway loxicmd get port 2>/dev/null | grep -coE '\| (docker0|br-[a-f0-9]+|veth[a-z0-9]+) ' || true)"
-if [ "${TAKEN:-0}" -eq 0 ]; then
-  ok "datapath is off docker0/br-*/veth*"
-else
-  warn "datapath attached to $TAKEN Docker interface(s) — check --blacklist"; FAIL=1
-fi
-
-# Metrics should be live from first boot.
+# Prove that anonymous management is denied before accepting an authenticated
+# positive result. A failed loxicmd call must not collapse into a false zero.
 if docker exec loxilb-gateway sh -c 'command -v curl >/dev/null' 2>/dev/null; then
-  if docker exec loxilb-gateway curl -sf -o /dev/null http://127.0.0.1:11111/netlox/v1/metrics 2>/dev/null; then
-    ok "gateway metrics enabled"
+  ANON_CODE="$(docker exec loxilb-gateway curl -s -o /dev/null -w '%{http_code}' \
+    http://127.0.0.1:11111/netlox/v1/config/loadbalancer/all 2>/dev/null || true)"
+  if [ "$ANON_CODE" = 401 ]; then
+    ok "gateway rejects anonymous management requests (HTTP 401)"
   else
-    warn "metrics not answering (is --prometheus set?)"
+    warn "gateway anonymous management request returned HTTP ${ANON_CODE:-none}, expected 401"; FAIL=1
   fi
 else
-  note "skipped metrics probe (no curl in the gateway image)"
+  warn "cannot run the anonymous-auth negative check (no curl in the gateway image)"; FAIL=1
+fi
+
+# The datapath must not have attached to Docker's own interfaces.
+if PORTS="$(docker exec loxilb-gateway loxicmd --token-file /run/secrets/gateway_service_token get port 2>/dev/null)"; then
+  TAKEN="$(printf '%s\n' "$PORTS" | grep -coE '\| (docker0|br-[a-f0-9]+|veth[a-z0-9]+) ' || true)"
+  if [ "${TAKEN:-0}" -eq 0 ]; then
+    ok "authenticated loxicmd confirms datapath is off docker0/br-*/veth*"
+  else
+    warn "datapath attached to $TAKEN Docker interface(s) — check --blacklist"; FAIL=1
+  fi
+else
+  warn "authenticated loxicmd port query failed"; FAIL=1
+fi
+
+# Metrics should be live from first boot and protected by the same token. Feed
+# curl configuration on stdin so the credential is not exposed in its argv.
+if docker exec loxilb-gateway sh -c 'command -v curl >/dev/null' 2>/dev/null; then
+  if docker exec loxilb-gateway sh -ec \
+      'printf '\''header = "Authorization: Bearer %s"\n'\'' "$(cat /run/secrets/gateway_service_token)" | curl -sf -K - -o /dev/null http://127.0.0.1:11111/netlox/v1/metrics' \
+      2>/dev/null; then
+    ok "authenticated gateway metrics enabled"
+  else
+    warn "authenticated metrics probe failed (check --prometheus and the service token)"; FAIL=1
+  fi
+else
+  warn "cannot probe authenticated metrics (no curl in the gateway image)"; FAIL=1
 fi
 
 # Exactly what OAM will do: chain the gateway certificate to the management CA
@@ -811,9 +873,10 @@ done
 printf '  %sUser%s      admin\n' "$B" "$N"
 printf '  %sPassword%s  %s\n' "$B" "$N" "$(grep -m1 '^OAM_DEFAULT_ADMIN_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
 printf '\n'
-note "Change the admin password after first login. Every other secret lives in"
-note ".env (0600) — back it up somewhere safe; SNAPSHOT_ENC_KEY cannot be"
-note "recovered, and without it stored snapshots cannot be decrypted."
+note "Change the admin password after first login. Secrets live in .env (0600)"
+note "and secrets/ (0700; files 0600) — back both up somewhere safe."
+note "SNAPSHOT_ENC_KEY cannot be recovered; without it stored snapshots cannot"
+note "be decrypted. Preserve gateway_service_token across every upgrade."
 printf '\n  %sUpgrading later%s\n' "$B" "$N"
 note "management only, traffic untouched:  docker compose ${MGMT_FILES[*]} up -d --no-deps oam-loxilb"
 note "gateway (a real traffic event):      docker compose ${DATA_FILES[*]} pull && docker compose ${DATA_FILES[*]} up -d"

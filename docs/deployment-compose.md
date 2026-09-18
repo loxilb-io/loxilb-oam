@@ -106,6 +106,7 @@ Key reference (full comments in `.env.example`):
 | `SITE_ADDRESS`, `EDGE_TLS` | edge listen address + TLS mode (§4/§5) |
 | `EDGE_SNI_FALLBACK` | site to serve clients that send no SNI — required only when the edge is reached by IP (see Troubleshooting) |
 | `OAM_INSTANCE_CA_BUNDLE`, `OAM_INSTANCE_TLS_INSECURE` | TLS to managed LoxiLB instances (§6) |
+| `OAM_GATEWAY_AUTH_MODE`, `OAM_GATEWAY_SERVICE_TOKEN`, `OAM_GATEWAY_SERVICE_TOKEN_FILE` | Dedicated OAM-to-Gateway management identity; configure the raw value or preferred absolute file path, never both. `disabled` or fail-closed `service-token` |
 | `OAM_TAG`, `UI_TAG` | pinned image versions (Mode 2) |
 | `DB_HOST` | `postgres` = bundled DB; set a hostname to use an external database |
 

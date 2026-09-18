@@ -63,8 +63,9 @@ state-only bridge exists only because Docker requires a gateway-capable network
 to realize the Gateway-facing `127.0.0.1` port publication; no other service
 joins it.
 
-One interactive command does the whole thing — secrets, certificates, `.env`,
-all three projects, and verification:
+One interactive command does the whole thing — secrets (including a persistent
+random OAM-to-Gateway service token), certificates, `.env`, all three projects,
+and authentication-aware verification:
 ```bash
 scripts/init-converged.sh          # -y for defaults, --no-start to set up only
 ```
@@ -134,6 +135,9 @@ ConfigMap/Secret. Full reference: `.env.example`. Highlights:
 | `OAM_TAG`, `UI_TAG` | pinned image versions (prod) |
 | `CONVERGED_PG_HOST_PORT` | loopback-only PostgreSQL port used by the host-network Gateway |
 | `AIGW_DB_PASSWORD_FILE` | mounted Gateway AI-store credential; never put its value in command arguments |
+| `OAM_GATEWAY_AUTH_MODE` | `disabled` for generic/remote deployments; the converged overlay enforces `service-token` |
+| `OAM_GATEWAY_SERVICE_TOKEN_FILE` | absolute in-container token path used by OAM; preferred over a raw environment value |
+| `GATEWAY_SERVICE_TOKEN_FILE` | host-side token file mounted into both OAM and Gateway in converged mode |
 | `OAM_DEV_BIND_IP`, `OAM_DEV_HTTP_PORT` | direct HTTP OAM publication for the local-UI developer variant |
 | `LOCAL_UI_ORIGINS` | comma-separated local browser origins allowed by OAM CORS |
 
@@ -182,6 +186,12 @@ docker compose ... down -v            # stop + destroy DB/volumes
 In converged mode, run those commands against the intended project file. Never
 use `down -v` for `docker-compose.database.yml`; its volume contains OAM state
 plus Gateway API keys and quotas.
+
+The converged token file is generated once at
+`secrets/gateway_service_token` with mode `0600` and is never printed. Re-running
+the initializer preserves it. Rotate it only as a coordinated data-plane and
+management-plane restart: replace the file atomically, then recreate both
+projects so neither side temporarily uses a different value.
 
 > **Layout note:** this bundle lives in the `loxilb-oam` repo so the PostgreSQL schema
 > (`../../database/init`) and the future k8s overlays stay single-sourced. The
