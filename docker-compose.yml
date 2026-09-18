@@ -89,6 +89,11 @@ services:
       SNAPSHOT_ENC_KEY: ${SNAPSHOT_ENC_KEY:-}
       # CORS allowlist (comma-separated). Unset => wildcard (development only).
       OAM_ALLOWED_ORIGINS: ${OAM_ALLOWED_ORIGINS:-}
+      # OAM user JWTs never cross into Gateway. Keep disabled only while
+      # Gateway management auth is disabled; service-token requires the
+      # dedicated secret below and fails closed when it is absent.
+      OAM_GATEWAY_AUTH_MODE: ${OAM_GATEWAY_AUTH_MODE:-disabled}
+      OAM_GATEWAY_SERVICE_TOKEN: ${OAM_GATEWAY_SERVICE_TOKEN:-}
     ports:
       - "8080:8080"
     depends_on:

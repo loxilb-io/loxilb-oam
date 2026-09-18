@@ -255,6 +255,8 @@ SITE_ADDRESS=https://gw.example.internal:8443   # MUST carry the port
 EDGE_TLS=tls /certs/edge/cert.pem /certs/edge/key.pem   # see "ACME renewal" below
 OAM_INSTANCE_CA_BUNDLE=/etc/loxilb-oam/certs/instance-ca.pem
 OAM_INSTANCE_TLS_INSECURE=false
+OAM_GATEWAY_AUTH_MODE=disabled
+# OAM_GATEWAY_SERVICE_TOKEN=              # required only in service-token mode
 ```
 
 `latest-u24` is the approved image for this integration cycle. Record the
@@ -276,8 +278,11 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml \
 
 The bootstrap is idempotent and is the password-rotation path. The Gateway uses
 only `aigw`; do **not** add `--userservice` merely because `aigw_mgmt` exists.
-OAM forwards its own JWT in `Authorization`, which is a different identity
-plane from Gateway management tokens.
+OAM never forwards its browser JWT or inference `X-Api-Key` to Gateway. This
+auth-disabled topology therefore declares `OAM_GATEWAY_AUTH_MODE=disabled`.
+If Gateway management auth is enabled later, select `service-token` and supply
+a dedicated raw `OAM_GATEWAY_SERVICE_TOKEN`; OAM fails startup if it is absent.
+`GET /oam/health` reports the active non-secret mode as `gateway_auth_mode`.
 
 **6. Register the gateway** in the console as
 `https://${GW_HOST}:8091/netlox/v1` — host `gw.example.internal`, port `8091`,

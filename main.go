@@ -163,8 +163,15 @@ func main() {
 	loxiLBService := services.NewLoxiLBService(db)
 	logService := services.NewLogService(db)
 	alertService := services.NewAlertService(db)
-	proxyService := services.NewProxyService(loxiLBService)
-	snapshotService, err := services.NewSnapshotService(db, loxiLBService)
+	gatewayIdentity, err := services.GatewayServiceIdentityFromEnv()
+	if err != nil {
+		utils.LogError(fmt.Sprintf("SECURITY: invalid Gateway service identity configuration: %s", err))
+		return
+	}
+	// The mode is safe to report; the token itself is never logged.
+	utils.LogInfo(fmt.Sprintf("Gateway service authentication mode: %s", gatewayIdentity.Mode()))
+	proxyService := services.NewProxyServiceWithGatewayIdentity(loxiLBService, gatewayIdentity)
+	snapshotService, err := services.NewSnapshotServiceWithGatewayIdentity(db, loxiLBService, gatewayIdentity)
 	if err != nil {
 		// A set-but-invalid SNAPSHOT_ENC_KEY must fail boot loudly rather
 		// than silently storing secret-bearing snapshots unencrypted.

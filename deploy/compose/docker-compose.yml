@@ -70,6 +70,10 @@ services:
       # instance certs; OAM_INSTANCE_TLS_INSECURE=true skips verification (dev).
       OAM_INSTANCE_CA_BUNDLE: ${OAM_INSTANCE_CA_BUNDLE:-}
       OAM_INSTANCE_TLS_INSECURE: ${OAM_INSTANCE_TLS_INSECURE:-false}
+      # Separate OAM-to-Gateway management identity. Browser JWTs and
+      # inference X-Api-Key credentials are never forwarded.
+      OAM_GATEWAY_AUTH_MODE: ${OAM_GATEWAY_AUTH_MODE:-disabled}
+      OAM_GATEWAY_SERVICE_TOKEN: ${OAM_GATEWAY_SERVICE_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy

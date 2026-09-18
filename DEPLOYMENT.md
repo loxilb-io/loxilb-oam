@@ -49,6 +49,8 @@ to start** if the required secrets below are unset.
 | `OAM_TOKEN_TTL_MINUTES`                                | JWT / API-token lifetime in minutes. Read by the bare binary. In the container images the equivalent knob is `TOKEN_EXPIRATION`, which the entrypoint maps to `-token-expiration`. | `480` (8h) |
 | `OAM_INSTANCE_CA_BUNDLE`                               | PEM bundle trusted when connecting to managed LoxiLB instances (proxying and snapshots). Unset = system roots only. See [docs/instance-tls.md](docs/instance-tls.md). | — |
 | `OAM_INSTANCE_TLS_INSECURE`                            | Skip certificate verification on connections to managed instances. **Development only**; logs a startup warning. | `false` |
+| `OAM_GATEWAY_AUTH_MODE`                                | OAM-to-Gateway management authentication: `disabled` or `service-token`. The mode is reported by `/oam/health`. | `disabled` |
+| `OAM_GATEWAY_SERVICE_TOKEN`                            | Raw dedicated Gateway management token. Required in `service-token` mode; never use an OAM browser JWT. | — |
 | `OAM_DOCKER_TLS` / `OAM_DOCKER_PORT` / `OAM_DOCKER_CERT_PATH` | TLS and connection settings for the Docker Engine API on instance hosts. `OAM_DOCKER_CERT_PATH` must contain `ca.pem`, `cert.pem`, `key.pem`. | `false` / `2375` / — |
 
 > **Removed:** OAuth login (`OAM_OAUTH_ENABLED`, `OAM_OAUTH_*_CLIENT_ID` /
