@@ -95,7 +95,7 @@ startup if a required one is unset (there are no built-in fallback values).
 |----------|---------|---------|
 | `OAM_TOKEN_TTL_MINUTES` | `480` | JWT / API-token lifetime in minutes |
 | `OAM_INSTANCE_CA_BUNDLE` / `OAM_INSTANCE_TLS_INSECURE` | unset / `false` | Trust a private CA for managed-instance TLS, or (dev-only) skip verification |
-| `OAM_GATEWAY_AUTH_MODE` / `OAM_GATEWAY_SERVICE_TOKEN` | `disabled` / unset | OAM-to-Gateway management identity. Use `service-token` plus a dedicated raw token when Gateway auth is enabled; missing/ambiguous credentials abort startup. Browser JWTs and `X-Api-Key` are never forwarded. |
+| `OAM_GATEWAY_AUTH_MODE` / `OAM_GATEWAY_SERVICE_TOKEN(_FILE)` | `disabled` / unset | OAM-to-Gateway management identity. Use `service-token` plus exactly one dedicated raw or file token source; the file form is preferred for containers. Missing/ambiguous credentials abort startup. Browser JWTs and `X-Api-Key` are never forwarded. |
 | `OAM_DOCKER_TLS` / `OAM_DOCKER_PORT` / `OAM_DOCKER_CERT_PATH` | `false` / `2375` / unset | TLS + connection settings for the Docker Engine API on instance hosts |
 
 ### CLI flags

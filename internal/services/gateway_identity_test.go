@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -36,6 +38,7 @@ func TestGatewayServiceIdentityRequiresTokenInAuthenticatedMode(t *testing.T) {
 func TestGatewayClientsFailConstructionWhenAuthenticatedModeHasNoToken(t *testing.T) {
 	t.Setenv(GatewayAuthModeEnv, GatewayAuthModeServiceToken)
 	t.Setenv(GatewayServiceTokenEnv, "")
+	t.Setenv(GatewayServiceTokenFileEnv, "")
 
 	proxy, err := NewProxyService(nil)
 	require.Error(t, err)
@@ -61,9 +64,63 @@ func TestGatewayServiceIdentityRejectsImplicitOrAmbiguousCredential(t *testing.T
 func TestGatewayServiceIdentityFromEnvDefaultsToExplicitDisabledMode(t *testing.T) {
 	t.Setenv(GatewayAuthModeEnv, "")
 	t.Setenv(GatewayServiceTokenEnv, "")
+	t.Setenv(GatewayServiceTokenFileEnv, "")
 	identity, err := GatewayServiceIdentityFromEnv()
 	require.NoError(t, err)
 	assert.Equal(t, GatewayAuthModeDisabled, identity.Mode())
+}
+
+func TestGatewayServiceIdentityFromFile(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "gateway-service-token")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("file-service-token\n"), 0o600))
+	t.Setenv(GatewayAuthModeEnv, GatewayAuthModeServiceToken)
+	t.Setenv(GatewayServiceTokenEnv, "")
+	t.Setenv(GatewayServiceTokenFileEnv, tokenFile)
+
+	identity, err := GatewayServiceIdentityFromEnv()
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodGet, "http://gateway.test/netlox/v1/meta", nil)
+	require.NoError(t, identity.Authorize(req))
+	assert.Equal(t, "Bearer file-service-token", req.Header.Get("Authorization"))
+}
+
+func TestGatewayServiceIdentityRejectsAmbiguousOrUnsafeFileSource(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "gateway-service-token")
+	require.NoError(t, os.WriteFile(tokenFile, []byte("file-service-token\n"), 0o600))
+
+	_, err := gatewayServiceIdentityFromSources(GatewayAuthModeServiceToken, "env-service-token", tokenFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exactly one")
+	assert.NotContains(t, err.Error(), "env-service-token")
+
+	_, err = gatewayServiceIdentityFromSources(GatewayAuthModeDisabled, "", tokenFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), GatewayServiceTokenFileEnv)
+
+	_, err = gatewayServiceIdentityFromSources(GatewayAuthModeServiceToken, "", "relative/token")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "absolute")
+
+	linked := filepath.Join(t.TempDir(), "linked-token")
+	require.NoError(t, os.Symlink(tokenFile, linked))
+	_, err = gatewayServiceIdentityFromSources(GatewayAuthModeServiceToken, "", linked)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlink")
+}
+
+func TestGatewayServiceIdentityRejectsInvalidFileContents(t *testing.T) {
+	for name, contents := range map[string]string{
+		"empty":       "\n",
+		"multiline":   "first-line\nsecond-line\n",
+		"bearer-form": "Bearer already-prefixed\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			tokenFile := filepath.Join(t.TempDir(), "gateway-service-token")
+			require.NoError(t, os.WriteFile(tokenFile, []byte(contents), 0o600))
+			_, err := gatewayServiceIdentityFromSources(GatewayAuthModeServiceToken, "", tokenFile)
+			require.Error(t, err)
+		})
+	}
 }
 
 func proxyInstanceRow(endpoint string) *sqlmock.Rows {

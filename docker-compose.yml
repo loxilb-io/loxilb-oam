@@ -94,6 +94,7 @@ services:
       # dedicated secret below and fails closed when it is absent.
       OAM_GATEWAY_AUTH_MODE: ${OAM_GATEWAY_AUTH_MODE:-disabled}
       OAM_GATEWAY_SERVICE_TOKEN: ${OAM_GATEWAY_SERVICE_TOKEN:-}
+      OAM_GATEWAY_SERVICE_TOKEN_FILE: ${OAM_GATEWAY_SERVICE_TOKEN_FILE:-}
     ports:
       - "8080:8080"
     depends_on:

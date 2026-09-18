@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -15,10 +16,16 @@ const (
 	// GatewayServiceTokenEnv carries the dedicated Gateway management token.
 	// It must never contain a browser/OAM user JWT.
 	GatewayServiceTokenEnv = "OAM_GATEWAY_SERVICE_TOKEN"
+	// GatewayServiceTokenFileEnv points at a file containing the dedicated
+	// Gateway management token. It is the preferred container/appliance input
+	// because the token then stays out of the process environment.
+	GatewayServiceTokenFileEnv = "OAM_GATEWAY_SERVICE_TOKEN_FILE"
 
 	GatewayAuthModeDisabled     = "disabled"
 	GatewayAuthModeServiceToken = "service-token"
 )
+
+const maxGatewayServiceTokenFileSize = 4096
 
 var ErrGatewayServiceIdentityUnavailable = errors.New("gateway service identity is unavailable")
 
@@ -72,8 +79,71 @@ func NewGatewayServiceIdentity(mode, token string) (GatewayServiceIdentity, erro
 }
 
 // GatewayServiceIdentityFromEnv reads and validates the outbound identity.
+// A raw environment value remains available for compatibility, while
+// file-based delivery is preferred for containers and appliances. Supplying
+// both sources is ambiguous and fails closed.
 func GatewayServiceIdentityFromEnv() (GatewayServiceIdentity, error) {
-	return NewGatewayServiceIdentity(os.Getenv(GatewayAuthModeEnv), os.Getenv(GatewayServiceTokenEnv))
+	return gatewayServiceIdentityFromSources(
+		os.Getenv(GatewayAuthModeEnv),
+		os.Getenv(GatewayServiceTokenEnv),
+		os.Getenv(GatewayServiceTokenFileEnv),
+	)
+}
+
+func gatewayServiceIdentityFromSources(mode, token, tokenFile string) (GatewayServiceIdentity, error) {
+	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	if normalizedMode == "" {
+		normalizedMode = GatewayAuthModeDisabled
+	}
+	token = strings.TrimSpace(token)
+	tokenFile = strings.TrimSpace(tokenFile)
+
+	if token != "" && tokenFile != "" {
+		return GatewayServiceIdentity{}, fmt.Errorf(
+			"%s and %s are both set; configure exactly one Gateway service-token source",
+			GatewayServiceTokenEnv, GatewayServiceTokenFileEnv,
+		)
+	}
+
+	if tokenFile == "" {
+		return NewGatewayServiceIdentity(normalizedMode, token)
+	}
+	if normalizedMode != GatewayAuthModeServiceToken {
+		if normalizedMode == GatewayAuthModeDisabled {
+			return GatewayServiceIdentity{}, fmt.Errorf(
+				"%s is set while %s=%s; select %s explicitly or remove the unused secret file",
+				GatewayServiceTokenFileEnv, GatewayAuthModeEnv, GatewayAuthModeDisabled, GatewayAuthModeServiceToken,
+			)
+		}
+		return NewGatewayServiceIdentity(normalizedMode, "")
+	}
+
+	fileToken, err := readGatewayServiceTokenFile(tokenFile)
+	if err != nil {
+		return GatewayServiceIdentity{}, err
+	}
+	return NewGatewayServiceIdentity(normalizedMode, fileToken)
+}
+
+func readGatewayServiceTokenFile(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%s must be an absolute path", GatewayServiceTokenFileEnv)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot inspect %s: %w", GatewayServiceTokenFileEnv, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s must name a regular file and must not be a symlink", GatewayServiceTokenFileEnv)
+	}
+	if info.Size() > maxGatewayServiceTokenFileSize {
+		return "", fmt.Errorf("%s exceeds the %d-byte limit", GatewayServiceTokenFileEnv, maxGatewayServiceTokenFileSize)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot read %s: %w", GatewayServiceTokenFileEnv, err)
+	}
+	return strings.TrimSpace(string(contents)), nil
 }
 
 // Mode is safe to expose in logs and health responses. It never includes the

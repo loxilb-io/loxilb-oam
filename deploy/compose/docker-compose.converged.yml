@@ -29,6 +29,15 @@ services:
       # is processed before netfilter — it would silently swallow the console
       # instead of failing to bind. See docs/deployment-converged.md §4.
       OAM_RESERVED_ENDPOINTS: ${OAM_RESERVED_ENDPOINTS:-}
+      # OAM and the Gateway share one dedicated machine credential. Keep its
+      # value out of the environment and Docker inspect; the init script
+      # creates the source file once and preserves it on every re-run.
+      # Literals are deliberate: the generic .env.example explicitly selects
+      # disabled mode for backward compatibility, but that must never override
+      # the authenticated converged contract when overlays are merged.
+      OAM_GATEWAY_AUTH_MODE: service-token
+      OAM_GATEWAY_SERVICE_TOKEN: ""
+      OAM_GATEWAY_SERVICE_TOKEN_FILE: /run/secrets/gateway_service_token
       # In converged mode PostgreSQL belongs to the independent state project.
       # Its `postgres` alias exists only on the shared internal network.
       DB_HOST: postgres
@@ -37,6 +46,10 @@ services:
     networks:
       - frontend
       - database
+    secrets:
+      - source: gateway_service_token
+        target: gateway_service_token
+        mode: 0400
     # Bound so a traffic spike on the data plane cannot be starved by, nor
     # starve, the management plane. The gateway itself is deliberately
     # unlimited: it is the workload this node exists to run.
@@ -72,3 +85,7 @@ networks:
   database:
     external: true
     name: ${CONVERGED_DB_NETWORK:-loxilb-converged-db}
+
+secrets:
+  gateway_service_token:
+    file: ${GATEWAY_SERVICE_TOKEN_FILE:-./secrets/gateway_service_token}
