@@ -121,7 +121,7 @@ func TestProxyTransportKeepAlivesCanBeDisabled(t *testing.T) {
 // invalidation the handlers call is decorative.
 func TestCloseIdleConnectionsDropsPooledConnection(t *testing.T) {
 	var dials int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()

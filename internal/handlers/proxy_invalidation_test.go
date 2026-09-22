@@ -48,7 +48,7 @@ func (l *countingListener) count() int {
 // after an instance is updated, the next proxied request must dial afresh
 // rather than reuse a connection to what may now be a different endpoint.
 func TestInstanceUpdateInvalidatesPooledProxyConnections(t *testing.T) {
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))

@@ -179,7 +179,7 @@ func TestProxyToLoxiLBEndToEndClassification(t *testing.T) {
 
 	// A server that accepts the connection and then never answers: reachable,
 	// but slow. The operator must be told "timed out", not "unreachable".
-	hanging := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	hanging := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 	}))
 	defer hanging.Close()
