@@ -5,6 +5,26 @@ import (
 	"time"
 )
 
+// proxyDisableKeepAlivesEnv is an operational escape hatch for the instance
+// proxy's outbound connection pool.
+//
+// Connection reuse is on by default: a handshake per proxied request roughly
+// doubled the latency of a small call and made every request vulnerable to a
+// transient connection-establishment failure. The hazard reuse introduces —
+// a pooled connection to an instance endpoint that has since been replaced —
+// is handled by invalidating the pool on the instance mutation paths.
+//
+// Set OAM_PROXY_DISABLE_KEEPALIVES=true to restore the previous
+// dial-per-request behaviour if a deployment hits a connection-reuse problem
+// that the invalidation points do not cover.
+const proxyDisableKeepAlivesEnv = "OAM_PROXY_DISABLE_KEEPALIVES"
+
+// ProxyKeepAlivesDisabled reports whether outbound connection reuse to managed
+// LoxiLB instances has been turned off.
+func ProxyKeepAlivesDisabled() bool {
+	return os.Getenv(proxyDisableKeepAlivesEnv) == "true"
+}
+
 // proxyTimeoutEnv bounds a single proxied request to a managed instance.
 //
 // The default suits the small management calls the console makes. A

@@ -1,4 +1,4 @@
-# Instance proxy — error semantics
+# Instance proxy — error semantics and connection reuse
 
 Everything the console does against a managed LoxiLB instance goes through
 `/oam/loxilbs/{id}/netlox/*`, which OAM forwards to the instance's
@@ -57,6 +57,35 @@ a deployment's instances legitimately take longer on a large configuration,
 raise `OAM_PROXY_TIMEOUT` (default `10s`) rather than reading the timeout as an
 outage.
 
+## Connection reuse
+
+Connections to instances are pooled and reused. Reuse was previously disabled
+outright to avoid handing a request a connection to an endpoint that had since
+been replaced. That hazard is real, but it arises only when an endpoint
+changes, while the cost — a fresh TCP, and for managed instances TLS,
+handshake — was paid on every request forever. Measured on a live testbed, a
+small proxied response cost roughly twice the equivalent direct call.
+
+Disabling reuse also removed the buffer against transient
+connection-establishment failures: when every request dials anew, any SYN loss
+becomes a user-visible `502` at a rate proportional to the loss.
+
+The hazard is now handled where it actually occurs. OAM drops every pooled
+connection when an instance endpoint may have moved:
+
+- instance update (`api_endpoint` is rebuilt from host/port/protocol/version)
+- instance delete
+- firmware update, start, and stop — each recreates the container behind the
+  endpoint
+
+The next request then dials afresh. The cost is one cold start on a rare
+event, instead of a handshake on every request.
+
 | Variable | Default | Effect |
 |---|---|---|
 | `OAM_PROXY_TIMEOUT` | `10s` | Per-request budget. Unparseable or non-positive values fall back to the default rather than disabling the timeout. |
+| `OAM_PROXY_DISABLE_KEEPALIVES` | `false` | `true` restores dial-per-request. An escape hatch for a deployment that hits a reuse problem the invalidation points above do not cover. |
+
+Snapshot take/restore uses a separate client that still disables keep-alives:
+those calls are long-running and infrequent, so a handshake per call is not
+measurable against a 60s take or a 5-minute restore.

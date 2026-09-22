@@ -29,3 +29,15 @@ func TestProxyRequestTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestProxyKeepAlivesDisabled(t *testing.T) {
+	t.Setenv(proxyDisableKeepAlivesEnv, "")
+	assert.False(t, ProxyKeepAlivesDisabled(), "connection reuse is the default")
+
+	t.Setenv(proxyDisableKeepAlivesEnv, "true")
+	assert.True(t, ProxyKeepAlivesDisabled())
+
+	// Only the exact opt-in string counts, matching the other OAM toggles.
+	t.Setenv(proxyDisableKeepAlivesEnv, "TRUE")
+	assert.False(t, ProxyKeepAlivesDisabled())
+}

@@ -49,6 +49,20 @@ func NewHandler(userService *services.UserService, loxilbService *services.LoxiL
 	}
 }
 
+// invalidateProxyConnections drops pooled connections to managed instances.
+//
+// The proxy reuses connections, so a request issued after an instance endpoint
+// has been repointed — or after its container has been recreated behind the
+// same address — could otherwise be handed a connection to something that no
+// longer exists. Calling this on the mutation paths keeps that protection
+// while leaving the steady-state path free of a handshake per request.
+func (h *Handler) invalidateProxyConnections() {
+	if h.proxyService == nil {
+		return
+	}
+	h.proxyService.CloseIdleConnections()
+}
+
 // Login handles user login requests.
 // @Summary User login
 // @Description Authenticates a user and returns a JWT token with comprehensive license information if the credentials are valid.
@@ -742,6 +756,10 @@ func (h *Handler) UpdateLoxiLBInstance(c *gin.Context) {
 		return
 	}
 
+	// The api_endpoint is rebuilt from host/port/protocol/version on every
+	// update, so any of those changing repoints the instance.
+	h.invalidateProxyConnections()
+
 	c.JSON(http.StatusOK, instance)
 }
 
@@ -768,6 +786,8 @@ func (h *Handler) DeleteLoxiLBInstance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	h.invalidateProxyConnections()
 
 	c.JSON(http.StatusOK, gin.H{"message": "Instance deleted"})
 }
@@ -835,6 +855,10 @@ func (h *Handler) UpdateLoxiLBInstanceFirmware(c *gin.Context) {
 		instance.Version = *firmwareRequest.Version
 	}
 
+	// The container behind this endpoint is being replaced; deferring the
+	// invalidation covers a partial failure that left it already torn down.
+	defer h.invalidateProxyConnections()
+
 	if err := h.loxilbService.UpdateFirmware(instance); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -882,6 +906,8 @@ func (h *Handler) StartLoxiLBInstanceFirmware(c *gin.Context) {
 		return
 	}
 
+	defer h.invalidateProxyConnections()
+
 	if err := h.loxilbService.StartFirmware(*instance); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -922,6 +948,8 @@ func (h *Handler) StoptLoxiLBInstanceFirmware(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch LoxiLB instance"})
 		return
 	}
+
+	defer h.invalidateProxyConnections()
 
 	if err := h.loxilbService.StopFirmware(*instance); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

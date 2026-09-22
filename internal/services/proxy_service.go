@@ -97,13 +97,26 @@ func NewProxyService(loxilbService *LoxiLBService) (*ProxyService, error) {
 func NewProxyServiceWithGatewayIdentity(loxilbService *LoxiLBService, identity GatewayServiceIdentity) *ProxyService {
 	// TLS posture for managed instances is centralized in config.InstanceTLSConfig
 	// (verify by default; CA-bundle or explicit-insecure opt-in via env).
-	// DisableKeepAlives prevents connection reuse issues when instance endpoints change.
+	//
+	// Connections are pooled. Keep-alives were previously disabled outright to
+	// avoid handing a request a connection to an instance endpoint that had
+	// since been replaced — a real hazard, but one that occurs only when an
+	// endpoint changes, while the cost (a fresh TCP, and for managed instances
+	// TLS, handshake) was paid on every request forever. Measured by the UI
+	// team, a tiny proxied response cost roughly twice the equivalent direct
+	// call. Disabling reuse also removed the buffer against transient
+	// connection-establishment failures: with every request dialling anew, any
+	// SYN loss surfaces to the operator as a 502.
+	//
+	// The hazard is now handled where it actually arises: CloseIdleConnections
+	// is called on the instance mutation paths (see the handlers for instance
+	// update/delete and the firmware start/stop/update operations).
 	tr := &http.Transport{
 		TLSClientConfig:     config.InstanceTLSConfig(),
-		DisableKeepAlives:   true, // Prevent connection pooling/reuse
-		MaxIdleConns:        0,    // No idle connection pooling
-		MaxIdleConnsPerHost: 0,    // No idle connections per host
-		IdleConnTimeout:     0,    // Close idle connections immediately
+		DisableKeepAlives:   config.ProxyKeepAlivesDisabled(),
+		MaxIdleConns:        proxyMaxIdleConns,
+		MaxIdleConnsPerHost: proxyMaxIdleConnsPerHost,
+		IdleConnTimeout:     proxyIdleConnTimeout,
 	}
 	client := &http.Client{
 		Transport: tr,
@@ -114,6 +127,28 @@ func NewProxyServiceWithGatewayIdentity(loxilbService *LoxiLBService, identity G
 		client:        client,
 		identity:      identity,
 	}
+}
+
+// Outbound connection-pool budget for the instance proxy. An OAM manages a
+// small number of instances, so a per-host ceiling well above the expected
+// concurrent console traffic is enough to keep every request on a warm
+// connection without holding sockets open indefinitely.
+const (
+	proxyMaxIdleConns        = 100
+	proxyMaxIdleConnsPerHost = 8
+	proxyIdleConnTimeout     = 90 * time.Second
+)
+
+// CloseIdleConnections drops every pooled connection to managed instances.
+//
+// Call it whenever an instance endpoint may have been replaced — an instance
+// update or delete, or a firmware start/stop/update that recreates the
+// container behind the same address. The next request then dials afresh
+// instead of reusing a connection to a container that no longer exists. The
+// cost is one cold start on a rare event, rather than a handshake per
+// request, which is what disabling keep-alives outright used to charge.
+func (p *ProxyService) CloseIdleConnections() {
+	p.client.CloseIdleConnections()
 }
 
 // GatewayAuthMode returns the non-secret outbound authentication mode for

@@ -93,3 +93,58 @@ func TestForwardRequestReturnsSentinelForMissingInstance(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInstanceNotFound)
 }
+
+// OAM-2: reuse is the default, so a proxied request no longer pays a fresh
+// handshake, and the pool can still be invalidated on demand.
+func TestProxyTransportReusesConnectionsByDefault(t *testing.T) {
+	proxy := NewProxyServiceWithGatewayIdentity(nil, mustGatewayIdentity(t, GatewayAuthModeDisabled, ""))
+
+	tr, ok := proxy.client.Transport.(*http.Transport)
+	require.True(t, ok)
+	assert.False(t, tr.DisableKeepAlives, "connection reuse must be on by default")
+	assert.Positive(t, tr.MaxIdleConnsPerHost)
+	assert.Positive(t, tr.IdleConnTimeout)
+
+	assert.NotPanics(t, proxy.CloseIdleConnections)
+}
+
+func TestProxyTransportKeepAlivesCanBeDisabled(t *testing.T) {
+	t.Setenv("OAM_PROXY_DISABLE_KEEPALIVES", "true")
+
+	proxy := NewProxyServiceWithGatewayIdentity(nil, mustGatewayIdentity(t, GatewayAuthModeDisabled, ""))
+	tr, ok := proxy.client.Transport.(*http.Transport)
+	require.True(t, ok)
+	assert.True(t, tr.DisableKeepAlives)
+}
+
+// CloseIdleConnections must actually return the pooled socket, otherwise the
+// invalidation the handlers call is decorative.
+func TestCloseIdleConnectionsDropsPooledConnection(t *testing.T) {
+	var dials int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	proxy := NewProxyServiceWithGatewayIdentity(nil, mustGatewayIdentity(t, GatewayAuthModeDisabled, ""))
+	tr := proxy.client.Transport.(*http.Transport)
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dials++
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+
+	get := func() {
+		resp, err := proxy.client.Get(server.URL)
+		require.NoError(t, err)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+
+	get()
+	get()
+	assert.Equal(t, 1, dials, "the second request must reuse the pooled connection")
+
+	proxy.CloseIdleConnections()
+	get()
+	assert.Equal(t, 2, dials, "invalidation must force the next request to dial afresh")
+}

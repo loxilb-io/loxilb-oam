@@ -122,6 +122,12 @@ All methods are forwarded (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`,
 - Request timeout: `OAM_PROXY_TIMEOUT`, default 10 seconds. Raise it if a
   management call on a large configuration legitimately runs longer.
 
+### Connection reuse
+Connections to instances are pooled. The pool is invalidated whenever an
+instance endpoint may have moved — instance update or delete, and firmware
+update/start/stop. `OAM_PROXY_DISABLE_KEEPALIVES=true` restores
+dial-per-request. See [instance-proxy.md](instance-proxy.md).
+
 ### Request Limits
 - No size limits are imposed on request/response bodies by the proxy itself
 - Headers are forwarded transparently (excluding hop-by-hop headers)
