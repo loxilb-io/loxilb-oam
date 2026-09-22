@@ -2,17 +2,21 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/loxilb-io/loxilb-oam/internal/config"
-	"github.com/loxilb-io/loxilb-oam/internal/utils"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/loxilb-io/loxilb-oam/internal/config"
+	"github.com/loxilb-io/loxilb-oam/internal/utils"
 )
 
 type ProxyService struct {
@@ -34,6 +38,50 @@ type ProxyLogEntry struct {
 	ResponseCode int       `json:"response_status"`
 	ResponseTime int64     `json:"response_time_ms"`
 	Error        string    `json:"error,omitempty"`
+}
+
+// Sentinel and typed errors ForwardRequest returns, so the handler can
+// classify a proxy failure by inspecting the error rather than by matching
+// its prose.
+//
+// The prose-matching that preceded this was silently wrong: every failure of
+// client.Do — timeout, refused connection, DNS failure, TLS handshake — was
+// flattened to "failed to connect to LoxiLB instance" with the cause
+// discarded, so the handler's timeout branch could never be taken and a
+// request that merely exceeded the 10s client timeout was reported to the
+// operator as 502 "instance unreachable": a positive assertion that the
+// instance is down, which is not what a timeout means.
+var (
+	// ErrProxyReadRequestBody: the caller's body could not be read (400).
+	ErrProxyReadRequestBody = errors.New("failed to read request body")
+	// ErrProxyCreateRequest: the outbound request could not be constructed (500).
+	ErrProxyCreateRequest = errors.New("failed to create request")
+	// ErrProxyReadResponse: the instance answered but the body could not be
+	// read to completion (502) — a truncated or aborted response.
+	ErrProxyReadResponse = errors.New("failed to read response from LoxiLB instance")
+)
+
+// ProxyUpstreamError reports that the request left OAM but the transport to
+// the LoxiLB instance failed. Err is the original error from http.Client.Do,
+// preserved so the handler can tell a timeout from a refused connection from
+// a name-resolution or TLS failure. Unwrap makes errors.Is/errors.As reach
+// context.DeadlineExceeded, *net.DNSError, syscall.ECONNREFUSED and friends.
+type ProxyUpstreamError struct {
+	TargetURL string
+	Err       error
+}
+
+func (e *ProxyUpstreamError) Error() string {
+	return fmt.Sprintf("proxy request to LoxiLB instance at %s failed: %v", e.TargetURL, e.Err)
+}
+
+func (e *ProxyUpstreamError) Unwrap() error { return e.Err }
+
+// Timeout reports whether the underlying failure was a timeout, satisfying
+// the net.Error convention so callers may test it either way.
+func (e *ProxyUpstreamError) Timeout() bool {
+	var netErr net.Error
+	return errors.Is(e.Err, context.DeadlineExceeded) || (errors.As(e.Err, &netErr) && netErr.Timeout())
 }
 
 func NewProxyService(loxilbService *LoxiLBService) (*ProxyService, error) {
@@ -59,7 +107,7 @@ func NewProxyServiceWithGatewayIdentity(loxilbService *LoxiLBService, identity G
 	}
 	client := &http.Client{
 		Transport: tr,
-		Timeout:   10 * time.Second,
+		Timeout:   config.ProxyRequestTimeout(),
 	}
 	return &ProxyService{
 		loxilbService: loxilbService,
@@ -82,8 +130,8 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	// Fetch LoxiLB instance details
 	instance, err := p.loxilbService.FetchLoxiLBInstanceByID(instanceID)
 	if err != nil {
-		p.logProxyRequest(c, instanceID, "", "", 0, 404, time.Since(startTime).Milliseconds(), "LoxiLB instance not found")
-		return fmt.Errorf("LoxiLB instance not found")
+		p.logProxyRequest(c, instanceID, "", "", 0, 404, time.Since(startTime).Milliseconds(), fmt.Sprintf("LoxiLB instance not found: %v", err))
+		return fmt.Errorf("%w (id %d)", ErrInstanceNotFound, instanceID)
 	}
 
 	baseURL := strings.TrimSuffix(instance.ApiEndpoint, "/")
@@ -111,8 +159,8 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	if c.Request.Body != nil {
 		requestBody, err = io.ReadAll(c.Request.Body)
 		if err != nil {
-			p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, 0, 400, time.Since(startTime).Milliseconds(), "Failed to read request body")
-			return fmt.Errorf("failed to read request body")
+			p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, 0, 400, time.Since(startTime).Milliseconds(), fmt.Sprintf("Failed to read request body: %v", err))
+			return fmt.Errorf("%w: %w", ErrProxyReadRequestBody, err)
 		}
 		// Restore body for potential re-reading
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
@@ -131,8 +179,8 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	// Create new request
 	req, err := http.NewRequest(c.Request.Method, targetURL, bytes.NewBuffer(requestBody))
 	if err != nil {
-		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 500, time.Since(startTime).Milliseconds(), "Failed to create request")
-		return fmt.Errorf("failed to create request")
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 500, time.Since(startTime).Milliseconds(), fmt.Sprintf("Failed to create request: %v", err))
+		return fmt.Errorf("%w: %w", ErrProxyCreateRequest, err)
 	}
 
 	// Copy only explicitly safe end-to-end headers. In particular, browser
@@ -152,16 +200,27 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	// Make the request
 	resp, err := p.client.Do(req)
 	if err != nil {
-		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 502, time.Since(startTime).Milliseconds(), fmt.Sprintf("Request failed: %v", err))
-		return fmt.Errorf("failed to connect to LoxiLB instance")
+		upstreamErr := &ProxyUpstreamError{TargetURL: targetURL, Err: err}
+		// Log the status the operator will actually be answered with. Logging
+		// 502 for a request that returns 504 would recreate, in the logs, the
+		// very confusion this change removes from the response.
+		loggedStatus := http.StatusBadGateway
+		if upstreamErr.Timeout() {
+			loggedStatus = http.StatusGatewayTimeout
+		}
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), loggedStatus, time.Since(startTime).Milliseconds(), fmt.Sprintf("Request failed: %v", err))
+		// Carry the cause across the boundary: the handler distinguishes a
+		// timeout (504) from an instance that is genuinely unreachable (502),
+		// and it can only do so if the original error survives.
+		return upstreamErr
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 502, time.Since(startTime).Milliseconds(), "Failed to read response body")
-		return fmt.Errorf("failed to read response")
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 502, time.Since(startTime).Milliseconds(), fmt.Sprintf("Failed to read response body: %v", err))
+		return fmt.Errorf("%w: %w", ErrProxyReadResponse, err)
 	}
 
 	// Copy response headers

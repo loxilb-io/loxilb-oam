@@ -1475,8 +1475,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
                     },
+                    "502": {
+                        "description": "LoxiLB instance unreachable, reset, unresolvable, or TLS-rejected",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
                     "503": {
                         "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "The instance did not answer within the proxy timeout",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -1563,8 +1575,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
                     },
+                    "502": {
+                        "description": "LoxiLB instance unreachable, reset, unresolvable, or TLS-rejected",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
                     "503": {
                         "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "The instance did not answer within the proxy timeout",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -1651,8 +1675,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
                     },
+                    "502": {
+                        "description": "LoxiLB instance unreachable, reset, unresolvable, or TLS-rejected",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
                     "503": {
                         "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "The instance did not answer within the proxy timeout",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -1739,8 +1775,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
                     },
+                    "502": {
+                        "description": "LoxiLB instance unreachable, reset, unresolvable, or TLS-rejected",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
                     "503": {
                         "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "The instance did not answer within the proxy timeout",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -1827,8 +1875,20 @@ const docTemplate = `{
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
                     },
+                    "502": {
+                        "description": "LoxiLB instance unreachable, reset, unresolvable, or TLS-rejected",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
                     "503": {
                         "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "504": {
+                        "description": "The instance did not answer within the proxy timeout",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }

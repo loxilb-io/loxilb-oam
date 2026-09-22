@@ -100,8 +100,17 @@ The proxy returns appropriate HTTP status codes:
 - `403 Forbidden` — the role lacks `gateway_write` for a mutating method
 - `404 Not Found` — LoxiLB instance not registered
 - `429 Too Many Requests` — per-IP rate limit exceeded
-- `502 Bad Gateway` — LoxiLB instance unreachable
-- `504 Gateway Timeout` — request timeout (10 seconds)
+- `502 Bad Gateway` — the instance could not be reached, or answered
+  incompletely. The message distinguishes a refused connection from a DNS
+  failure, a TLS rejection, and a reset.
+- `504 Gateway Timeout` — no answer within `OAM_PROXY_TIMEOUT`
+
+`502` and `504` are different claims and must not be read as the same one: a
+`504` says OAM gave up waiting, **not** that the instance is down. Each
+response also carries an additive `detail` field naming the cause.
+
+The full status/message contract, and why classifying these correctly matters
+to an operator, is in **[instance-proxy.md](instance-proxy.md)**.
 
 ### Supported HTTP Methods
 All methods are forwarded (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`,
@@ -110,8 +119,8 @@ All methods are forwarded (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`,
 ## Configuration
 
 ### Timeouts
-- Request timeout: 10 seconds
-- Connection timeout: 10 seconds
+- Request timeout: `OAM_PROXY_TIMEOUT`, default 10 seconds. Raise it if a
+  management call on a large configuration legitimately runs longer.
 
 ### Request Limits
 - No size limits are imposed on request/response bodies by the proxy itself

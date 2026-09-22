@@ -768,6 +768,7 @@ func (h *Handler) DeleteLoxiLBInstance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "Instance deleted"})
 }
 
@@ -1491,7 +1492,9 @@ func derefString(s *string) string {
 // @Failure 404 {object} models.ErrorResponse
 // @Failure 409 {object} models.ErrorResponse
 // @Failure 500 {object} models.ErrorResponse
+// @Failure 502 {object} models.ErrorResponse "LoxiLB instance unreachable, reset, unresolvable, or TLS-rejected"
 // @Failure 503 {object} models.ErrorResponse
+// @Failure 504 {object} models.ErrorResponse "The instance did not answer within the proxy timeout"
 // @Security BearerAuth
 // @Router /oam/loxilbs/{id}/netlox/ [get]
 // @Router /oam/loxilbs/{id}/netlox/ [post]
@@ -1519,25 +1522,10 @@ func (h *Handler) ProxyToLoxiLB(c *gin.Context) {
 	// Forward the request using the proxy service
 	err = h.proxyService.ForwardRequest(c, instanceID, targetPath)
 	if err != nil {
-		// Error handling with appropriate HTTP status codes
-		var reservedErr *services.ReservedEndpointError
-		switch {
-		// Surface the guard's own message: it names the offending VIP and the
-		// reservation it hit, which is what the operator needs to fix .env or
-		// pick another port. The generic default below would hide both.
-		case errors.As(err, &reservedErr):
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		case errors.Is(err, services.ErrGatewayServiceIdentityUnavailable):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Gateway service identity unavailable"})
-		case strings.Contains(err.Error(), "not found"):
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		case strings.Contains(err.Error(), "failed to connect"):
-			c.JSON(http.StatusBadGateway, gin.H{"error": "LoxiLB instance unreachable"})
-		case strings.Contains(err.Error(), "timeout"):
-			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "Request timeout"})
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Proxy request failed"})
-		}
+		// Classification is by error identity, not by error prose; see
+		// classifyProxyError for why the previous string matching was wrong.
+		status, message, detail := classifyProxyError(err)
+		c.JSON(status, proxyErrorBody(message, detail))
 		return
 	}
 
