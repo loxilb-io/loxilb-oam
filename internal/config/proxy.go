@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"time"
 )
@@ -41,13 +42,37 @@ const DefaultProxyRequestTimeout = 10 * time.Second
 // calls. An unset, unparseable, or non-positive value yields the default:
 // a misconfigured duration must not silently disable the timeout.
 func ProxyRequestTimeout() time.Duration {
-	v := os.Getenv(proxyTimeoutEnv)
-	if v == "" {
-		return DefaultProxyRequestTimeout
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 {
+	d, err := parseProxyTimeout(os.Getenv(proxyTimeoutEnv))
+	if err != nil {
 		return DefaultProxyRequestTimeout
 	}
 	return d
+}
+
+// ProxyRequestTimeoutError reports a set-but-unusable OAM_PROXY_TIMEOUT, so
+// startup can say so. Falling back silently is how an operator ends up
+// believing a timeout is configured that is not — the same invisible drift
+// that let the proxy's timeout classification rot unnoticed. A bad value is
+// not fatal, unlike OAM_RESERVED_ENDPOINTS, because the fallback is a safe
+// bound rather than an inert guard.
+func ProxyRequestTimeoutError() error {
+	_, err := parseProxyTimeout(os.Getenv(proxyTimeoutEnv))
+	return err
+}
+
+func parseProxyTimeout(v string) (time.Duration, error) {
+	if v == "" {
+		return DefaultProxyRequestTimeout, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return DefaultProxyRequestTimeout, fmt.Errorf(
+			"%s=%q is not a duration (want e.g. 10s, 1m30s)", proxyTimeoutEnv, v)
+	}
+	if d <= 0 {
+		return DefaultProxyRequestTimeout, fmt.Errorf(
+			"%s=%q is not positive; a zero or negative timeout would disable the request bound",
+			proxyTimeoutEnv, v)
+	}
+	return d, nil
 }

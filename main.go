@@ -68,6 +68,14 @@ func requireSecrets() {
 	if config.InstanceTLSInsecure() {
 		utils.LogWarning("SECURITY: OAM_INSTANCE_TLS_INSECURE=true — TLS verification is DISABLED for connections to managed LoxiLB instances (proxy + snapshots). Prefer OAM_INSTANCE_CA_BUNDLE in production.")
 	}
+	// Report a rejected proxy timeout rather than running on the fallback
+	// without saying so.
+	if err := config.ProxyRequestTimeoutError(); err != nil {
+		utils.LogWarning(fmt.Sprintf("CONFIG: %v — falling back to %s.", err, config.DefaultProxyRequestTimeout))
+	}
+	if config.ProxyKeepAlivesDisabled() {
+		utils.LogWarning("PERFORMANCE: OAM_PROXY_DISABLE_KEEPALIVES=true — every proxied instance request pays a fresh TCP/TLS handshake. Unset it unless a connection-reuse problem requires it.")
+	}
 	// A reserved list that failed to parse is worse than no list: the operator
 	// believes the management edge is protected from a colliding VIP when it is
 	// not. Refuse to start rather than run with a silently inert guard.

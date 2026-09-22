@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestProxyRequestTimeout(t *testing.T) {
@@ -40,4 +41,24 @@ func TestProxyKeepAlivesDisabled(t *testing.T) {
 	// Only the exact opt-in string counts, matching the other OAM toggles.
 	t.Setenv(proxyDisableKeepAlivesEnv, "TRUE")
 	assert.False(t, ProxyKeepAlivesDisabled())
+}
+
+// A silently-ignored timeout is how an operator ends up believing a bound is
+// configured that is not, so a set-but-unusable value must be reportable.
+func TestProxyRequestTimeoutError(t *testing.T) {
+	t.Setenv(proxyTimeoutEnv, "")
+	assert.NoError(t, ProxyRequestTimeoutError())
+
+	t.Setenv(proxyTimeoutEnv, "45s")
+	assert.NoError(t, ProxyRequestTimeoutError())
+
+	// A bare number is the plausible typo: valid-looking, not a Go duration.
+	t.Setenv(proxyTimeoutEnv, "10")
+	err := ProxyRequestTimeoutError()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), proxyTimeoutEnv)
+	assert.Equal(t, DefaultProxyRequestTimeout, ProxyRequestTimeout())
+
+	t.Setenv(proxyTimeoutEnv, "0s")
+	require.Error(t, ProxyRequestTimeoutError())
 }
