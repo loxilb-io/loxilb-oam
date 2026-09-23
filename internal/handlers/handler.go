@@ -49,6 +49,20 @@ func NewHandler(userService *services.UserService, loxilbService *services.LoxiL
 	}
 }
 
+// invalidateProxyConnections drops pooled connections to managed instances.
+//
+// The proxy reuses connections, so a request issued after an instance endpoint
+// has been repointed — or after its container has been recreated behind the
+// same address — could otherwise be handed a connection to something that no
+// longer exists. Calling this on the mutation paths keeps that protection
+// while leaving the steady-state path free of a handshake per request.
+func (h *Handler) invalidateProxyConnections() {
+	if h.proxyService == nil {
+		return
+	}
+	h.proxyService.CloseIdleConnections()
+}
+
 // Login handles user login requests.
 // @Summary User login
 // @Description Authenticates a user and returns a JWT token with comprehensive license information if the credentials are valid.
@@ -742,6 +756,10 @@ func (h *Handler) UpdateLoxiLBInstance(c *gin.Context) {
 		return
 	}
 
+	// The api_endpoint is rebuilt from host/port/protocol/version on every
+	// update, so any of those changing repoints the instance.
+	h.invalidateProxyConnections()
+
 	c.JSON(http.StatusOK, instance)
 }
 
@@ -768,6 +786,9 @@ func (h *Handler) DeleteLoxiLBInstance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	h.invalidateProxyConnections()
+
 	c.JSON(http.StatusOK, gin.H{"message": "Instance deleted"})
 }
 
@@ -834,6 +855,10 @@ func (h *Handler) UpdateLoxiLBInstanceFirmware(c *gin.Context) {
 		instance.Version = *firmwareRequest.Version
 	}
 
+	// The container behind this endpoint is being replaced; deferring the
+	// invalidation covers a partial failure that left it already torn down.
+	defer h.invalidateProxyConnections()
+
 	if err := h.loxilbService.UpdateFirmware(instance); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -881,6 +906,8 @@ func (h *Handler) StartLoxiLBInstanceFirmware(c *gin.Context) {
 		return
 	}
 
+	defer h.invalidateProxyConnections()
+
 	if err := h.loxilbService.StartFirmware(*instance); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -921,6 +948,8 @@ func (h *Handler) StoptLoxiLBInstanceFirmware(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch LoxiLB instance"})
 		return
 	}
+
+	defer h.invalidateProxyConnections()
 
 	if err := h.loxilbService.StopFirmware(*instance); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1491,7 +1520,9 @@ func derefString(s *string) string {
 // @Failure 404 {object} models.ErrorResponse
 // @Failure 409 {object} models.ErrorResponse
 // @Failure 500 {object} models.ErrorResponse
+// @Failure 502 {object} models.ErrorResponse "LoxiLB instance unreachable, reset, unresolvable, or TLS-rejected"
 // @Failure 503 {object} models.ErrorResponse
+// @Failure 504 {object} models.ErrorResponse "The instance did not answer within the proxy timeout"
 // @Security BearerAuth
 // @Router /oam/loxilbs/{id}/netlox/ [get]
 // @Router /oam/loxilbs/{id}/netlox/ [post]
@@ -1519,25 +1550,10 @@ func (h *Handler) ProxyToLoxiLB(c *gin.Context) {
 	// Forward the request using the proxy service
 	err = h.proxyService.ForwardRequest(c, instanceID, targetPath)
 	if err != nil {
-		// Error handling with appropriate HTTP status codes
-		var reservedErr *services.ReservedEndpointError
-		switch {
-		// Surface the guard's own message: it names the offending VIP and the
-		// reservation it hit, which is what the operator needs to fix .env or
-		// pick another port. The generic default below would hide both.
-		case errors.As(err, &reservedErr):
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		case errors.Is(err, services.ErrGatewayServiceIdentityUnavailable):
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Gateway service identity unavailable"})
-		case strings.Contains(err.Error(), "not found"):
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		case strings.Contains(err.Error(), "failed to connect"):
-			c.JSON(http.StatusBadGateway, gin.H{"error": "LoxiLB instance unreachable"})
-		case strings.Contains(err.Error(), "timeout"):
-			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "Request timeout"})
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Proxy request failed"})
-		}
+		// Classification is by error identity, not by error prose; see
+		// classifyProxyError for why the previous string matching was wrong.
+		status, message, detail := classifyProxyError(err)
+		c.JSON(status, proxyErrorBody(message, detail))
 		return
 	}
 
