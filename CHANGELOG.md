@@ -33,6 +33,15 @@ image's `org.opencontainers.image.version` label.
   converged PostgreSQL, Gateway, and OAM on a remote testbed while disabling
   the bundled UI and Caddy. It exposes OAM directly over HTTP with an explicit
   local-development CORS allowlist and reserved-port protection.
+- `OAM_PROXY_TIMEOUT` bounds a single proxied request to a managed instance
+  (default `10s`). Raise it if an instance carries a large enough configuration
+  for a management call to run long, so a healthy instance is not reported as
+  timing out. An unparseable or non-positive value falls back to the default and
+  is reported at startup, rather than silently disabling the bound.
+- `OAM_PROXY_DISABLE_KEEPALIVES=true` restores a fresh connection per proxied
+  request. An escape hatch for a deployment that hits a connection-reuse problem
+  the invalidation points do not cover; it logs a startup warning because it
+  costs a handshake on every request.
 
 ### Changed — BREAKING
 - **The datastore is now PostgreSQL 18; MySQL is no longer supported.** There is
@@ -61,6 +70,25 @@ image's `org.opencontainers.image.version` label.
   - The MySQL-era migrations are retained unconverted under
     `database/migrations/legacy-mysql/` for historical reference only.
     `database/init/00-init-complete.sql` is the entire PostgreSQL schema.
+- **A proxied request that times out now answers `504`, where it previously
+  answered `502`.** A client that keys on `502` to mean "any proxy failure" must
+  also handle `504`. The two are different claims: `502` says the instance could
+  not be reached, `504` says it did not answer within `OAM_PROXY_TIMEOUT` — which
+  does not establish that it is down. Error responses additionally carry a
+  `detail` field naming the cause; `error` keeps its existing shape, and its
+  wording for the `502` case is unchanged.
+
+### Changed
+- Connections to managed instances are reused instead of dialled afresh on every
+  proxied request. Reuse was previously disabled outright to avoid handing a
+  request a connection to an endpoint that had since been replaced — a real
+  hazard, but one that arises only when an endpoint changes, while the cost was
+  paid on every request forever. A small proxied response measured roughly twice
+  the latency of the equivalent direct call. The pool is now invalidated where
+  the hazard actually occurs: instance update, instance delete, and firmware
+  update/start/stop, each of which can move the endpoint or recreate the
+  container behind it. Snapshot take/restore deliberately keeps reuse off, since
+  a handshake is not measurable against a 60s take or a 5-minute restore.
 
 ### Fixed
 - The log-retrieval query could never succeed: it selected ten columns —
@@ -79,6 +107,15 @@ image's `org.opencontainers.image.version` label.
 - Database credentials are URL-escaped when building the connection string. A
   password containing `@`, `/`, `:` or `?` previously produced an unparseable
   DSN that surfaced as a confusing authentication failure.
+- Every failure of a proxied instance request was reported to the operator as
+  `502 "LoxiLB instance unreachable"`, including a timeout — a positive assertion
+  that the instance is down, which a timeout does not establish. The proxy
+  flattened every transport failure into one string and discarded the cause, and
+  the handler then classified on that string; since no error it could return
+  contained the text `timeout`, the `504` branch was unreachable code. Failures
+  are now classified from the error itself, so a timeout, a refused connection, a
+  DNS failure, a TLS rejection and a reset are each reported distinctly. See
+  [docs/instance-proxy.md](docs/instance-proxy.md) for the full status contract.
 
 ### Security
 - The break-glass admin reset now actually revokes the account's tokens. It
