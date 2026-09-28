@@ -47,7 +47,10 @@ func writeSnapshotError(c *gin.Context, err error) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": gwErr.Body})
 			return
 		}
-		// The gateway answered with an error; relay its status and body.
+		// The gateway answered with an error; relay its status and body,
+		// marked as the Gateway's so the console does not read a relayed 401
+		// as the operator's own OAM session ending.
+		c.Header(services.ErrorOriginHeader, services.ErrorOriginGateway)
 		body := gwErr.Body
 		if strings.HasPrefix(strings.TrimSpace(body), "{") {
 			c.Data(gwErr.StatusCode, "application/json", []byte(body))
