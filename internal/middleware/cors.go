@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/loxilb-io/loxilb-oam/internal/config"
+	"github.com/loxilb-io/loxilb-oam/internal/services"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,6 +34,11 @@ func CORSMiddleware() gin.HandlerFunc {
 		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
+		// Cross-origin JavaScript can read only safelisted response headers
+		// unless they are exposed. The console runs cross-origin in
+		// development, and without this it never sees the error-origin
+		// marker and treats every Gateway 401 as its own session ending.
+		c.Header("Access-Control-Expose-Headers", services.ErrorOriginHeader)
 
 		// Handle preflight request
 		if c.Request.Method == "OPTIONS" {

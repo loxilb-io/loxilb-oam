@@ -258,11 +258,22 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 		return fmt.Errorf("%w: %w", ErrProxyReadResponse, err)
 	}
 
-	// Copy response headers
+	// Copy response headers, except the ones OAM itself is authoritative for.
 	for key, values := range resp.Header {
+		if !relayableGatewayResponseHeader(key) {
+			continue
+		}
 		for _, value := range values {
 			c.Header(key, value)
 		}
+	}
+	// Tell the console which hop produced a failure. A Gateway 401 means OAM's
+	// management credential was refused, not that the operator's OAM session
+	// ended; without this marker the console cannot tell the two apart and
+	// signs the operator out. Set, never copied: the upstream's own value was
+	// dropped above, so the Gateway cannot claim a different origin.
+	if resp.StatusCode >= http.StatusBadRequest {
+		c.Header(ErrorOriginHeader, ErrorOriginGateway)
 	}
 
 	// Log successful proxy request
@@ -273,6 +284,29 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
 
 	return nil
+}
+
+// ErrorOriginHeader marks which hop produced a proxied failure. The console
+// reads it to decide whether a 401 ends the operator's OAM session.
+const (
+	ErrorOriginHeader  = "X-Loxi-Error-Origin"
+	ErrorOriginGateway = "gateway"
+)
+
+// relayableGatewayResponseHeader reports whether a Gateway response header may
+// be passed to the browser. Two families may not:
+//
+//   - Access-Control-*: CORS is OAM's policy, applied by CORSMiddleware before
+//     the proxy runs. Relaying the Gateway's values overwrote it, so every
+//     pass-through answered `Access-Control-Allow-Origin: *` no matter what
+//     OAM_ALLOWED_ORIGINS allowed, and dropped the headers OAM exposes.
+//   - the error-origin marker: only OAM can say which hop failed.
+func relayableGatewayResponseHeader(key string) bool {
+	canonical := http.CanonicalHeaderKey(key)
+	if strings.HasPrefix(canonical, "Access-Control-") {
+		return false
+	}
+	return canonical != ErrorOriginHeader
 }
 
 // safeGatewayRequestHeaders is an allowlist, rather than a denylist, because

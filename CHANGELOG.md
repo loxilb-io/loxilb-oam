@@ -91,6 +91,15 @@ image's `org.opencontainers.image.version` label.
   a handshake is not measurable against a 60s take or a 5-minute restore.
 
 ### Fixed
+- A Gateway failure relayed by the proxy, or by taking a snapshot, now
+  carries `X-Loxi-Error-Origin: gateway`, exposed to cross-origin consoles through
+  `Access-Control-Expose-Headers`. Without it the console could not tell a
+  Gateway refusing OAM's management credential (401) from the operator's own
+  session expiring, and signed the operator out a second after every login.
+  OAM sets the marker itself; a Gateway's own value is never relayed.
+- The proxy no longer relays the Gateway's `Access-Control-*` response
+  headers. They overwrote OAM's CORS policy, so every pass-through answered
+  `Access-Control-Allow-Origin: *` regardless of `OAM_ALLOWED_ORIGINS`.
 - The log-retrieval query could never succeed: it selected ten columns —
   `message` twice, plus a `create_at` column that does not exist — into a
   nine-column scan. It now selects the nine columns the reader actually expects.
