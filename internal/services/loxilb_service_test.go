@@ -1,6 +1,9 @@
 package services_test
 
 import (
+	"encoding/json"
+	"errors"
+
 	"github.com/loxilb-io/loxilb-oam/internal/models"
 	"github.com/loxilb-io/loxilb-oam/internal/services"
 	"testing"
@@ -45,6 +48,71 @@ func TestFetchLoxiLBInstances(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
 	}
+}
+
+var instanceColumns = []string{
+	"id", "name", "host", "port", "protocol", "description", "version", "api_endpoint", "cimage", "ctag", "is_active", "created_at",
+}
+
+// An empty table is a successful, empty list — it must serialize as [] so API
+// clients can iterate it without a null check.
+func TestFetchLoxiLBInstancesEmptyIsEmptyArray(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances").
+		WillReturnRows(sqlmock.NewRows(instanceColumns))
+
+	instances, err := services.NewLoxiLBService(db).FetchLoxiLBInstances()
+	assert.NoError(t, err)
+	assert.NotNil(t, instances)
+	assert.Empty(t, instances)
+
+	body, err := json.Marshal(instances)
+	assert.NoError(t, err)
+	assert.Equal(t, "[]", string(body))
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// A failed query stays a failure: it must not be reported as an empty list.
+func TestFetchLoxiLBInstancesQueryError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances").
+		WillReturnError(errors.New("connection refused"))
+
+	instances, err := services.NewLoxiLBService(db).FetchLoxiLBInstances()
+	assert.Error(t, err)
+	assert.Nil(t, instances)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// A read that fails part-way returns an error and none of the rows scanned
+// before the failure.
+func TestFetchLoxiLBInstancesRowErrorReturnsNoPartialList(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+
+	created := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows(instanceColumns).
+		AddRow(1, "instance1", "localhost", "8080", "https", "d", "v1", "https://localhost:8080/netlox/v1", "img", "tag", true, created).
+		AddRow(2, "instance2", "localhost", "8081", "https", "d", "v1", "https://localhost:8081/netlox/v1", "img", "tag", true, created).
+		RowError(1, errors.New("connection reset"))
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances").WillReturnRows(rows)
+
+	instances, err := services.NewLoxiLBService(db).FetchLoxiLBInstances()
+	assert.Error(t, err)
+	assert.Nil(t, instances)
 }
 
 func TestFetchLoxiLBInstanceByID(t *testing.T) {

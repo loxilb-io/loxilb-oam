@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/loxilb-io/loxilb-oam/internal/models"
@@ -463,10 +466,8 @@ func TestApiStopLoxiLBFirmware(t *testing.T) {
 }
 
 func TestApiLogin(t *testing.T) {
-	// Use a dedicated account rather than re-logging-in testllb: two logins of
-	// the same user within one second produce an identical JWT (same subject +
-	// second-granularity expiry) and collide on the api_tokens primary key. This
-	// exercises the login contract without disturbing the package-level token.
+	// Use a dedicated account so this exercises the login contract without
+	// disturbing the package-level token.
 	id, err := createUser("testlogin", "testlogin@example.com", testPassword(), "")
 	if err != nil {
 		t.Fatalf("Failed to create user: %s", err)
@@ -494,6 +495,121 @@ func TestApiLogin(t *testing.T) {
 	var response map[string]string
 	json.NewDecoder(resp.Body).Decode(&response)
 	assert.NotEmpty(t, response["token"])
+}
+
+// loginStatus posts credentials to /oam/login and returns the HTTP status and
+// the issued token (empty unless the login succeeded).
+func loginStatus(username, password string) (int, string, error) {
+	jsonValue, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	req, _ := http.NewRequest("POST", baseURL+"/login", bytes.NewBuffer(jsonValue))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Token string `json:"token"`
+	}
+	json.NewDecoder(resp.Body).Decode(&body)
+	return resp.StatusCode, body.Token, nil
+}
+
+// authedStatus issues an authenticated request and returns the HTTP status.
+func authedStatus(method, url, bearer string) (int, error) {
+	req, _ := http.NewRequest(method, url, nil)
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
+// Simultaneous logins by one user are separate sessions: each gets its own
+// token, every one is stored, and revoking one leaves the others usable. This
+// runs against the real token store, whose unique key on token_value is what
+// used to turn the second same-second login into a 500.
+func TestApiConcurrentLoginsAreIndependentSessions(t *testing.T) {
+	id, err := createUser("testparallel", "testparallel@example.com", testPassword(), "")
+	if err != nil {
+		t.Fatalf("Failed to create user: %s", err)
+	}
+	defer deleteUser(id)
+
+	// Kept well under the login rate-limit burst shared with the rest of the suite.
+	const n = 4
+	statuses := make([]int, n)
+	tokens := make([]string, n)
+	errs := make([]error, n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			statuses[i], tokens[i], errs[i] = loginStatus("testparallel", testPassword())
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	seen := map[string]bool{}
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("login %d: %s", i, errs[i])
+		}
+		if statuses[i] != http.StatusOK || tokens[i] == "" {
+			t.Fatalf("login %d: status %d, token empty=%v", i, statuses[i], tokens[i] == "")
+		}
+		assert.False(t, seen[tokens[i]], "login %d was issued a token another login already holds", i)
+		seen[tokens[i]] = true
+	}
+
+	// Every session is live.
+	for i := 0; i < n; i++ {
+		code, err := authedStatus("GET", baseURL+"/users/me", tokens[i])
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusOK, code, "token %d should be usable", i)
+	}
+
+	// Revoking the first rejects it and only it.
+	code, err := authedStatus("POST", baseURL+"/logout", tokens[0])
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, code)
+
+	code, err = authedStatus("GET", baseURL+"/users/me", tokens[0])
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusUnauthorized, code, "revoked token must be rejected")
+	for i := 1; i < n; i++ {
+		code, err := authedStatus("GET", baseURL+"/users/me", tokens[i])
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusOK, code, "token %d must survive another session's logout", i)
+	}
+}
+
+// With no instances registered the list is a successful empty array, not null.
+func TestApiEmptyInstanceListIsArray(t *testing.T) {
+	req, _ := http.NewRequest("GET", loxiLBBaseURL, nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatalf("Failed to send request: %s", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	var list []json.RawMessage
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatalf("instance list is not a JSON array: %s", raw)
+	}
+	assert.NotEqual(t, "null", strings.TrimSpace(string(raw)))
+	if len(list) == 0 {
+		assert.Equal(t, "[]", strings.TrimSpace(string(raw)))
+	}
 }
 
 func TestApiCreateUser(t *testing.T) {
