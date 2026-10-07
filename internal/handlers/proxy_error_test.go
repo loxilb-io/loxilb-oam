@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/loxilb-io/loxilb-oam/internal/config"
+	"github.com/loxilb-io/loxilb-oam/internal/middleware"
 	"github.com/loxilb-io/loxilb-oam/internal/services"
 )
 
@@ -170,6 +171,16 @@ func TestProxyErrorBodyOmitsEmptyDetail(t *testing.T) {
 		proxyErrorBody("boom", "why"))
 }
 
+// authorizedGatewayPath stands in for middleware.RequireGatewayAccess, which
+// hands the proxy handler the path it authorized.
+func authorizedGatewayPath(t *testing.T) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		path, err := services.CanonicalGatewayPath(c.Param("path"), c.Request.URL.EscapedPath())
+		require.NoError(t, err)
+		c.Set(middleware.CtxGatewayPath, path)
+	}
+}
+
 // End-to-end through the real handler, the real ProxyService and a real
 // network: this is the test that would have caught the dead 504 branch, which
 // no amount of unit-testing the pieces in isolation did.
@@ -218,7 +229,7 @@ func TestProxyToLoxiLBEndToEndClassification(t *testing.T) {
 			h := NewHandler(nil, nil, nil, nil, proxy, nil, 0)
 			gin.SetMode(gin.TestMode)
 			router := gin.New()
-			router.GET("/oam/loxilbs/:id/netlox/*path", h.ProxyToLoxiLB)
+			router.GET("/oam/loxilbs/:id/netlox/*path", authorizedGatewayPath(t), h.ProxyToLoxiLB)
 
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder,

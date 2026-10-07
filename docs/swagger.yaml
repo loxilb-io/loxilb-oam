@@ -1764,7 +1764,10 @@ paths:
     delete:
       consumes:
       - application/json
-      description: Forwards HTTP requests to the specified LoxiLB instance
+      description: 'Forwards HTTP requests to the specified LoxiLB instance. Authorization
+        depends on the method and on the Gateway path: see docs/proxy-functionality.md.
+        A path with dot segments, empty segments or an encoded separator is refused
+        with 400.'
       parameters:
       - description: Bearer token
         in: header
@@ -1800,6 +1803,10 @@ paths:
             $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "405":
+          description: The proxy does not forward this method
           schema:
             $ref: '#/definitions/models.ErrorResponse'
         "409":
@@ -1830,7 +1837,10 @@ paths:
     get:
       consumes:
       - application/json
-      description: Forwards HTTP requests to the specified LoxiLB instance
+      description: 'Forwards HTTP requests to the specified LoxiLB instance. Authorization
+        depends on the method and on the Gateway path: see docs/proxy-functionality.md.
+        A path with dot segments, empty segments or an encoded separator is refused
+        with 400.'
       parameters:
       - description: Bearer token
         in: header
@@ -1866,6 +1876,10 @@ paths:
             $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "405":
+          description: The proxy does not forward this method
           schema:
             $ref: '#/definitions/models.ErrorResponse'
         "409":
@@ -1896,7 +1910,10 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Forwards HTTP requests to the specified LoxiLB instance
+      description: 'Forwards HTTP requests to the specified LoxiLB instance. Authorization
+        depends on the method and on the Gateway path: see docs/proxy-functionality.md.
+        A path with dot segments, empty segments or an encoded separator is refused
+        with 400.'
       parameters:
       - description: Bearer token
         in: header
@@ -1932,6 +1949,10 @@ paths:
             $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "405":
+          description: The proxy does not forward this method
           schema:
             $ref: '#/definitions/models.ErrorResponse'
         "409":
@@ -1962,7 +1983,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Forwards HTTP requests to the specified LoxiLB instance
+      description: 'Forwards HTTP requests to the specified LoxiLB instance. Authorization
+        depends on the method and on the Gateway path: see docs/proxy-functionality.md.
+        A path with dot segments, empty segments or an encoded separator is refused
+        with 400.'
       parameters:
       - description: Bearer token
         in: header
@@ -1998,6 +2022,10 @@ paths:
             $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "405":
+          description: The proxy does not forward this method
           schema:
             $ref: '#/definitions/models.ErrorResponse'
         "409":
@@ -2028,7 +2056,10 @@ paths:
     put:
       consumes:
       - application/json
-      description: Forwards HTTP requests to the specified LoxiLB instance
+      description: 'Forwards HTTP requests to the specified LoxiLB instance. Authorization
+        depends on the method and on the Gateway path: see docs/proxy-functionality.md.
+        A path with dot segments, empty segments or an encoded separator is refused
+        with 400.'
       parameters:
       - description: Bearer token
         in: header
@@ -2064,6 +2095,10 @@ paths:
             $ref: '#/definitions/models.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/models.ErrorResponse'
+        "405":
+          description: The proxy does not forward this method
           schema:
             $ref: '#/definitions/models.ErrorResponse'
         "409":
