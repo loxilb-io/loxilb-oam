@@ -65,9 +65,9 @@ func TestRunOnceTakesDueSnapshotAndTrims(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO instance_snapshots")).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("SELECT (.+) FROM instance_snapshots"). // storeSnapshot re-read
-									WillReturnRows(sqlmock.NewRows(append(append([]string{}, snapMetaCols...), "last_restore_response")).
+									WillReturnRows(sqlmock.NewRows(snapDetailCols).
 										AddRow("new-id", 1, "scheduled-x", "", "scheduled", "1.0", "v0.9.9", len(doc),
-				"sha256:a", "sha256:b", false, false, true, "snapshot-scheduler", time.Now(), 0, nil, nil, nil))
+				"sha256:a", "sha256:b", false, false, true, "snapshot-scheduler", time.Now(), 0, nil, nil, nil, nil))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE instance_snapshot_schedules")).
 		WithArgs("ok", 1).WillReturnResult(sqlmock.NewResult(0, 1))
 

@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -48,6 +50,9 @@ var (
 	ErrSnapshotTooLarge   = fmt.Errorf("snapshot exceeds the %d MB size limit", MaxSnapshotBytes>>20)
 	ErrSnapshotCorrupted  = errors.New("stored snapshot blob failed integrity verification")
 	ErrInvalidSnapshotDoc = errors.New("invalid snapshot document")
+	// ErrInvalidRestoreRequest: the restore request itself is wrong (mode or
+	// component selection). Nothing has been sent to a gateway.
+	ErrInvalidRestoreRequest = errors.New("invalid restore request")
 )
 
 // GatewayError carries a gateway (or connection) failure through to the
@@ -73,8 +78,10 @@ type SnapshotGatewayClient interface {
 	// document bytes plus response headers.
 	FetchSnapshot(instance *models.LoxiLBInstance) ([]byte, http.Header, error)
 	// Restore POSTs the raw document to {api_endpoint}/config/restore?mode=…
-	// and returns the gateway's status code and raw response body.
-	Restore(instance *models.LoxiLBInstance, doc []byte, mode string) (int, []byte, error)
+	// and returns the gateway's status code and raw response body. A
+	// non-empty components limits the restore to those domains; empty
+	// restores everything the document covers.
+	Restore(instance *models.LoxiLBInstance, doc []byte, mode string, components []string) (int, []byte, error)
 }
 
 // httpGatewayClient is the production SnapshotGatewayClient.
@@ -130,8 +137,8 @@ func (g *httpGatewayClient) FetchSnapshot(instance *models.LoxiLBInstance) ([]by
 	return body, resp.Header, nil
 }
 
-func (g *httpGatewayClient) Restore(instance *models.LoxiLBInstance, doc []byte, mode string) (int, []byte, error) {
-	url := gatewayBaseURL(instance) + "/config/restore?mode=" + mode
+func (g *httpGatewayClient) Restore(instance *models.LoxiLBInstance, doc []byte, mode string, components []string) (int, []byte, error) {
+	url := gatewayBaseURL(instance) + "/config/restore?" + restoreQuery(mode, components)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(doc))
 	if err != nil {
 		return 0, nil, &GatewayError{Body: fmt.Sprintf("creating gateway request: %v", err)}
@@ -150,6 +157,18 @@ func (g *httpGatewayClient) Restore(instance *models.LoxiLBInstance, doc []byte,
 		return 0, nil, &GatewayError{Body: fmt.Sprintf("reading gateway response: %v", err)}
 	}
 	return resp.StatusCode, body, nil
+}
+
+// restoreQuery encodes the gateway's restore parameters. The gateway reads an
+// empty `components` as "every domain", so the parameter is sent only when
+// there is a selection: a selected restore can never widen into a full one
+// on the way out.
+func restoreQuery(mode string, components []string) string {
+	query := url.Values{"mode": {mode}}
+	if len(components) > 0 {
+		query.Set("components", strings.Join(components, ","))
+	}
+	return query.Encode()
 }
 
 // snapshotEnvelope is the only part of the snapshot document OAM ever
@@ -411,7 +430,7 @@ func (s *SnapshotService) storeSnapshot(instanceID int, name, description, trigg
 // scanSnapshotMeta scans the snapshotMetaColumns column set.
 func scanSnapshotMeta(scan func(dest ...interface{}) error, withRestoreResponse bool) (*models.InstanceSnapshot, error) {
 	var snap models.InstanceSnapshot
-	var desc, lastResult, lastResponse sql.NullString
+	var desc, lastResult, lastResponse, lastComponents sql.NullString
 	var lastRestoredAt sql.NullTime
 	dest := []interface{}{
 		&snap.ID, &snap.InstanceID, &snap.Name, &desc, &snap.TriggerType,
@@ -420,7 +439,7 @@ func scanSnapshotMeta(scan func(dest ...interface{}) error, withRestoreResponse 
 		&snap.CreatedBy, &snap.CreatedAt, &snap.RestoreCount, &lastRestoredAt, &lastResult,
 	}
 	if withRestoreResponse {
-		dest = append(dest, &lastResponse)
+		dest = append(dest, &lastResponse, &lastComponents)
 	}
 	if err := scan(dest...); err != nil {
 		return nil, err
@@ -437,6 +456,9 @@ func scanSnapshotMeta(scan func(dest ...interface{}) error, withRestoreResponse 
 	if lastResponse.Valid {
 		v := lastResponse.String
 		snap.LastRestoreResponse = &v
+	}
+	if lastComponents.Valid && lastComponents.String != "" {
+		snap.LastRestoreComponents = strings.Split(lastComponents.String, ",")
 	}
 	return &snap, nil
 }
@@ -633,6 +655,59 @@ func MapGatewayRestoreResult(result string) *string {
 	return &v
 }
 
+// componentNameRE is the shape of a snapshot domain name. OAM keeps no list
+// of the gateway's domains: which names exist is the gateway's to say.
+var componentNameRE = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
+
+// validateRestoreComponents checks a component selection before anything is
+// sent. nil is "no selection"; a selection must name at least one domain.
+func validateRestoreComponents(components []string) error {
+	if components == nil {
+		return nil
+	}
+	if len(components) == 0 {
+		return fmt.Errorf("%w: components must name at least one domain; omit it to restore the whole document", ErrInvalidRestoreRequest)
+	}
+	seen := make(map[string]bool, len(components))
+	for _, name := range components {
+		if !componentNameRE.MatchString(name) {
+			return fmt.Errorf("%w: %q is not a valid component name", ErrInvalidRestoreRequest, name)
+		}
+		if seen[name] {
+			return fmt.Errorf("%w: component %q is listed twice", ErrInvalidRestoreRequest, name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+// checkComponentsCovered refuses a selection the document says it does not
+// cover. It reads only the envelope's included_domains. A document without
+// the field (older than schema 1.2) declares nothing, so nothing is refused
+// here and the gateway decides.
+func checkComponentsCovered(raw []byte, components []string) error {
+	if len(components) == 0 {
+		return nil
+	}
+	var envelope struct {
+		IncludedDomains []string `json:"included_domains"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil || len(envelope.IncludedDomains) == 0 {
+		return nil
+	}
+	included := make(map[string]bool, len(envelope.IncludedDomains))
+	for _, name := range envelope.IncludedDomains {
+		included[name] = true
+	}
+	for _, name := range components {
+		if !included[name] {
+			return fmt.Errorf("%w: component %q is not covered by this snapshot (included_domains: %s)",
+				ErrInvalidRestoreRequest, name, strings.Join(envelope.IncludedDomains, ", "))
+		}
+	}
+	return nil
+}
+
 // RestoreSnapshot pushes a stored snapshot to a gateway.
 //
 // Dry-run (the default) validates and returns the gateway's plan without
@@ -646,10 +721,16 @@ func (s *SnapshotService) RestoreSnapshot(id string, req models.RestoreSnapshotR
 		mode = RestoreModeDryRun
 	}
 	if mode != RestoreModeDryRun && mode != RestoreModeCommit {
-		return nil, fmt.Errorf("%w: mode must be %q or %q", ErrInvalidSnapshotDoc, RestoreModeDryRun, RestoreModeCommit)
+		return nil, fmt.Errorf("%w: mode must be %q or %q", ErrInvalidRestoreRequest, RestoreModeDryRun, RestoreModeCommit)
+	}
+	if err := validateRestoreComponents(req.Components); err != nil {
+		return nil, err
 	}
 	raw, snap, err := s.GetSnapshotDocument(id)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkComponentsCovered(raw, req.Components); err != nil {
 		return nil, err
 	}
 	targetID := snap.InstanceID
@@ -665,6 +746,7 @@ func (s *SnapshotService) RestoreSnapshot(id string, req models.RestoreSnapshotR
 		InstanceID:    target.ID,
 		Mode:          mode,
 		CrossInstance: target.ID != snap.InstanceID,
+		Components:    req.Components,
 	}
 	if mode == RestoreModeCommit {
 		pre, err := s.TakeSnapshot(target.ID, models.TakeSnapshotRequest{
@@ -677,10 +759,10 @@ func (s *SnapshotService) RestoreSnapshot(id string, req models.RestoreSnapshotR
 		}
 		outcome.PreRestoreSnapshotID = pre.ID
 	}
-	status, body, err := s.gateway.Restore(target, raw, mode)
+	status, body, err := s.gateway.Restore(target, raw, mode, req.Components)
 	if err != nil {
 		if mode == RestoreModeCommit {
-			s.recordRestore(id, nil, fmt.Sprintf(`{"error":%q}`, err.Error()))
+			s.recordRestore(id, nil, fmt.Sprintf(`{"error":%q}`, err.Error()), req.Components)
 		}
 		return nil, err
 	}
@@ -697,22 +779,25 @@ func (s *SnapshotService) RestoreSnapshot(id string, req models.RestoreSnapshotR
 			Result string `json:"result"`
 		}
 		_ = json.Unmarshal(body, &gwResult)
-		s.recordRestore(id, MapGatewayRestoreResult(gwResult.Result), string(outcome.GatewayResponse))
-		utils.LogInfo(fmt.Sprintf("snapshot restore committed: snapshot=%s target=%d status=%d result=%q by=%s",
-			id, target.ID, status, gwResult.Result, actor))
+		s.recordRestore(id, MapGatewayRestoreResult(gwResult.Result), string(outcome.GatewayResponse), req.Components)
+		utils.LogInfo(fmt.Sprintf("snapshot restore committed: snapshot=%s target=%d components=%q status=%d result=%q by=%s",
+			id, target.ID, strings.Join(req.Components, ","), status, gwResult.Result, actor))
 	} else {
-		utils.LogInfo(fmt.Sprintf("snapshot restore dry-run: snapshot=%s target=%d status=%d by=%s", id, target.ID, status, actor))
+		utils.LogInfo(fmt.Sprintf("snapshot restore dry-run: snapshot=%s target=%d components=%q status=%d by=%s", id, target.ID, strings.Join(req.Components, ","), status, actor))
 	}
 	return outcome, nil
 }
 
 // recordRestore persists the audit record of a commit restore attempt.
-func (s *SnapshotService) recordRestore(id string, result *string, response string) {
-	var res sql.NullString
+func (s *SnapshotService) recordRestore(id string, result *string, response string, components []string) {
+	var res, selection sql.NullString
 	if result != nil {
 		res = sql.NullString{String: *result, Valid: true}
 	}
-	if _, err := s.DB.Exec(config.RecordSnapshotRestoreQuery, res, response, id); err != nil {
+	if len(components) > 0 {
+		selection = sql.NullString{String: strings.Join(components, ","), Valid: true}
+	}
+	if _, err := s.DB.Exec(config.RecordSnapshotRestoreQuery, res, response, selection, id); err != nil {
 		utils.LogError("Failed to record snapshot restore result: " + err.Error())
 	}
 }

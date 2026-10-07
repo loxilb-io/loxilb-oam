@@ -2246,7 +2246,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Default mode is dry-run: the gateway validates and returns its plan without mutating anything. Commit first takes an automatic pre_restore safety snapshot of the target, then applies. The gateway's response is returned verbatim in gateway_response. Cross-instance restore is allowed and flagged with cross_instance=true.",
+                "description": "Default mode is dry-run: the gateway validates and returns its plan without mutating anything. Commit first takes an automatic pre_restore safety snapshot of the target (always a full capture), then applies. Cross-instance restore is allowed and flagged with cross_instance=true.\n\ncomponents limits the restore to the named snapshot domains, which the gateway replaces (it does not merge). Omit it to restore everything the document covers. When present it must name at least one domain; an empty list, a malformed or repeated name, or a domain the document's included_domains does not list is refused with 400 before the gateway is called. Send the same components for the dry-run and for the commit. To undo a selected restore, restore the pre_restore snapshot with the same components.\n\nReading the answer: 200 means the gateway answered, whatever it said. gateway_status is the gateway's HTTP status and gateway_response its body verbatim, so a refused or rolled-back restore is a 200 here with the refusal inside. For a commit, read gateway_response.result (ok, rolled-back, ROLLBACK-FAILED) and gateway_response.persisted: a restore can be applied and still report persisted=false. Any other status means OAM stopped before or while reaching the gateway.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2273,7 +2273,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "mode: dry-run (default) | commit; optional target_instance_id",
+                        "description": "mode: dry-run (default) | commit; optional target_instance_id; optional components",
                         "name": "request",
                         "in": "body",
                         "schema": {
@@ -2320,6 +2320,12 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "Gateway unreachable (connection error passed through verbatim)",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "OAM's gateway service identity is unavailable",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -3939,6 +3945,13 @@ const docTemplate = `{
                 "instance_id": {
                     "type": "integer"
                 },
+                "last_restore_components": {
+                    "description": "LastRestoreComponents is the domain selection of the most recent\nrestore attempt; absent when it restored the whole document. Like the\nresponse, only populated on the single-snapshot GET.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "last_restore_response": {
                     "description": "LastRestoreResponse is the full gateway response JSON of the most\nrecent restore attempt (the audit record). Only populated on the\nsingle-snapshot GET, not in lists.",
                     "type": "string"
@@ -4192,6 +4205,13 @@ const docTemplate = `{
         "models.RestoreOutcome": {
             "type": "object",
             "properties": {
+                "components": {
+                    "description": "the selection sent to the gateway; absent = whole document",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "cross_instance": {
                     "type": "boolean"
                 },
@@ -4219,6 +4239,13 @@ const docTemplate = `{
         "models.RestoreSnapshotRequest": {
             "type": "object",
             "properties": {
+                "components": {
+                    "description": "Components limits the restore to the named snapshot domains (for\nexample [\"auditsink\"]). The gateway wipes and applies those domains\nonly; it replaces their state, it does not merge. Absent restores\neverything the document covers. When present it must name at least\none domain: an empty list is refused, never read as \"everything\".",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "mode": {
                     "description": "\"dry-run\" (default) | \"commit\"",
                     "type": "string"

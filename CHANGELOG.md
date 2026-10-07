@@ -20,6 +20,14 @@ image's `org.opencontainers.image.version` label.
 ## [Unreleased]
 
 ### Added
+- A snapshot restore can be limited to chosen domains.
+  `POST /oam/snapshots/{sid}/restore` takes `components`, a list of snapshot
+  domain names (for example `["auditsink"]`); the gateway replaces those
+  domains and leaves the rest alone. Without it the whole document is restored,
+  as before. An empty list, a malformed or repeated name, or a domain the
+  document does not cover is refused with `400` before the gateway is called.
+  The selection is returned in the restore outcome and kept with the snapshot
+  as `last_restore_components` (schema version 4, applied at startup).
 - Appliance operations can be authorized, submitted, followed and cancelled
   (**alpha**, `appliance-ops/v1alpha1`; the only host adapter is still the
   fixture, which executes nothing). `POST …/operations/{id}/authorize`
@@ -147,6 +155,10 @@ image's `org.opencontainers.image.version` label.
   a handshake is not measurable against a 60s take or a 5-minute restore.
 
 ### Fixed
+- Snapshot restore answered `500` when OAM's gateway service identity was
+  unavailable, where the instance proxy answers `503` for the same condition;
+  it now answers `503`. An invalid restore `mode` was reported as "invalid
+  snapshot document"; it is now reported as an invalid restore request.
 - Two logins by the same user within the same second no longer fail. The JWT
   carried no unique identifier, so both signed to the identical string and the
   second was rejected by the token store's unique key (`500 Could not save
