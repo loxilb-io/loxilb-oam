@@ -91,7 +91,7 @@ func TestInstanceUpdateInvalidatesPooledProxyConnections(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.GET("/oam/loxilbs/:id/netlox/*path", h.ProxyToLoxiLB)
+	router.GET("/oam/loxilbs/:id/netlox/*path", authorizedGatewayPath(t), h.ProxyToLoxiLB)
 	router.PUT("/oam/loxilbs/:id", h.UpdateLoxiLBInstance)
 
 	proxyGet := func() {

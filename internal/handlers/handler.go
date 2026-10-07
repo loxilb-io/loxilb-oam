@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
+	"github.com/loxilb-io/loxilb-oam/internal/middleware"
 	"github.com/loxilb-io/loxilb-oam/internal/models"
 	"github.com/loxilb-io/loxilb-oam/internal/services"
 	"github.com/loxilb-io/loxilb-oam/internal/utils"
@@ -1507,7 +1508,7 @@ func derefString(s *string) string {
 
 // ProxyToLoxiLB handles proxying requests to LoxiLB instances.
 // @Summary Proxy request to LoxiLB instance
-// @Description Forwards HTTP requests to the specified LoxiLB instance
+// @Description Forwards HTTP requests to the specified LoxiLB instance. Authorization depends on the method and on the Gateway path: see docs/proxy-functionality.md. A path with dot segments, empty segments or an encoded separator is refused with 400.
 // @Tags proxy
 // @Accept json
 // @Produce json
@@ -1520,6 +1521,7 @@ func derefString(s *string) string {
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Failure 404 {object} models.ErrorResponse
+// @Failure 405 {object} models.ErrorResponse "The proxy does not forward this method"
 // @Failure 409 {object} models.ErrorResponse
 // @Failure 500 {object} models.ErrorResponse
 // @Failure 502 {object} models.ErrorResponse "LoxiLB instance unreachable, reset, unresolvable, or TLS-rejected"
@@ -1541,11 +1543,14 @@ func (h *Handler) ProxyToLoxiLB(c *gin.Context) {
 		return
 	}
 
-	// Extract the target path (everything after /netlox/)
-	targetPath := c.Param("path")
-	if targetPath == "" {
-		utils.LogError("Missing target path for proxy request")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing target path"})
+	// The path was reduced to canonical form and authorized by
+	// RequireGatewayAccess. Forward that form and no other: reading the raw
+	// wildcard here would forward a path nobody authorized.
+	pathValue, _ := c.Get(middleware.CtxGatewayPath)
+	targetPath, ok := pathValue.(services.GatewayPath)
+	if !ok {
+		utils.LogError("Proxy request reached the handler without an authorized gateway path")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Proxy request failed"})
 		return
 	}
 
