@@ -91,6 +91,16 @@ image's `org.opencontainers.image.version` label.
   a handshake is not measurable against a 60s take or a 5-minute restore.
 
 ### Fixed
+- Two logins by the same user within the same second no longer fail. The JWT
+  carried no unique identifier, so both signed to the identical string and the
+  second was rejected by the token store's unique key (`500 Could not save
+  token`). Every token now carries a random `jti` and an `iat`; concurrent
+  sessions are distinct and are revoked independently. Tokens issued before
+  this change stay valid and revocable until they expire.
+- `GET /oam/loxilbs` returns `[]`, not `null`, when no instance is registered.
+  A failed query is still an error, never an empty success.
+- `GET /oam/loxilbs` no longer returns the database driver's error text in its
+  `500` body; the cause is logged and the response carries a fixed message.
 - A Gateway failure relayed by the proxy, or by taking a snapshot, now
   carries `X-Loxi-Error-Origin: gateway`, exposed to cross-origin consoles through
   `Access-Control-Expose-Headers`. Without it the console could not tell a
