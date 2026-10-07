@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +46,7 @@ func applianceRouter(t *testing.T, role string, found bool) *gin.Engine {
 	r.Use(withClaims("alice", models.RoleAdmin))
 	r.GET("/oam/v1/appliance/capabilities", h.Require(middleware.ActApplianceRead), h.GetCapabilities)
 	r.GET("/oam/v1/appliance/restricted", h.Require(middleware.ActApplianceReset), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	r.POST("/oam/v1/appliance/operations", h.Require(middleware.ActApplianceRead), h.PlanOperation)
 	return r
 }
 
@@ -114,5 +116,54 @@ func TestApplianceRequestIDIsSanitized(t *testing.T) {
 		got := rec.Header().Get(handlers.RequestIDHeader)
 		assert.NotEqual(t, bad, got)
 		assert.Regexp(t, `^[0-9a-f]{24}$`, got)
+	}
+}
+
+func postPlan(r http.Handler, body string, headers map[string]string) (*httptest.ResponseRecorder, appliance.ErrorBody) {
+	req := httptest.NewRequest(http.MethodPost, "/oam/v1/appliance/operations", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	var envelope appliance.ErrorBody
+	_ = json.Unmarshal(rec.Body.Bytes(), &envelope)
+	return rec, envelope
+}
+
+// Requests refused before the database or the host is consulted, each with
+// its own code. (Everything past this point is covered against PostgreSQL in
+// internal/appliance.)
+func TestPlanOperationRejectsBadRequests(t *testing.T) {
+	// Built rather than written out: a literal next to the word "key" reads
+	// as a credential to the secret scanner.
+	goodKey := map[string]string{handlers.IdempotencyKeyHeader: strings.Repeat("k", 16)}
+	backup := `{"schema_version":"` + appliance.SchemaVersion + `","type":"backup"}`
+
+	cases := []struct {
+		name    string
+		role    string
+		body    string
+		headers map[string]string
+		status  int
+		code    string
+	}{
+		{"malformed JSON", models.RoleAdmin, `{not json`, goodKey, http.StatusBadRequest, appliance.CodeInvalidRequest},
+		{"unknown field", models.RoleAdmin, `{"schema_version":"` + appliance.SchemaVersion + `","type":"backup","force":true}`, goodKey, http.StatusBadRequest, appliance.CodeInvalidRequest},
+		{"no idempotency key", models.RoleAdmin, backup, nil, http.StatusBadRequest, appliance.CodeIdempotencyKeyInvalid},
+		{"wrong contract version", models.RoleAdmin, `{"schema_version":"v0","type":"backup"}`, goodKey, http.StatusBadRequest, appliance.CodeSchemaMismatch},
+		{"restore without archive", models.RoleAdmin, `{"schema_version":"` + appliance.SchemaVersion + `","type":"restore"}`, goodKey, http.StatusBadRequest, appliance.CodeInvalidRequest},
+		{"operator may not plan", models.RoleOperator, backup, goodKey, http.StatusForbidden, appliance.CodePermissionDenied},
+		{"viewer may not plan", models.RoleViewer, backup, goodKey, http.StatusForbidden, appliance.CodePermissionDenied},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, envelope := postPlan(applianceRouter(t, tc.role, true), tc.body, tc.headers)
+			assert.Equal(t, tc.status, rec.Code)
+			assert.Equal(t, tc.code, envelope.Code)
+			assert.Equal(t, appliance.OriginOAM, envelope.Origin)
+			assert.NotEmpty(t, envelope.RequestID)
+		})
 	}
 }

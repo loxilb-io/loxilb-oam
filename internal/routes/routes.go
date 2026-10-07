@@ -139,5 +139,13 @@ func SetupApplianceRoutes(router *gin.Engine, userService *services.UserService,
 	{
 		appliance.GET("/capabilities", handler.Require(middleware.ActApplianceRead), handler.GetCapabilities)
 		appliance.GET("/status", handler.Require(middleware.ActApplianceRead), handler.GetStatus)
+
+		// Operations. Reading is open to every role, with the plan withheld
+		// from those who could not run it; planning checks the capability
+		// for the requested type inside the handler, since the type is in
+		// the body.
+		appliance.GET("/operations", handler.Require(middleware.ActApplianceRead), handler.ListOperations)
+		appliance.POST("/operations", handler.Require(middleware.ActApplianceRead), handler.PlanOperation)
+		appliance.GET("/operations/:operation_id", handler.Require(middleware.ActApplianceRead), handler.GetOperation)
 	}
 }

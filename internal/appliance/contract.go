@@ -151,6 +151,15 @@ const (
 	CodeHostUnreachable   = "HOST_UNREACHABLE"
 	CodeSchemaMismatch    = "SCHEMA_MISMATCH"
 	CodeInternal          = "INTERNAL_ERROR"
+
+	CodeInvalidRequest        = "INVALID_REQUEST"
+	CodeIdempotencyKeyInvalid = "IDEMPOTENCY_KEY_INVALID"
+	CodeIdempotencyKeyReused  = "IDEMPOTENCY_KEY_REUSED"
+	CodeOperationNotFound     = "OPERATION_NOT_FOUND"
+	CodePlanExpired           = "PLAN_EXPIRED"
+	// CodePlanRejected is the fallback when the host adapter refuses a plan
+	// without a usable code of its own.
+	CodePlanRejected = "PLAN_REJECTED"
 )
 
 // Recovery actions a client may offer. A closed list.
@@ -158,6 +167,7 @@ const (
 	RecoveryRetry          = "RETRY"
 	RecoveryReauthenticate = "REAUTHENTICATE"
 	RecoveryContactSupport = "CONTACT_SUPPORT"
+	RecoveryReplan         = "REPLAN"
 	RecoveryNone           = "NONE"
 )
 

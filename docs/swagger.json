@@ -2628,6 +2628,240 @@
                 }
             }
         },
+        "/oam/v1/appliance/operations": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Newest first. `items` is always an array. Pass `next_cursor` back as `cursor` for the next page.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "appliance"
+                ],
+                "summary": "List Appliance operations (alpha)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size, 1-100 (default 20)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "next_cursor of the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only operations in this state",
+                        "name": "state",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only operations of this type",
+                        "name": "type",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.OperationList"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Validates the request with the host adapter and records the plan. Nothing is executed. Repeating the request with the same Idempotency-Key returns the same operation (200); the same key with a different request is a conflict (409). The caller's role must hold the capability for the operation type. A plan expires 15 minutes after it is made. Contract appliance-ops/v1alpha1 — subject to change.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "appliance"
+                ],
+                "summary": "Plan an Appliance operation (alpha)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "16-128 printable ASCII characters, unique per intended operation",
+                        "name": "Idempotency-Key",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "What to plan",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/appliance.PlanRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The operation this key already created",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.Operation"
+                        }
+                    },
+                    "201": {
+                        "description": "Planned",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.Operation"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "422": {
+                        "description": "The host adapter rejected the request",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "501": {
+                        "description": "No host adapter in this deployment",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "The host adapter did not answer",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/oam/v1/appliance/operations/{operation_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns one operation. The plan — what it would touch and the artifacts involved — is included only for callers whose role may run that operation type; for others `redacted` is true.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "appliance"
+                ],
+                "summary": "Read an Appliance operation (alpha)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Operation ID",
+                        "name": "operation_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.Operation"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/oam/v1/appliance/status": {
             "get": {
                 "security": [
@@ -2822,6 +3056,196 @@
                 },
                 "request_id": {
                     "type": "string"
+                }
+            }
+        },
+        "appliance.Operation": {
+            "type": "object",
+            "properties": {
+                "actor": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "error_code": {
+                    "type": "string"
+                },
+                "error_origin": {
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "host_fixture": {
+                    "description": "HostFixture: the plan came from a fixture host adapter and describes\nnothing real.",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "installation_id": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "phase": {
+                    "type": "string"
+                },
+                "plan": {
+                    "$ref": "#/definitions/appliance.Plan"
+                },
+                "plan_expires_at": {
+                    "type": "string"
+                },
+                "plan_hash": {
+                    "description": "PlanHash and Plan are present only for callers permitted to run this\ntype of operation; Redacted is true when they were withheld.",
+                    "type": "string"
+                },
+                "reconciliation": {
+                    "type": "string"
+                },
+                "redacted": {
+                    "type": "boolean"
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "requires_reauthentication": {
+                    "type": "boolean"
+                },
+                "schema_version": {
+                    "type": "string"
+                },
+                "state": {
+                    "$ref": "#/definitions/appliance.OperationState"
+                },
+                "submitted_at": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/appliance.OperationType"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.OperationList": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/appliance.Operation"
+                    }
+                },
+                "next_cursor": {
+                    "description": "NextCursor is passed back as `cursor` for the next page; absent on the\nlast one.",
+                    "type": "string"
+                },
+                "schema_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.OperationState": {
+            "type": "string",
+            "enum": [
+                "PLANNED",
+                "AWAITING_AUTHORIZATION",
+                "QUEUED",
+                "RUNNING",
+                "VERIFYING",
+                "SUCCEEDED",
+                "FAILED",
+                "COMPENSATING",
+                "ROLLED_BACK",
+                "RECOVERY_REQUIRED",
+                "CANCELLED"
+            ],
+            "x-enum-varnames": [
+                "StatePlanned",
+                "StateAwaitingAuthorization",
+                "StateQueued",
+                "StateRunning",
+                "StateVerifying",
+                "StateSucceeded",
+                "StateFailed",
+                "StateCompensating",
+                "StateRolledBack",
+                "StateRecoveryRequired",
+                "StateCancelled"
+            ]
+        },
+        "appliance.OperationType": {
+            "type": "string",
+            "enum": [
+                "backup",
+                "restore",
+                "update",
+                "rollback",
+                "reset"
+            ],
+            "x-enum-varnames": [
+                "OperationBackup",
+                "OperationRestore",
+                "OperationUpdate",
+                "OperationRollback",
+                "OperationReset"
+            ]
+        },
+        "appliance.Plan": {
+            "type": "object",
+            "properties": {
+                "affected_resources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "archive_digest": {
+                    "type": "string"
+                },
+                "compatibility": {
+                    "type": "string"
+                },
+                "current_release_digest": {
+                    "type": "string"
+                },
+                "irreversible_after_phase": {
+                    "description": "IrreversibleAfterPhase is the phase after which cancellation is refused.",
+                    "type": "string"
+                },
+                "target_release_digest": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.PlanRequest": {
+            "type": "object",
+            "properties": {
+                "archive_ref": {
+                    "description": "ArchiveRef names a backup archive the host has admitted. Required for\nrestore, refused otherwise.",
+                    "type": "string"
+                },
+                "note": {
+                    "description": "Note is free text for the audit trail.",
+                    "type": "string"
+                },
+                "schema_version": {
+                    "type": "string"
+                },
+                "target_release_ref": {
+                    "description": "TargetReleaseRef names a release the host has admitted. Required for\nupdate, refused otherwise.",
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/appliance.OperationType"
                 }
             }
         },

@@ -149,12 +149,12 @@ jobs:
           echo "schema_migrations: $got"
           test "$got" = "1:true"
 
-      - name: Migration tests (PostgreSQL)
+      - name: Database-backed package tests (PostgreSQL)
         # Runs after the server checks: these create and drop scratch databases
         # on the same PostgreSQL service and skip without OAM_TEST_DATABASE_URL.
         env:
           OAM_TEST_DATABASE_URL: postgres://oamuser:oampass@127.0.0.1:5432/loxioam?sslmode=disable
-        run: go test -count=1 -race -v ./internal/migrate/...
+        run: go test -count=1 -race -v ./internal/migrate/... ./internal/appliance/...
 
       - name: Server log (on failure)
         if: failure()

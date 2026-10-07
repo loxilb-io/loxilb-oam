@@ -8,9 +8,13 @@
 package hostfixture
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,6 +62,7 @@ func (h *Host) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/capabilities", h.capabilities)
 	mux.HandleFunc("GET /v1/identity", h.identity)
+	mux.HandleFunc("POST /v1/plans", h.plan)
 	return h.authenticated(mux)
 }
 
@@ -72,6 +77,7 @@ func (h *Host) authenticated(next http.Handler) http.Handler {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		next.ServeHTTP(w, r)
 	})
 }
@@ -101,14 +107,94 @@ func (h *Host) capabilities(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Host) identity(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, appliance.HostIdentity{
-		InstallationID: "FIXTURE-INSTALLATION",
+		InstallationID: fixtureInstallationID,
 		Model:          "fixture",
 		ReleaseVersion: "0.0.0-fixture",
-		ReleaseDigest:  "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		ReleaseDigest:  fixtureReleaseDigest,
 		Fixture:        true,
 		Components: []appliance.HostComponent{
 			{Name: "host-adapter", Version: "0.0.0-fixture", Liveness: appliance.LivenessAlive, Readiness: appliance.ReadinessReady},
 		},
 		ObservedAt: h.now().UTC(),
+	})
+}
+
+// Fixture identity, shared by /v1/identity and plans.
+const (
+	fixtureInstallationID = "FIXTURE-INSTALLATION"
+	fixtureReleaseDigest  = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+)
+
+// RefMissing is a reference the fixture always rejects, to exercise the
+// "host says no" path: an archive_ref or target_release_ref with this value
+// does not exist.
+const RefMissing = "missing"
+
+func reject(w http.ResponseWriter, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	json.NewEncoder(w).Encode(appliance.HostRejection{Code: code, Message: message}) // an encode error means the peer hung up
+}
+
+func fakeDigest(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// plan validates a request the way an adapter would, against an invented
+// installation. Nothing is executed and nothing is remembered.
+func (h *Host) plan(w http.ResponseWriter, r *http.Request) {
+	var req appliance.HostPlanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "unreadable plan request", http.StatusBadRequest)
+		return
+	}
+	h.mu.Lock()
+	available := h.available[req.Type.Action()]
+	h.mu.Unlock()
+	switch {
+	case !req.Type.Valid() || !available:
+		reject(w, string(appliance.ReasonHostUnsupported), "this host adapter does not offer the operation")
+		return
+	case req.ArchiveRef == RefMissing:
+		reject(w, "ARCHIVE_NOT_FOUND", "no admitted archive has that reference")
+		return
+	case req.TargetReleaseRef == RefMissing:
+		reject(w, "RELEASE_NOT_FOUND", "no admitted release has that reference")
+		return
+	}
+
+	plan := appliance.Plan{
+		CurrentReleaseDigest: fixtureReleaseDigest,
+		Compatibility:        "compatible",
+		AffectedResources:    []string{},
+	}
+	switch req.Type {
+	case appliance.OperationBackup:
+		plan.AffectedResources = []string{"oam-database", "gateway-config", "host-config"}
+	case appliance.OperationRestore:
+		plan.ArchiveDigest = fakeDigest("archive", req.ArchiveRef)
+		plan.IrreversibleAfterPhase = "stop-services"
+		plan.AffectedResources = []string{"oam-database", "gateway-config", "host-config", "sessions"}
+	case appliance.OperationUpdate:
+		plan.TargetReleaseDigest = fakeDigest("release", req.TargetReleaseRef)
+		plan.IrreversibleAfterPhase = "switch-slot"
+		plan.AffectedResources = []string{"release-slot", "oam-database"}
+	case appliance.OperationRollback:
+		plan.TargetReleaseDigest = fakeDigest("release", "previous")
+		plan.IrreversibleAfterPhase = "switch-slot"
+		plan.AffectedResources = []string{"release-slot", "oam-database"}
+	case appliance.OperationReset:
+		plan.IrreversibleAfterPhase = "wipe-state"
+		plan.AffectedResources = []string{"oam-database", "gateway-config", "host-config", "sessions", "backups"}
+	}
+	writeJSON(w, appliance.HostPlan{
+		// The hash covers what was asked and what it resolved to — not the
+		// operation ID, so the same request plans to the same hash.
+		PlanHash:       fakeDigest(string(req.Type), req.ArchiveRef, req.TargetReleaseRef, plan.ArchiveDigest, plan.TargetReleaseDigest, fixtureInstallationID),
+		InstallationID: fixtureInstallationID,
+		Model:          "fixture",
+		Fixture:        true,
+		Plan:           plan,
 	})
 }
