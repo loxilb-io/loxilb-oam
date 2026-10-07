@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/loxilb-io/loxilb-oam/internal/config"
 	"github.com/loxilb-io/loxilb-oam/internal/services"
@@ -19,6 +20,8 @@ import (
 // The UI authenticates via the Authorization header (not cookies), which
 // works in both modes.
 func CORSMiddleware() gin.HandlerFunc {
+	allowHeaders := strings.Join(corsAllowedRequestHeaders(), ", ")
+	exposeHeaders := strings.Join(corsExposedResponseHeaders, ", ")
 	return func(c *gin.Context) {
 		if config.CORSUsingWildcard() {
 			c.Header("Access-Control-Allow-Origin", "*")
@@ -33,12 +36,8 @@ func CORSMiddleware() gin.HandlerFunc {
 			}
 		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
-		// Cross-origin JavaScript can read only safelisted response headers
-		// unless they are exposed. The console runs cross-origin in
-		// development, and without this it never sees the error-origin
-		// marker and treats every Gateway 401 as its own session ending.
-		c.Header("Access-Control-Expose-Headers", services.ErrorOriginHeader)
+		c.Header("Access-Control-Allow-Headers", allowHeaders)
+		c.Header("Access-Control-Expose-Headers", exposeHeaders)
 
 		// Handle preflight request
 		if c.Request.Method == "OPTIONS" {
@@ -48,4 +47,28 @@ func CORSMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// corsExposedResponseHeaders are the response headers cross-origin JavaScript
+// may read. A browser hides every header that is not safelisted unless it is
+// exposed, so a console served from another origin sees none of these
+// otherwise: without the error-origin marker it treats every Gateway 401 as
+// its own session ending, and without Retry-After it cannot honour the wait a
+// 429 or a 503 asked for. Same-origin deployments are unaffected.
+var corsExposedResponseHeaders = []string{
+	services.ErrorOriginHeader,
+	"Retry-After",
+	"X-Request-Id",
+	"X-Correlation-Id",
+	"X-Snapshot-Checksum",
+	"X-Content-Checksum",
+	"Content-Disposition",
+}
+
+// corsAllowedRequestHeaders are the request headers a cross-origin console
+// may send: OAM's own, and every header the instance proxy forwards. Taking
+// the second set from the proxy keeps the two from drifting apart.
+func corsAllowedRequestHeaders() []string {
+	headers := []string{"Origin", "Authorization"}
+	return append(headers, services.GatewayRequestHeaders()...)
 }

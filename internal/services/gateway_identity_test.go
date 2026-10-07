@@ -240,7 +240,7 @@ func TestSnapshotGatewayClientUsesServiceIdentityForFetchAndRestore(t *testing.T
 
 	_, _, err := client.FetchSnapshot(instance)
 	require.NoError(t, err)
-	_, _, err = client.Restore(instance, []byte(`{"kind":"loxilb-snapshot"}`), RestoreModeDryRun, nil)
+	_, _, _, err = client.Restore(instance, []byte(`{"kind":"loxilb-snapshot"}`), RestoreModeDryRun, nil)
 	require.NoError(t, err)
 
 	require.Len(t, requests, 2)
@@ -248,6 +248,26 @@ func TestSnapshotGatewayClientUsesServiceIdentityForFetchAndRestore(t *testing.T
 	restore := requests[1]
 	assert.Equal(t, observedRequest{http.MethodGet, "/config/snapshot", "Bearer snapshot-service-token", ""}, fetch)
 	assert.Equal(t, observedRequest{http.MethodPost, "/config/restore?mode=dry-run", "Bearer snapshot-service-token", "application/json"}, restore)
+}
+
+// A gateway that refuses a snapshot because it is busy says when to come back;
+// the error that reaches the handler keeps that.
+func TestSnapshotGatewayClientKeepsRetryAfterOnARefusedFetch(t *testing.T) {
+	client := newHTTPGatewayClient(mustGatewayIdentity(t, GatewayAuthModeDisabled, ""))
+	client.take = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     http.Header{"Retry-After": []string{"5"}},
+			Body:       io.NopCloser(strings.NewReader("config gate is busy")),
+			Request:    req,
+		}, nil
+	})}
+
+	_, _, err := client.FetchSnapshot(&models.LoxiLBInstance{ApiEndpoint: "http://gateway.test"})
+	var gwErr *GatewayError
+	require.ErrorAs(t, err, &gwErr)
+	assert.Equal(t, http.StatusServiceUnavailable, gwErr.StatusCode)
+	assert.Equal(t, "5", gwErr.RetryAfter)
 }
 
 // The selection is one URL-encoded parameter, and it is left out entirely

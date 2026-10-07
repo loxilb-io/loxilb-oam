@@ -36,6 +36,7 @@ type gatewayOutcome struct {
 	status    int
 	forwarded int
 	path      string // the canonical path handed to the proxy handler
+	origin    string // the error-origin marker on the response
 }
 
 // gatewayProxyRequest sends one request through RequireGatewayAccess, with
@@ -77,6 +78,7 @@ func gatewayProxyRequest(t *testing.T, caller gatewayCaller, method, target stri
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(method, "/proxy"+target, nil))
 	outcome.status = recorder.Code
+	outcome.origin = recorder.Header().Get(services.ErrorOriginHeader)
 	return outcome
 }
 
@@ -270,4 +272,47 @@ func TestGatewayAccessRefusesMethodsTheProxyDoesNotForward(t *testing.T) {
 		assert.Equal(t, http.StatusMethodNotAllowed, got.status, method)
 		assert.Zero(t, got.forwarded, method)
 	}
+}
+
+// A refusal is OAM's answer and is marked as OAM's; a request that passes is
+// not marked here at all, since the proxy decides that from the instance's
+// answer.
+func TestGatewayAccessMarksItsRefusalsAsOAMs(t *testing.T) {
+	refusals := []struct {
+		caller gatewayCaller
+		method string
+		target string
+		status int
+	}{
+		{gatewayCaller{claimsRole: models.RoleAdmin}, http.MethodGet, "/v1/version", http.StatusUnauthorized},
+		{callerWithRole(models.RoleAdmin), http.MethodTrace, "/v1/version", http.StatusMethodNotAllowed},
+		{callerWithRole(models.RoleAdmin), http.MethodGet, "/lb/../version", http.StatusBadRequest},
+		{callerWithRole(models.RoleViewer), http.MethodPost, "/config/loadbalancer", forbidden},
+	}
+	for _, tc := range refusals {
+		got := gatewayProxyRequest(t, tc.caller, tc.method, tc.target)
+		assert.Equal(t, tc.status, got.status, "%s %s", tc.method, tc.target)
+		assert.Equal(t, services.ErrorOriginOAM, got.origin, "%s %s", tc.method, tc.target)
+	}
+
+	passed := gatewayProxyRequest(t, callerWithRole(models.RoleViewer), http.MethodGet, "/v1/version")
+	assert.Equal(t, ok, passed.status)
+	assert.Empty(t, passed.origin)
+}
+
+// OAM's own 429 carries the wait and says whose it is, so it cannot be taken
+// for an instance that is rate-limiting.
+func TestRateLimitRefusalIsMarkedAsOAMs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/x", middleware.RateLimit(middleware.NewRateLimiter(0.001, 1)), func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	var last *httptest.ResponseRecorder
+	for i := 0; i < 2; i++ {
+		last = httptest.NewRecorder()
+		router.ServeHTTP(last, httptest.NewRequest(http.MethodGet, "/x", nil))
+	}
+	assert.Equal(t, http.StatusTooManyRequests, last.Code)
+	assert.Equal(t, "1", last.Header().Get("Retry-After"))
+	assert.Equal(t, services.ErrorOriginOAM, last.Header().Get(services.ErrorOriginHeader))
 }

@@ -166,20 +166,24 @@ const CtxGatewayPath = "gateway_path"
 // refusal is OAM's own answer: nothing has been sent to the Gateway.
 func RequireGatewayAccess(userService *services.UserService) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Every refusal below is OAM's own answer, and says so.
 		user := resolveCaller(c, userService)
 		if user == nil {
+			services.MarkOAMOrigin(c)
 			utils.LogError("RBAC: could not resolve caller for the gateway proxy")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			c.Abort()
 			return
 		}
 		if !services.GatewayMethodAllowed(c.Request.Method) {
+			services.MarkOAMOrigin(c)
 			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed through the gateway proxy"})
 			c.Abort()
 			return
 		}
 		path, err := services.CanonicalGatewayPath(c.Param("path"), c.Request.URL.EscapedPath())
 		if err != nil {
+			services.MarkOAMOrigin(c)
 			utils.LogWarning("RBAC: user '" + user.Username + "' sent a gateway path the proxy does not forward")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid gateway path"})
 			c.Abort()
@@ -196,6 +200,7 @@ func RequireGatewayAccess(userService *services.UserService) gin.HandlerFunc {
 			allowed = Can(user.Role, ActGatewayAdmin)
 		}
 		if !allowed {
+			services.MarkOAMOrigin(c)
 			utils.LogWarning("RBAC: user '" + user.Username + "' (role " + user.Role + ") denied " + c.Request.Method + " " + path.String() + " through the gateway proxy")
 			c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: your role does not permit this operation"})
 			c.Abort()

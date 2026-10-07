@@ -1539,6 +1539,7 @@ func (h *Handler) ProxyToLoxiLB(c *gin.Context) {
 	instanceID, err := strconv.Atoi(instanceIDStr)
 	if err != nil {
 		utils.LogError("Invalid LoxiLB instance ID: " + instanceIDStr)
+		services.MarkOAMOrigin(c)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid LoxiLB instance ID"})
 		return
 	}
@@ -1550,6 +1551,7 @@ func (h *Handler) ProxyToLoxiLB(c *gin.Context) {
 	targetPath, ok := pathValue.(services.GatewayPath)
 	if !ok {
 		utils.LogError("Proxy request reached the handler without an authorized gateway path")
+		services.MarkOAMOrigin(c)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Proxy request failed"})
 		return
 	}
@@ -1560,6 +1562,9 @@ func (h *Handler) ProxyToLoxiLB(c *gin.Context) {
 		// Classification is by error identity, not by error prose; see
 		// classifyProxyError for why the previous string matching was wrong.
 		status, message, detail := classifyProxyError(err)
+		// The instance never answered, or was never asked: this failure is
+		// OAM's, and is marked so rather than left to be inferred.
+		services.MarkOAMOrigin(c)
 		c.JSON(status, proxyErrorBody(message, detail))
 		return
 	}

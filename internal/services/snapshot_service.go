@@ -62,6 +62,9 @@ var (
 type GatewayError struct {
 	StatusCode int
 	Body       string
+	// RetryAfter is the gateway's Retry-After header, when it sent one (for
+	// example while a restore holds its configuration gate).
+	RetryAfter string
 }
 
 func (e *GatewayError) Error() string {
@@ -80,8 +83,9 @@ type SnapshotGatewayClient interface {
 	// Restore POSTs the raw document to {api_endpoint}/config/restore?mode=…
 	// and returns the gateway's status code and raw response body. A
 	// non-empty components limits the restore to those domains; empty
-	// restores everything the document covers.
-	Restore(instance *models.LoxiLBInstance, doc []byte, mode string, components []string) (int, []byte, error)
+	// restores everything the document covers. The response headers are
+	// returned for the few OAM relays (Retry-After).
+	Restore(instance *models.LoxiLBInstance, doc []byte, mode string, components []string) (int, http.Header, []byte, error)
 }
 
 // httpGatewayClient is the production SnapshotGatewayClient.
@@ -132,31 +136,31 @@ func (g *httpGatewayClient) FetchSnapshot(instance *models.LoxiLBInstance) ([]by
 		return nil, nil, &GatewayError{Body: fmt.Sprintf("reading gateway response: %v", err)}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, &GatewayError{StatusCode: resp.StatusCode, Body: string(body)}
+		return nil, nil, &GatewayError{StatusCode: resp.StatusCode, Body: string(body), RetryAfter: resp.Header.Get("Retry-After")}
 	}
 	return body, resp.Header, nil
 }
 
-func (g *httpGatewayClient) Restore(instance *models.LoxiLBInstance, doc []byte, mode string, components []string) (int, []byte, error) {
+func (g *httpGatewayClient) Restore(instance *models.LoxiLBInstance, doc []byte, mode string, components []string) (int, http.Header, []byte, error) {
 	url := gatewayBaseURL(instance) + "/config/restore?" + restoreQuery(mode, components)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(doc))
 	if err != nil {
-		return 0, nil, &GatewayError{Body: fmt.Sprintf("creating gateway request: %v", err)}
+		return 0, nil, nil, &GatewayError{Body: fmt.Sprintf("creating gateway request: %v", err)}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if err := g.identity.Authorize(req); err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	resp, err := g.restore.Do(req)
 	if err != nil {
-		return 0, nil, &GatewayError{Body: err.Error()}
+		return 0, nil, nil, &GatewayError{Body: err.Error()}
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxSnapshotBytes))
 	if err != nil {
-		return 0, nil, &GatewayError{Body: fmt.Sprintf("reading gateway response: %v", err)}
+		return 0, nil, nil, &GatewayError{Body: fmt.Sprintf("reading gateway response: %v", err)}
 	}
-	return resp.StatusCode, body, nil
+	return resp.StatusCode, resp.Header, body, nil
 }
 
 // restoreQuery encodes the gateway's restore parameters. The gateway reads an
@@ -759,7 +763,7 @@ func (s *SnapshotService) RestoreSnapshot(id string, req models.RestoreSnapshotR
 		}
 		outcome.PreRestoreSnapshotID = pre.ID
 	}
-	status, body, err := s.gateway.Restore(target, raw, mode, req.Components)
+	status, header, body, err := s.gateway.Restore(target, raw, mode, req.Components)
 	if err != nil {
 		if mode == RestoreModeCommit {
 			s.recordRestore(id, nil, fmt.Sprintf(`{"error":%q}`, err.Error()), req.Components)
@@ -767,6 +771,7 @@ func (s *SnapshotService) RestoreSnapshot(id string, req models.RestoreSnapshotR
 		return nil, err
 	}
 	outcome.GatewayStatus = status
+	outcome.GatewayRetryAfter = header.Get("Retry-After")
 	if json.Valid(body) {
 		outcome.GatewayResponse = json.RawMessage(body)
 	} else {

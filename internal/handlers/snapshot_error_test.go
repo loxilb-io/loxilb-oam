@@ -70,16 +70,34 @@ func TestSnapshotErrorStatuses(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, status)
 }
 
-// OAM's own failures must stay unmarked: marking them "gateway" would keep a
-// console signed in on a session OAM itself has ended.
-func TestSnapshotErrorLeavesOAMFailuresUnmarked(t *testing.T) {
+// OAM's own failures are marked as OAM's, never as the Gateway's: marking
+// them "gateway" would keep a console signed in on a session OAM itself has
+// ended. An unreachable Gateway is OAM's report, not the Gateway's answer.
+func TestSnapshotErrorMarksOAMFailuresAsOAMs(t *testing.T) {
 	for _, err := range []error{
 		services.ErrSnapshotNotFound,
 		services.ErrSnapshotPinned,
+		services.ErrInvalidRestoreRequest,
+		services.ErrGatewayServiceIdentityUnavailable,
 		errors.New("database is down"),
 		&services.GatewayError{Body: "connection refused"},
 	} {
 		recorder := writeSnapshotErrorFor(err)
-		assert.Empty(t, recorder.Header().Get(services.ErrorOriginHeader), "%v", err)
+		assert.Equal(t, services.ErrorOriginOAM, recorder.Header().Get(services.ErrorOriginHeader), "%v", err)
 	}
+}
+
+// A Gateway that is busy says when to come back. Taking a snapshot while a
+// restore holds its configuration gate must pass that on, with the Gateway's
+// status, body and origin unchanged.
+func TestSnapshotErrorRelaysTheGatewaysRetryAfter(t *testing.T) {
+	body := `{"code":503,"message":"config gate is busy"}`
+	recorder := writeSnapshotErrorFor(&services.GatewayError{StatusCode: http.StatusServiceUnavailable, Body: body, RetryAfter: "5"})
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Equal(t, "5", recorder.Header().Get("Retry-After"))
+	assert.Equal(t, services.ErrorOriginGateway, recorder.Header().Get(services.ErrorOriginHeader))
+	assert.JSONEq(t, body, recorder.Body.String())
+
+	without := writeSnapshotErrorFor(&services.GatewayError{StatusCode: http.StatusServiceUnavailable, Body: body})
+	assert.Empty(t, without.Header().Get("Retry-After"))
 }

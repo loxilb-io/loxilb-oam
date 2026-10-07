@@ -100,14 +100,17 @@ type RestoreSnapshotRequest struct {
 // RestoreOutcome is OAM's envelope around the gateway's restore response.
 // GatewayResponse is the gateway's response body verbatim — no rewording.
 type RestoreOutcome struct {
-	SnapshotID           string          `json:"snapshot_id"`
-	InstanceID           int             `json:"instance_id"` // restore target
-	Mode                 string          `json:"mode"`
-	CrossInstance        bool            `json:"cross_instance,omitempty"`
-	Components           []string        `json:"components,omitempty"` // the selection sent to the gateway; absent = whole document
-	PreRestoreSnapshotID string          `json:"pre_restore_snapshot_id,omitempty"`
-	GatewayStatus        int             `json:"gateway_status"`
-	GatewayResponse      json.RawMessage `json:"gateway_response" swaggertype:"object"`
+	SnapshotID           string   `json:"snapshot_id"`
+	InstanceID           int      `json:"instance_id"` // restore target
+	Mode                 string   `json:"mode"`
+	CrossInstance        bool     `json:"cross_instance,omitempty"`
+	Components           []string `json:"components,omitempty"` // the selection sent to the gateway; absent = whole document
+	PreRestoreSnapshotID string   `json:"pre_restore_snapshot_id,omitempty"`
+	GatewayStatus        int      `json:"gateway_status"`
+	// GatewayRetryAfter is the gateway's Retry-After header, when it sent
+	// one; the handler relays it as the response's own Retry-After.
+	GatewayRetryAfter string          `json:"gateway_retry_after,omitempty"`
+	GatewayResponse   json.RawMessage `json:"gateway_response" swaggertype:"object"`
 }
 
 // SnapshotScheduleRequest is the body of PUT /oam/instances/:id/snapshot-schedule.

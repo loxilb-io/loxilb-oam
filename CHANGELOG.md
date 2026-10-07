@@ -20,6 +20,10 @@ image's `org.opencontainers.image.version` label.
 ## [Unreleased]
 
 ### Added
+- Failures OAM itself produces on the instance proxy and the snapshot routes
+  (refusals, the rate limit, an instance that could not be reached) carry
+  `X-Loxi-Error-Origin: oam`. A client no longer has to read a missing marker
+  as "OAM".
 - A snapshot restore can be limited to chosen domains.
   `POST /oam/snapshots/{sid}/restore` takes `components`, a list of snapshot
   domain names (for example `["auditsink"]`); the gateway replaces those
@@ -171,6 +175,20 @@ image's `org.opencontainers.image.version` label.
   a handshake is not measurable against a 60s take or a 5-minute restore.
 
 ### Fixed
+- A console served from another origin could not read `Retry-After`,
+  `X-Request-Id`, `X-Correlation-Id`, `X-Snapshot-Checksum`,
+  `X-Content-Checksum` or `Content-Disposition`, because CORS exposed only the
+  error-origin marker; and could not send `If-Match`, `If-None-Match`,
+  `X-Request-Id` or `X-Correlation-Id`, which the instance proxy forwards.
+  The exposed list now includes the former and the allowed list every header
+  the proxy forwards. Same-origin deployments were not affected.
+- The instance proxy did not pass the caller's request context to the
+  instance, so a client that disconnected left the call running until the
+  proxy timeout. The call now stops with the caller. Snapshot take and restore
+  are deliberately not tied to the caller.
+- A gateway's `Retry-After` was dropped on snapshot take and restore. It is
+  relayed on a refused take, and on a restore as the response's `Retry-After`
+  header and `gateway_retry_after`.
 - Snapshot restore answered `500` when OAM's gateway service identity was
   unavailable, where the instance proxy answers `503` for the same condition;
   it now answers `503`. An invalid restore `mode` was reported as "invalid

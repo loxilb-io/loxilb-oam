@@ -236,6 +236,8 @@ func TestProxyToLoxiLBEndToEndClassification(t *testing.T) {
 				httptest.NewRequest(http.MethodGet, "/oam/loxilbs/1/netlox/v1/config/meta", nil))
 
 			assert.Equal(t, tc.wantStatus, recorder.Code)
+			assert.Equal(t, services.ErrorOriginOAM, recorder.Header().Get(services.ErrorOriginHeader),
+				"the instance did not answer, so the failure is OAM's")
 
 			var body map[string]any
 			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
