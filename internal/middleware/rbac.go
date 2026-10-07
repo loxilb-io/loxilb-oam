@@ -25,7 +25,8 @@ type Action string
 const (
 	ActUserAdmin     Action = "user_admin"     // user management (list/create/delete users, change roles)
 	ActInstanceWrite Action = "instance_write" // create/update/delete loxilb instances, firmware ops
-	ActGatewayWrite  Action = "gateway_write"  // mutating methods through the gateway proxy
+	ActGatewayWrite  Action = "gateway_write"  // day-to-day changes, and operator-level reads, through the gateway proxy
+	ActGatewayAdmin  Action = "gateway_admin"  // gateway paths the proxy reserves for administrators
 	ActConfigWrite   Action = "config_write"   // configuration export/import
 	ActAlertWrite    Action = "alert_write"    // create/acknowledge alerts
 	ActLogRead       Action = "log_read"       // read the server log and its archives
@@ -55,6 +56,7 @@ var roleCapabilities = map[string]map[Action]bool{
 		ActUserAdmin:     true,
 		ActInstanceWrite: true,
 		ActGatewayWrite:  true,
+		ActGatewayAdmin:  true,
 		ActConfigWrite:   true,
 		ActAlertWrite:    true,
 		ActLogRead:       true,
@@ -150,17 +152,56 @@ func RequireCapability(userService *services.UserService, action Action) gin.Han
 	}
 }
 
-// RequireGatewayCapability gates the loxilb gateway proxy by HTTP method:
-// safe methods pass on authentication alone; mutating methods require
-// the gateway_write capability (admin/operator — viewer is read-only).
-func RequireGatewayCapability(userService *services.UserService) gin.HandlerFunc {
-	writeCheck := RequireCapability(userService, ActGatewayWrite)
+// CtxGatewayPath is where RequireGatewayAccess leaves the canonical Gateway
+// path it authorized, for the proxy handler to forward.
+const CtxGatewayPath = "gateway_path"
+
+// RequireGatewayAccess gates the loxilb gateway proxy by method and Gateway
+// path. The proxy speaks to the Gateway with OAM's own identity, which the
+// Gateway treats as an administrator, so this is the only place an OAM role
+// is held to less than that.
+//
+// The caller is resolved from the database for every method, reads included,
+// so a deleted user or a changed role takes effect on the next request. A
+// refusal is OAM's own answer: nothing has been sent to the Gateway.
+func RequireGatewayAccess(userService *services.UserService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		switch c.Request.Method {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-			c.Next()
+		user := resolveCaller(c, userService)
+		if user == nil {
+			utils.LogError("RBAC: could not resolve caller for the gateway proxy")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			c.Abort()
 			return
 		}
-		writeCheck(c)
+		if !services.GatewayMethodAllowed(c.Request.Method) {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed through the gateway proxy"})
+			c.Abort()
+			return
+		}
+		path, err := services.CanonicalGatewayPath(c.Param("path"), c.Request.URL.EscapedPath())
+		if err != nil {
+			utils.LogWarning("RBAC: user '" + user.Username + "' sent a gateway path the proxy does not forward")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid gateway path"})
+			c.Abort()
+			return
+		}
+
+		allowed := false
+		switch services.ClassifyGatewayRequest(c.Request.Method, path) {
+		case services.GatewayAccessAuthenticated:
+			allowed = true
+		case services.GatewayAccessOperator:
+			allowed = Can(user.Role, ActGatewayWrite)
+		case services.GatewayAccessAdmin:
+			allowed = Can(user.Role, ActGatewayAdmin)
+		}
+		if !allowed {
+			utils.LogWarning("RBAC: user '" + user.Username + "' (role " + user.Role + ") denied " + c.Request.Method + " " + path.String() + " through the gateway proxy")
+			c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: your role does not permit this operation"})
+			c.Abort()
+			return
+		}
+		c.Set(CtxGatewayPath, path)
+		c.Next()
 	}
 }

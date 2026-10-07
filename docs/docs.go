@@ -1401,7 +1401,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Forwards HTTP requests to the specified LoxiLB instance",
+                "description": "Forwards HTTP requests to the specified LoxiLB instance. Authorization depends on the method and on the Gateway path: see docs/proxy-functionality.md. A path with dot segments, empty segments or an encoded separator is refused with 400.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1459,6 +1459,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "405": {
+                        "description": "The proxy does not forward this method",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -1501,7 +1507,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Forwards HTTP requests to the specified LoxiLB instance",
+                "description": "Forwards HTTP requests to the specified LoxiLB instance. Authorization depends on the method and on the Gateway path: see docs/proxy-functionality.md. A path with dot segments, empty segments or an encoded separator is refused with 400.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1559,6 +1565,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "405": {
+                        "description": "The proxy does not forward this method",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -1601,7 +1613,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Forwards HTTP requests to the specified LoxiLB instance",
+                "description": "Forwards HTTP requests to the specified LoxiLB instance. Authorization depends on the method and on the Gateway path: see docs/proxy-functionality.md. A path with dot segments, empty segments or an encoded separator is refused with 400.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1659,6 +1671,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "405": {
+                        "description": "The proxy does not forward this method",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -1701,7 +1719,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Forwards HTTP requests to the specified LoxiLB instance",
+                "description": "Forwards HTTP requests to the specified LoxiLB instance. Authorization depends on the method and on the Gateway path: see docs/proxy-functionality.md. A path with dot segments, empty segments or an encoded separator is refused with 400.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1759,6 +1777,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "405": {
+                        "description": "The proxy does not forward this method",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
@@ -1801,7 +1825,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Forwards HTTP requests to the specified LoxiLB instance",
+                "description": "Forwards HTTP requests to the specified LoxiLB instance. Authorization depends on the method and on the Gateway path: see docs/proxy-functionality.md. A path with dot segments, empty segments or an encoded separator is refused with 400.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1859,6 +1883,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
+                    },
+                    "405": {
+                        "description": "The proxy does not forward this method",
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
