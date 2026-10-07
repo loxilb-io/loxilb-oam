@@ -160,6 +160,26 @@ const (
 	// CodePlanRejected is the fallback when the host adapter refuses a plan
 	// without a usable code of its own.
 	CodePlanRejected = "PLAN_REJECTED"
+
+	CodeOperationConflict        = "OPERATION_CONFLICT"
+	CodeOperationStateInvalid    = "OPERATION_STATE_INVALID"
+	CodeOperationNotCancellable  = "OPERATION_NOT_CANCELLABLE"
+	CodePlanStale                = "PLAN_STALE"
+	CodeAuthorizationNotRequired = "AUTHORIZATION_NOT_REQUIRED"
+	CodeReauthenticationRequired = "REAUTHENTICATION_REQUIRED"
+	CodeReauthenticationFailed   = "REAUTHENTICATION_FAILED"
+	CodeTooManyAttempts          = "TOO_MANY_ATTEMPTS"
+	CodeChallengeRequired        = "CHALLENGE_REQUIRED"
+	CodeChallengeMismatch        = "CHALLENGE_MISMATCH"
+	CodeChallengeConsumed        = "CHALLENGE_CONSUMED"
+	CodeChallengeExpired         = "CHALLENGE_EXPIRED"
+	CodeCancelledByUser          = "CANCELLED_BY_USER"
+	// CodeHostJobLost: the host journal no longer knows an operation it had
+	// reported on. Nothing is resubmitted; an operator has to look.
+	CodeHostJobLost = "HOST_JOB_LOST"
+	// CodeSubmitRejected is the fallback when the host adapter refuses a
+	// submit without a usable code of its own.
+	CodeSubmitRejected = "SUBMIT_REJECTED"
 )
 
 // Recovery actions a client may offer. A closed list.
@@ -168,12 +188,15 @@ const (
 	RecoveryReauthenticate = "REAUTHENTICATE"
 	RecoveryContactSupport = "CONTACT_SUPPORT"
 	RecoveryReplan         = "REPLAN"
+	RecoveryWait           = "WAIT_FOR_OPERATION"
 	RecoveryNone           = "NONE"
 )
 
 // Recovery tells the client what, if anything, can be done about an error.
 type Recovery struct {
 	Action string `json:"action"`
+	// OperationID names the operation to wait for, with WAIT_FOR_OPERATION.
+	OperationID string `json:"operation_id,omitempty"`
 }
 
 // ErrorBody is the error envelope of the appliance endpoints. Error keeps the

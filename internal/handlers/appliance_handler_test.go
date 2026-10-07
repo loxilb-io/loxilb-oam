@@ -47,6 +47,10 @@ func applianceRouter(t *testing.T, role string, found bool) *gin.Engine {
 	r.GET("/oam/v1/appliance/capabilities", h.Require(middleware.ActApplianceRead), h.GetCapabilities)
 	r.GET("/oam/v1/appliance/restricted", h.Require(middleware.ActApplianceReset), func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	r.POST("/oam/v1/appliance/operations", h.Require(middleware.ActApplianceRead), h.PlanOperation)
+	r.POST("/oam/v1/appliance/operations/:operation_id/authorize", h.Require(middleware.ActApplianceRead), h.AuthorizeOperation)
+	r.POST("/oam/v1/appliance/operations/:operation_id/submit", h.Require(middleware.ActApplianceRead), h.SubmitOperation)
+	r.POST("/oam/v1/appliance/operations/:operation_id/cancel", h.Require(middleware.ActApplianceRead), h.CancelOperation)
+	r.POST("/oam/v1/appliance/operations/:operation_id/reconcile", h.Require(middleware.ActApplianceRead), h.ReconcileOperation)
 	return r
 }
 
@@ -120,7 +124,11 @@ func TestApplianceRequestIDIsSanitized(t *testing.T) {
 }
 
 func postPlan(r http.Handler, body string, headers map[string]string) (*httptest.ResponseRecorder, appliance.ErrorBody) {
-	req := httptest.NewRequest(http.MethodPost, "/oam/v1/appliance/operations", strings.NewReader(body))
+	return post(r, "/oam/v1/appliance/operations", body, headers)
+}
+
+func post(r http.Handler, path, body string, headers map[string]string) (*httptest.ResponseRecorder, appliance.ErrorBody) {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -164,6 +172,47 @@ func TestPlanOperationRejectsBadRequests(t *testing.T) {
 			assert.Equal(t, tc.code, envelope.Code)
 			assert.Equal(t, appliance.OriginOAM, envelope.Origin)
 			assert.NotEmpty(t, envelope.RequestID)
+		})
+	}
+}
+
+// Requests on an operation that are refused before the database is asked
+// about it. (The lifecycle itself is covered against PostgreSQL in
+// internal/appliance, and over HTTP by the end-to-end run.)
+func TestOperationActionsRejectBadRequests(t *testing.T) {
+	const operations = "/oam/v1/appliance/operations/"
+	wellFormed := operations + "018f2f6e-7b1a-7c3d-9e4f-0123456789ab"
+	malformed := operations + "not-an-operation"
+
+	cases := []struct {
+		name   string
+		path   string
+		body   string
+		status int
+		code   string
+	}{
+		{"authorize: malformed JSON", wellFormed + "/authorize", `{`, http.StatusBadRequest, appliance.CodeInvalidRequest},
+		{"authorize: no password", wellFormed + "/authorize", `{}`, http.StatusBadRequest, appliance.CodeInvalidRequest},
+		{"authorize: unknown field", wellFormed + "/authorize", `{"password":"x","remember":true}`, http.StatusBadRequest, appliance.CodeInvalidRequest},
+		{"authorize: malformed ID", malformed + "/authorize", `{"password":"x"}`, http.StatusNotFound, appliance.CodeOperationNotFound},
+		{"submit: malformed JSON", wellFormed + "/submit", `plan`, http.StatusBadRequest, appliance.CodeInvalidRequest},
+		{"submit: no plan_hash", wellFormed + "/submit", `{"challenge":"x"}`, http.StatusBadRequest, appliance.CodeInvalidRequest},
+		{"submit: malformed ID", malformed + "/submit", `{"plan_hash":"x"}`, http.StatusNotFound, appliance.CodeOperationNotFound},
+		{"cancel: malformed ID", malformed + "/cancel", ``, http.StatusNotFound, appliance.CodeOperationNotFound},
+		{"reconcile: malformed ID", malformed + "/reconcile", ``, http.StatusNotFound, appliance.CodeOperationNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, envelope := post(applianceRouter(t, models.RoleAdmin, true), tc.path, tc.body, nil)
+			assert.Equal(t, tc.status, rec.Code)
+			assert.Equal(t, tc.code, envelope.Code)
+			assert.Equal(t, appliance.OriginOAM, envelope.Origin)
+			assert.NotEmpty(t, envelope.RequestID)
+			if strings.HasPrefix(tc.path, wellFormed) {
+				assert.Equal(t, "018f2f6e-7b1a-7c3d-9e4f-0123456789ab", envelope.OperationID, "the envelope names the operation")
+			} else {
+				assert.Empty(t, envelope.OperationID, "a malformed ID is not echoed")
+			}
 		})
 	}
 }

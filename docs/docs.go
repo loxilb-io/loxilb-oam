@@ -2871,6 +2871,320 @@ const docTemplate = `{
                 }
             }
         },
+        "/oam/v1/appliance/operations/{operation_id}/authorize": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Verifies the caller's current password and returns a one-use challenge for submitting this operation. The challenge is bound to the operation, its plan, the installation, the caller and the caller's session; it expires after 5 minutes or with the plan, whichever is sooner, and authorizing again replaces it. The operation moves to AWAITING_AUTHORIZATION and occupies the installation until it is submitted, cancelled or expires. Failed passwords count toward the same lockout as failed logins. Operations that do not require reauthentication (backup) are refused with AUTHORIZATION_NOT_REQUIRED.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "appliance"
+                ],
+                "summary": "Authorize a destructive Appliance operation (alpha)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Operation ID",
+                        "name": "operation_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The caller's current password",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/appliance.AuthorizeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.Challenge"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "REAUTHENTICATION_FAILED: wrong password",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "PERMISSION_DENIED, or REAUTHENTICATION_REQUIRED for a session that predates session identifiers",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "OPERATION_CONFLICT, OPERATION_STATE_INVALID or AUTHORIZATION_NOT_REQUIRED",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "410": {
+                        "description": "PLAN_EXPIRED",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_ATTEMPTS",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/oam/v1/appliance/operations/{operation_id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Before submission cancelling always succeeds. After, the host adapter decides: it refuses once the operation has passed its irreversible phase (` + "`" + `cancellable` + "`" + ` false). Cancelling a cancelled operation returns it unchanged.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "appliance"
+                ],
+                "summary": "Cancel an Appliance operation (alpha)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Operation ID",
+                        "name": "operation_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.Operation"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "OPERATION_NOT_CANCELLABLE or OPERATION_STATE_INVALID",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "502": {
+                        "description": "The host adapter did not answer",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/oam/v1/appliance/operations/{operation_id}/reconcile": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "OAM follows submitted operations on its own; this asks it to read the host adapter's journal for one operation now and returns the result. It never causes anything to be executed twice. If the adapter does not answer, the operation is returned as last known with ` + "`" + `stale` + "`" + ` true.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "appliance"
+                ],
+                "summary": "Re-read an Appliance operation from the host adapter (alpha)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Operation ID",
+                        "name": "operation_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.Operation"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/oam/v1/appliance/operations/{operation_id}/submit": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hands a planned operation to the host adapter. ` + "`" + `plan_hash` + "`" + ` must be the plan the caller reviewed. An operation that requires reauthentication must have been authorized and must present its challenge, which is consumed. Only one operation can be active per installation. The answer is 202 with the operation as it stands; follow it with GET. Submitting an operation that was already submitted returns it unchanged. If the host adapter could not be reached the operation stays QUEUED with ` + "`" + `stale` + "`" + ` true and OAM delivers it when the adapter answers; it is never executed twice.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "appliance"
+                ],
+                "summary": "Submit an Appliance operation for execution (alpha)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Operation ID",
+                        "name": "operation_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The plan being submitted and, when required, its challenge",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/appliance.SubmitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.Operation"
+                        }
+                    },
+                    "400": {
+                        "description": "INVALID_REQUEST or CHALLENGE_REQUIRED",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "PERMISSION_DENIED, CHALLENGE_MISMATCH or REAUTHENTICATION_REQUIRED",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "409": {
+                        "description": "OPERATION_CONFLICT, OPERATION_STATE_INVALID, PLAN_STALE or CHALLENGE_CONSUMED",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "410": {
+                        "description": "PLAN_EXPIRED or CHALLENGE_EXPIRED",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
         "/oam/v1/appliance/status": {
             "get": {
                 "security": [
@@ -2970,6 +3284,15 @@ const docTemplate = `{
                 }
             }
         },
+        "appliance.AuthorizeRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "description": "Password is the caller's current password. It is verified and\ndiscarded; it is never stored or logged.",
+                    "type": "string"
+                }
+            }
+        },
         "appliance.Capabilities": {
             "type": "object",
             "properties": {
@@ -2996,6 +3319,23 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "schema_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.Challenge": {
+            "type": "object",
+            "properties": {
+                "challenge": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "operation_id": {
+                    "type": "string"
+                },
+                "plan_hash": {
                     "type": "string"
                 }
             }
@@ -3074,6 +3414,10 @@ const docTemplate = `{
                 "actor": {
                     "type": "string"
                 },
+                "cancellable": {
+                    "description": "Cancellable: a cancel request would be accepted now. Decided by OAM\nbefore submission and by the host adapter after.",
+                    "type": "boolean"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -3089,6 +3433,10 @@ const docTemplate = `{
                 "host_fixture": {
                     "description": "HostFixture: the plan came from a fixture host adapter and describes\nnothing real.",
                     "type": "boolean"
+                },
+                "host_generation": {
+                    "description": "HostGeneration is the host journal generation this operation reflects;\n0 until the host has reported on it.",
+                    "type": "integer"
                 },
                 "id": {
                     "type": "string"
@@ -3129,6 +3477,10 @@ const docTemplate = `{
                 },
                 "schema_version": {
                     "type": "string"
+                },
+                "stale": {
+                    "description": "Stale: the host could not be read at the last attempt, so State may be\nout of date.",
+                    "type": "boolean"
                 },
                 "state": {
                     "$ref": "#/definitions/appliance.OperationState"
@@ -3283,6 +3635,10 @@ const docTemplate = `{
             "properties": {
                 "action": {
                     "type": "string"
+                },
+                "operation_id": {
+                    "description": "OperationID names the operation to wait for, with WAIT_FOR_OPERATION.",
+                    "type": "string"
                 }
             }
         },
@@ -3302,6 +3658,19 @@ const docTemplate = `{
                     "$ref": "#/definitions/appliance.Product"
                 },
                 "schema_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.SubmitRequest": {
+            "type": "object",
+            "properties": {
+                "challenge": {
+                    "description": "Challenge is the value Authorize returned. Required for an operation\nthat requires reauthentication, ignored otherwise.",
+                    "type": "string"
+                },
+                "plan_hash": {
+                    "description": "PlanHash is the plan the caller reviewed.",
                     "type": "string"
                 }
             }

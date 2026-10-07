@@ -98,6 +98,36 @@ func (e *HostRejection) Error() string {
 	return "appliance host adapter rejected the request: " + e.Code
 }
 
+// HostJobRequest is the body of the adapter's POST /v1/jobs: execute this
+// plan. InstallationID and PlanHash bind the request to one installation and
+// one plan, so a captured submit is useless anywhere else or after the plan
+// has changed.
+type HostJobRequest struct {
+	SchemaVersion    string        `json:"schema_version"`
+	OperationID      string        `json:"operation_id"`
+	Type             OperationType `json:"type"`
+	InstallationID   string        `json:"installation_id"`
+	PlanHash         string        `json:"plan_hash"`
+	ArchiveRef       string        `json:"archive_ref,omitempty"`
+	TargetReleaseRef string        `json:"target_release_ref,omitempty"`
+}
+
+// HostJob is one entry of the adapter's journal. Generation rises with every
+// change; OAM applies an entry only if its generation is higher than the one
+// it last stored, which makes duplicated and reordered reads harmless.
+type HostJob struct {
+	OperationID string         `json:"operation_id"`
+	State       OperationState `json:"state"`
+	Phase       string         `json:"phase,omitempty"`
+	Generation  int64          `json:"generation"`
+	Cancellable bool           `json:"cancellable"`
+	ErrorCode   string         `json:"error_code,omitempty"`
+	Fixture     bool           `json:"fixture"`
+}
+
+// ErrHostJobNotFound: the adapter's journal has no entry for the operation.
+var ErrHostJobNotFound = errors.New("appliance host adapter has no such job")
+
 // HostClient is everything OAM asks of the host adapter.
 type HostClient interface {
 	// Configured reports whether a host adapter exists for this deployment.
@@ -107,6 +137,15 @@ type HostClient interface {
 	// Plan asks the adapter to validate a request. It has no side effects on
 	// the host. A *HostRejection error is the adapter saying no.
 	Plan(ctx context.Context, req HostPlanRequest) (*HostPlan, error)
+	// Submit hands a planned operation to the adapter for execution. It is
+	// idempotent on the operation ID: submitting one the journal already
+	// holds returns its entry and starts nothing.
+	Submit(ctx context.Context, req HostJobRequest) (*HostJob, error)
+	// Job reads one journal entry; ErrHostJobNotFound if there is none.
+	Job(ctx context.Context, operationID string) (*HostJob, error)
+	// Cancel asks the adapter to stop an operation. The adapter decides
+	// whether that is still possible and refuses with a *HostRejection.
+	Cancel(ctx context.Context, operationID string) (*HostJob, error)
 }
 
 // unconfiguredHost is the HostClient of a deployment with no adapter.
@@ -120,6 +159,15 @@ func (unconfiguredHost) Identity(context.Context) (*HostIdentity, error) {
 	return nil, ErrHostNotConfigured
 }
 func (unconfiguredHost) Plan(context.Context, HostPlanRequest) (*HostPlan, error) {
+	return nil, ErrHostNotConfigured
+}
+func (unconfiguredHost) Submit(context.Context, HostJobRequest) (*HostJob, error) {
+	return nil, ErrHostNotConfigured
+}
+func (unconfiguredHost) Job(context.Context, string) (*HostJob, error) {
+	return nil, ErrHostNotConfigured
+}
+func (unconfiguredHost) Cancel(context.Context, string) (*HostJob, error) {
 	return nil, ErrHostNotConfigured
 }
 
@@ -223,6 +271,9 @@ func (h *socketHost) do(ctx context.Context, method, path string, in, out any) e
 			return &rejection
 		}
 	}
+	if resp.StatusCode == http.StatusNotFound && strings.HasPrefix(path, "/v1/jobs/") {
+		return ErrHostJobNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		// The adapter answered, but not usefully. Its body is not relayed:
 		// it is not part of the contract and may describe the host.
@@ -259,4 +310,37 @@ func (h *socketHost) Plan(ctx context.Context, req HostPlanRequest) (*HostPlan, 
 		return nil, fmt.Errorf("%w: adapter returned a plan without a hash or installation", ErrHostUnreachable)
 	}
 	return &out, nil
+}
+
+// checkJob refuses a journal entry OAM could not act on: one for another
+// operation, or in a state only OAM may set.
+func checkJob(job *HostJob, operationID string) (*HostJob, error) {
+	if job.OperationID != operationID || !job.State.hostOwned() || job.Generation < 1 {
+		return nil, fmt.Errorf("%w: adapter returned an unusable journal entry", ErrHostUnreachable)
+	}
+	return job, nil
+}
+
+func (h *socketHost) Submit(ctx context.Context, req HostJobRequest) (*HostJob, error) {
+	var out HostJob
+	if err := h.do(ctx, http.MethodPost, "/v1/jobs", req, &out); err != nil {
+		return nil, err
+	}
+	return checkJob(&out, req.OperationID)
+}
+
+func (h *socketHost) Job(ctx context.Context, operationID string) (*HostJob, error) {
+	var out HostJob
+	if err := h.get(ctx, "/v1/jobs/"+operationID, &out); err != nil {
+		return nil, err
+	}
+	return checkJob(&out, operationID)
+}
+
+func (h *socketHost) Cancel(ctx context.Context, operationID string) (*HostJob, error) {
+	var out HostJob
+	if err := h.do(ctx, http.MethodPost, "/v1/jobs/"+operationID+"/cancel", struct{}{}, &out); err != nil {
+		return nil, err
+	}
+	return checkJob(&out, operationID)
 }

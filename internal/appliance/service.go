@@ -65,6 +65,23 @@ func (s *Service) Capabilities(ctx context.Context, permitted func(Action) bool)
 		}
 	}
 
+	// An installation occupied by an operation offers nothing else until it
+	// is done — and nothing at all while one needs an operator.
+	var occupied UnavailableReason
+	if blanket == "" && s.db != nil {
+		var state string
+		err := s.db.QueryRowContext(ctx, `
+			SELECT state FROM appliance_operations
+			 WHERE state IN ('AWAITING_AUTHORIZATION', 'QUEUED', 'RUNNING', 'VERIFYING', 'COMPENSATING', 'RECOVERY_REQUIRED')
+			 ORDER BY (state = 'RECOVERY_REQUIRED') DESC LIMIT 1`).Scan(&state)
+		switch {
+		case err == nil && OperationState(state) == StateRecoveryRequired:
+			occupied = ReasonRecoveryRequired
+		case err == nil:
+			occupied = ReasonOperationInProgress
+		}
+	}
+
 	for _, action := range Actions {
 		entry := ActionCapability{
 			Action:                   action,
@@ -79,6 +96,9 @@ func (s *Service) Capabilities(ctx context.Context, permitted func(Action) bool)
 			// what cannot be claimed is that it does.
 		case !known:
 			entry.UnavailableReason = ReasonHostUnsupported
+		case state.Available && occupied != "" && action != ActionDiagnostics:
+			entry.Supported = true
+			entry.UnavailableReason = occupied
 		case state.Available:
 			entry.Supported = true
 			entry.Available = true
