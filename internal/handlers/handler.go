@@ -524,8 +524,10 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 func (h *Handler) GetLoxiLBInstances(c *gin.Context) {
 	instances, err := h.loxilbService.FetchLoxiLBInstances()
 	if err != nil {
+		// The cause is logged, not returned: a driver error names tables,
+		// columns and the database host.
 		utils.LogError("Failed to fetch LoxiLB instances: " + err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch LoxiLB instances"})
 		return
 	}
 	utils.LogInfo("Fetched LoxiLB instances")
