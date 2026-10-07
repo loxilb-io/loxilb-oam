@@ -41,23 +41,29 @@ func callerUsername(c *gin.Context) string {
 // *services.GatewayError passes the gateway's status and body through.
 func writeSnapshotError(c *gin.Context, err error) {
 	var gwErr *services.GatewayError
-	switch {
-	case errors.As(err, &gwErr):
-		if gwErr.StatusCode == 0 {
-			// Gateway unreachable — connection error verbatim.
-			c.JSON(http.StatusBadGateway, gin.H{"error": gwErr.Body})
-			return
-		}
+	if errors.As(err, &gwErr) && gwErr.StatusCode != 0 {
 		// The gateway answered with an error; relay its status and body,
 		// marked as the Gateway's so the console does not read a relayed 401
 		// as the operator's own OAM session ending.
 		c.Header(services.ErrorOriginHeader, services.ErrorOriginGateway)
+		if gwErr.RetryAfter != "" {
+			c.Header("Retry-After", gwErr.RetryAfter)
+		}
 		body := gwErr.Body
 		if strings.HasPrefix(strings.TrimSpace(body), "{") {
 			c.Data(gwErr.StatusCode, "application/json", []byte(body))
 		} else {
 			c.JSON(gwErr.StatusCode, gin.H{"error": body})
 		}
+		return
+	}
+
+	// Everything else is OAM's own failure, and is marked so.
+	services.MarkOAMOrigin(c)
+	switch {
+	case gwErr != nil:
+		// Gateway unreachable — connection error verbatim.
+		c.JSON(http.StatusBadGateway, gin.H{"error": gwErr.Body})
 	case errors.Is(err, services.ErrSnapshotNotFound), errors.Is(err, services.ErrInstanceNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	case errors.Is(err, services.ErrSnapshotPinned):
@@ -265,7 +271,7 @@ func (h *Handler) UploadSnapshot(c *gin.Context) {
 // @Description
 // @Description components limits the restore to the named snapshot domains, which the gateway replaces (it does not merge). Omit it to restore everything the document covers. When present it must name at least one domain; an empty list, a malformed or repeated name, or a domain the document's included_domains does not list is refused with 400 before the gateway is called. Send the same components for the dry-run and for the commit. To undo a selected restore, restore the pre_restore snapshot with the same components.
 // @Description
-// @Description Reading the answer: 200 means the gateway answered, whatever it said. gateway_status is the gateway's HTTP status and gateway_response its body verbatim, so a refused or rolled-back restore is a 200 here with the refusal inside. For a commit, read gateway_response.result (ok, rolled-back, ROLLBACK-FAILED) and gateway_response.persisted: a restore can be applied and still report persisted=false. Any other status means OAM stopped before or while reaching the gateway.
+// @Description Reading the answer: 200 means the gateway answered, whatever it said. gateway_status is the gateway's HTTP status and gateway_response its body verbatim, so a refused or rolled-back restore is a 200 here with the refusal inside. For a commit, read gateway_response.result (ok, rolled-back, ROLLBACK-FAILED) and gateway_response.persisted: a restore can be applied and still report persisted=false. Any other status means OAM stopped before or while reaching the gateway. When the gateway sent Retry-After (for example 503 while another restore holds its configuration gate), it is relayed as this response's Retry-After header and as gateway_retry_after.
 // @Tags snapshots
 // @Accept json
 // @Produce json
@@ -298,6 +304,12 @@ func (h *Handler) RestoreSnapshot(c *gin.Context) {
 	if err != nil {
 		writeSnapshotError(c, err)
 		return
+	}
+	// The answer is 200 because the gateway answered; when it asked the
+	// caller to wait (a restore already holds its configuration gate), pass
+	// that on where a client looks for it.
+	if outcome.GatewayRetryAfter != "" {
+		c.Header("Retry-After", outcome.GatewayRetryAfter)
 	}
 	c.JSON(http.StatusOK, outcome)
 }

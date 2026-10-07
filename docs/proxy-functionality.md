@@ -133,6 +133,28 @@ response also carries an additive `detail` field naming the cause.
 The full status/message contract, and why classifying these correctly matters
 to an operator, is in **[instance-proxy.md](instance-proxy.md)**.
 
+### Who answered
+A failed proxy response carries `X-Loxi-Error-Origin`, so a client does not
+have to guess which hop refused:
+
+- `gateway` — the instance answered with this status. Its status, body and
+  headers (including `Retry-After`) are relayed unchanged.
+- `oam` — OAM answered: a refusal above, the rate limit (`429` with
+  `Retry-After`), or a failure to reach the instance (`502`, `503`, `504`).
+
+A `401` marked `gateway` means the instance refused OAM's management
+credential, not that the caller's OAM session ended.
+
+A console served from another origin can read `X-Loxi-Error-Origin`,
+`Retry-After`, `X-Request-Id` and `X-Correlation-Id`, and may send the headers
+the proxy forwards (`If-Match`, `If-None-Match`, `X-Request-Id`,
+`X-Correlation-Id` among them).
+
+### Cancellation
+The call to the instance is tied to the caller's request. If the client
+disconnects before the instance answers, OAM stops waiting and abandons the
+call. A change the instance had already started is not undone by this.
+
 ### Supported HTTP Methods
 `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE` are forwarded, subject to
 the authorization above. `OPTIONS` is answered by OAM as a CORS preflight and

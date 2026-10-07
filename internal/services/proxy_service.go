@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -198,8 +199,10 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, path Gatew
 		return err
 	}
 
-	// Create new request
-	req, err := http.NewRequest(c.Request.Method, targetURL, bytes.NewBuffer(requestBody))
+	// Create new request. It carries the caller's context, so a console that
+	// navigates away or hangs up stops the call to the instance instead of
+	// leaving it to run to the proxy timeout.
+	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL, bytes.NewBuffer(requestBody))
 	if err != nil {
 		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 500, time.Since(startTime).Milliseconds(), fmt.Sprintf("Failed to create request: %v", err))
 		return fmt.Errorf("%w: %w", ErrProxyCreateRequest, err)
@@ -278,7 +281,16 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, path Gatew
 const (
 	ErrorOriginHeader  = "X-Loxi-Error-Origin"
 	ErrorOriginGateway = "gateway"
+	// ErrorOriginOAM marks a failure OAM produced itself, so a client need
+	// not read a missing marker as one. The console ends the session on a
+	// 401 marked this way: never set it on a status relayed from elsewhere.
+	ErrorOriginOAM = "oam"
 )
+
+// MarkOAMOrigin marks the response being written as OAM's own failure.
+func MarkOAMOrigin(c *gin.Context) {
+	c.Header(ErrorOriginHeader, ErrorOriginOAM)
+}
 
 // relayableGatewayResponseHeader reports whether a Gateway response header may
 // be passed to the browser. Two families may not:
@@ -309,6 +321,18 @@ var safeGatewayRequestHeaders = map[string]bool{
 	"If-None-Match":    true,
 	"X-Correlation-Id": true,
 	"X-Request-Id":     true,
+}
+
+// GatewayRequestHeaders lists the request headers the proxy forwards, sorted.
+// The CORS policy allows exactly these from a cross-origin console: a header
+// the browser may not send is a header the proxy forwards for nobody.
+func GatewayRequestHeaders() []string {
+	headers := make([]string, 0, len(safeGatewayRequestHeaders))
+	for header := range safeGatewayRequestHeaders {
+		headers = append(headers, header)
+	}
+	sort.Strings(headers)
+	return headers
 }
 
 /*

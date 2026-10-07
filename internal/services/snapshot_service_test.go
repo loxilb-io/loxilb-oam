@@ -33,6 +33,7 @@ type fakeGateway struct {
 	snapshotErr    error
 
 	restoreStatus int
+	restoreHeader http.Header
 	restoreBody   []byte
 	restoreErr    error
 	restoreCalls  []string // modes, in order
@@ -51,14 +52,14 @@ func (f *fakeGateway) FetchSnapshot(_ *models.LoxiLBInstance) ([]byte, http.Head
 	return f.snapshotBody, h, nil
 }
 
-func (f *fakeGateway) Restore(_ *models.LoxiLBInstance, doc []byte, mode string, components []string) (int, []byte, error) {
+func (f *fakeGateway) Restore(_ *models.LoxiLBInstance, doc []byte, mode string, components []string) (int, http.Header, []byte, error) {
 	f.restoreCalls = append(f.restoreCalls, mode)
 	f.restoreComps = append(f.restoreComps, components)
 	f.restoreDocs = append(f.restoreDocs, doc)
 	if f.restoreErr != nil {
-		return 0, nil, f.restoreErr
+		return 0, nil, nil, f.restoreErr
 	}
-	return f.restoreStatus, f.restoreBody, nil
+	return f.restoreStatus, f.restoreHeader, f.restoreBody, nil
 }
 
 // sampleDoc builds a minimal but envelope-valid snapshot document.
@@ -560,3 +561,26 @@ func TestMapGatewayRestoreResult(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// A restore refused because another one holds the gateway's configuration
+// gate is still a 200 from OAM with the refusal inside; the wait the gateway
+// asked for travels with it.
+func TestRestoreCarriesTheGatewaysRetryAfter(t *testing.T) {
+	raw := sampleDoc(t)
+	gw := &fakeGateway{
+		restoreStatus: 503,
+		restoreHeader: http.Header{"Retry-After": []string{"5"}},
+		restoreBody:   []byte(`{"code":503,"message":"config gate is busy"}`),
+	}
+	svc, mock := newService(t, gw, nil)
+	blob, _, err := svc.SealBlob(raw)
+	require.NoError(t, err)
+	expectSnapshotBlobFetch(mock, blob, services.RawChecksum(raw), false)
+	expectInstanceFetch(mock, 1)
+
+	out, err := svc.RestoreSnapshot("sid-1", models.RestoreSnapshotRequest{}, "admin")
+	require.NoError(t, err)
+	assert.Equal(t, 503, out.GatewayStatus)
+	assert.Equal(t, "5", out.GatewayRetryAfter)
+	assert.JSONEq(t, `{"code":503,"message":"config gate is busy"}`, string(out.GatewayResponse))
+}

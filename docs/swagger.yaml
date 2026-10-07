@@ -710,6 +710,11 @@ definitions:
         type: boolean
       gateway_response:
         type: object
+      gateway_retry_after:
+        description: |-
+          GatewayRetryAfter is the gateway's Retry-After header, when it sent
+          one; the handler relays it as the response's own Retry-After.
+        type: string
       gateway_status:
         type: integer
       instance_id:
@@ -2364,7 +2369,7 @@ paths:
 
         components limits the restore to the named snapshot domains, which the gateway replaces (it does not merge). Omit it to restore everything the document covers. When present it must name at least one domain; an empty list, a malformed or repeated name, or a domain the document's included_domains does not list is refused with 400 before the gateway is called. Send the same components for the dry-run and for the commit. To undo a selected restore, restore the pre_restore snapshot with the same components.
 
-        Reading the answer: 200 means the gateway answered, whatever it said. gateway_status is the gateway's HTTP status and gateway_response its body verbatim, so a refused or rolled-back restore is a 200 here with the refusal inside. For a commit, read gateway_response.result (ok, rolled-back, ROLLBACK-FAILED) and gateway_response.persisted: a restore can be applied and still report persisted=false. Any other status means OAM stopped before or while reaching the gateway.
+        Reading the answer: 200 means the gateway answered, whatever it said. gateway_status is the gateway's HTTP status and gateway_response its body verbatim, so a refused or rolled-back restore is a 200 here with the refusal inside. For a commit, read gateway_response.result (ok, rolled-back, ROLLBACK-FAILED) and gateway_response.persisted: a restore can be applied and still report persisted=false. Any other status means OAM stopped before or while reaching the gateway. When the gateway sent Retry-After (for example 503 while another restore holds its configuration gate), it is relayed as this response's Retry-After header and as gateway_retry_after.
       parameters:
       - description: Bearer token
         in: header
