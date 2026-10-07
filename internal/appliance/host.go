@@ -66,12 +66,47 @@ type HostIdentity struct {
 	ObservedAt     time.Time       `json:"observed_at"`
 }
 
+// HostPlanRequest is the body of the adapter's POST /v1/plans.
+type HostPlanRequest struct {
+	SchemaVersion    string        `json:"schema_version"`
+	OperationID      string        `json:"operation_id"`
+	Type             OperationType `json:"type"`
+	ArchiveRef       string        `json:"archive_ref,omitempty"`
+	TargetReleaseRef string        `json:"target_release_ref,omitempty"`
+}
+
+// HostPlan is the adapter's answer: the request is executable, and this is
+// what executing it would involve. PlanHash binds a later submit to exactly
+// this plan.
+type HostPlan struct {
+	PlanHash       string `json:"plan_hash"`
+	InstallationID string `json:"installation_id"`
+	Model          string `json:"model"`
+	Fixture        bool   `json:"fixture"`
+	Plan
+}
+
+// HostRejection is the adapter refusing a request it understood: an unknown
+// archive, an incompatible release. It is the host's verdict, not a failure
+// to reach it.
+type HostRejection struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func (e *HostRejection) Error() string {
+	return "appliance host adapter rejected the request: " + e.Code
+}
+
 // HostClient is everything OAM asks of the host adapter.
 type HostClient interface {
 	// Configured reports whether a host adapter exists for this deployment.
 	Configured() bool
 	Capabilities(ctx context.Context) (*HostCapabilities, error)
 	Identity(ctx context.Context) (*HostIdentity, error)
+	// Plan asks the adapter to validate a request. It has no side effects on
+	// the host. A *HostRejection error is the adapter saying no.
+	Plan(ctx context.Context, req HostPlanRequest) (*HostPlan, error)
 }
 
 // unconfiguredHost is the HostClient of a deployment with no adapter.
@@ -82,6 +117,9 @@ func (unconfiguredHost) Capabilities(context.Context) (*HostCapabilities, error)
 	return nil, ErrHostNotConfigured
 }
 func (unconfiguredHost) Identity(context.Context) (*HostIdentity, error) {
+	return nil, ErrHostNotConfigured
+}
+func (unconfiguredHost) Plan(context.Context, HostPlanRequest) (*HostPlan, error) {
 	return nil, ErrHostNotConfigured
 }
 
@@ -145,12 +183,27 @@ func HostClientFromEnv() (HostClient, error) {
 func (h *socketHost) Configured() bool { return true }
 
 func (h *socketHost) get(ctx context.Context, path string, out any) error {
+	return h.do(ctx, http.MethodGet, path, nil, out)
+}
+
+// do sends one signed request. in, when not nil, is sent as the JSON body.
+func (h *socketHost) do(ctx context.Context, method, path string, in, out any) error {
+	var payload []byte
+	if in != nil {
+		var err error
+		if payload, err = json.Marshal(in); err != nil {
+			return err
+		}
+	}
 	// The host part is ignored by the Unix dialer; it only has to parse.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://appliance-host"+path, nil)
+	req, err := http.NewRequestWithContext(ctx, method, "http://appliance-host"+path, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
-	if err := SignRequest(req, h.key, nil, h.now()); err != nil {
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if err := SignRequest(req, h.key, payload, h.now()); err != nil {
 		return err
 	}
 	resp, err := h.client.Do(req)
@@ -161,6 +214,14 @@ func (h *socketHost) get(ctx context.Context, path string, out any) error {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHostResponseBytes))
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrHostUnreachable, err)
+	}
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		// The one non-200 that is part of the contract: the adapter
+		// understood the request and refuses it, with a code.
+		var rejection HostRejection
+		if err := json.Unmarshal(body, &rejection); err == nil && rejection.Code != "" {
+			return &rejection
+		}
 	}
 	if resp.StatusCode != http.StatusOK {
 		// The adapter answered, but not usefully. Its body is not relayed:
@@ -185,6 +246,17 @@ func (h *socketHost) Identity(ctx context.Context) (*HostIdentity, error) {
 	var out HostIdentity
 	if err := h.get(ctx, "/v1/identity", &out); err != nil {
 		return nil, err
+	}
+	return &out, nil
+}
+
+func (h *socketHost) Plan(ctx context.Context, req HostPlanRequest) (*HostPlan, error) {
+	var out HostPlan
+	if err := h.do(ctx, http.MethodPost, "/v1/plans", req, &out); err != nil {
+		return nil, err
+	}
+	if out.PlanHash == "" || out.InstallationID == "" {
+		return nil, fmt.Errorf("%w: adapter returned a plan without a hash or installation", ErrHostUnreachable)
 	}
 	return &out, nil
 }

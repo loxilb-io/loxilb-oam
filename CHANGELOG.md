@@ -20,6 +20,17 @@ image's `org.opencontainers.image.version` label.
 ## [Unreleased]
 
 ### Added
+- Appliance operations can be planned and read (**alpha**,
+  `appliance-ops/v1alpha1`). `POST /oam/v1/appliance/operations` validates a
+  backup, restore, update, rollback or reset request with the host adapter and
+  records the plan — what it would touch, the artifacts involved, and the
+  point past which it could not be cancelled — without executing anything.
+  The call is idempotent on a required `Idempotency-Key` header. Plans expire
+  after 15 minutes. `GET /oam/v1/appliance/operations` and
+  `…/operations/{id}` return them to every role, with the plan withheld from
+  roles that could not run that operation type. Operations cannot be
+  submitted yet. Adds schema migration `0002` (`appliance_operations`), the
+  first migration after the baseline.
 - Appliance status and capability discovery (**alpha**, contract
   `appliance-ops/v1alpha1`, subject to change). `GET /oam/v1/appliance/capabilities`
   reports, for each whole-Appliance action (backup, restore, update, rollback,
