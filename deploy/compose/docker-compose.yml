@@ -63,6 +63,9 @@ services:
       DB_HOST: ${DB_HOST:-postgres}
       DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${DB_NAME:-loxioam}
+      # Schema migrations: auto applies pending ones at startup, check refuses
+      # to start if any are pending, off skips the check entirely.
+      OAM_DB_MIGRATE: ${OAM_DB_MIGRATE:-auto}
       SERVER_PORT: 8080
       TOKEN_EXPIRATION: ${TOKEN_EXPIRATION:-480}
       # TLS to managed LoxiLB instances (proxy + snapshots). See §5 of the plan.

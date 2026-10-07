@@ -29,8 +29,14 @@ There is exactly one authoritative schema:
   `loxilb_instances`, `api_tokens`, `logs`, `alerts`, `acknowledgments`,
   `login_attempts`, `instance_snapshots`, `instance_snapshot_schedules`,
   `system_config`, `system_settings`), their indexes, and the seed rows.
-- **`database/migrations/*.sql`** — numbered, incremental migrations for
-  databases that already exist. Apply them in filename order.
+  This is schema **version 1**, the baseline, and it is frozen: it is never
+  edited again.
+- **`database/migrations/postgres/NNNN_name.sql`** — every schema change after
+  the baseline, one file per version, starting at `0002`.
+
+Both are compiled into the `loxilb-oam` binary. The server applies whatever the
+database is missing when it starts and records it in the `schema_migrations`
+table — see [Upgrading an existing database](#upgrading-an-existing-database).
 
 Do not hand-write tables. A database missing the `role` column, the
 `login_attempts` table, or the snapshot tables will fail RBAC checks, login
@@ -102,8 +108,8 @@ DO $$ BEGIN
     CREATE ROLE oamuser LOGIN PASSWORD '<database-password>';
   END IF;
 END $$;
--- The service creates no objects at runtime, but it must own the ones the
--- schema creates, so load the schema AS oamuser (below) rather than granting
+-- The service applies schema migrations at startup, so it must own the
+-- schema's objects: load the schema AS oamuser (below) rather than granting
 -- piecemeal afterwards.
 ALTER DATABASE loxioam OWNER TO oamuser;
 SQL
@@ -148,20 +154,50 @@ database before adopting an existing volume into `loxilb-state`.
 
 ### Upgrading an existing database
 
-Apply any migrations newer than your database, in order:
+Nothing to run by hand. The server binary carries the baseline and every
+migration, and at startup — before it serves a request — it brings the database
+to the version it was built for:
 
-```bash
-for f in database/migrations/*.sql; do
-  echo "applying $f"
-  PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" \
-    -v ON_ERROR_STOP=1 -f "$f"
-done
+| Database it finds | What happens |
+|---|---|
+| Empty | The baseline is applied, then every migration. `/docker-entrypoint-initdb.d` is no longer required, only faster. |
+| Created from the baseline before `schema_migrations` existed | The existing schema is recorded as version 1 ("adopted") without being touched, then later migrations are applied. |
+| Already tracked, behind | Pending migrations are applied in order. |
+| Up to date | Nothing. |
+| **Newer than the binary** | **Startup is refused.** An older release cannot run against an upgraded schema. |
+| An applied migration differs from the binary's copy | Startup is refused. |
+
+Each migration runs in one transaction together with the row that records it,
+so a failed migration changes nothing and the server exits with the error. A
+PostgreSQL advisory lock serializes instances that start at the same time.
+
+`OAM_DB_MIGRATE` selects the behaviour:
+
+| Value | Behaviour |
+|---|---|
+| `auto` (default) | Apply pending migrations, then start. |
+| `check` | Apply nothing. Refuse to start if anything is pending or the database is empty. Use this when an installer or update job owns the schema change and runs `loxilb-oam -migrate` itself. |
+| `off` | Neither migrate nor check. The server trusts that the schema matches. |
+
+`loxilb-oam -migrate` applies pending migrations and exits (status 0 on
+success) regardless of `OAM_DB_MIGRATE`. It needs only the database connection
+settings, not `OAM_JWT_SECRET` or the admin password.
+
+The connecting role must own the schema objects — it does when the schema was
+loaded as described above — because migrations create and alter tables.
+
+To see where a database is:
+
+```sql
+SELECT version, name, adopted, applied_at FROM schema_migrations ORDER BY version;
 ```
 
-Release notes call out when a release requires a migration.
+**Rolling back a release.** Migrations are forward-only; there are no down
+migrations. To return to an older release after an upgrade that migrated the
+schema, restore the database backup taken before the upgrade. Take that backup
+first: release notes call out when a release carries a migration.
 
-> There are currently no PostgreSQL migrations: `database/init/00-init-complete.sql`
-> is the whole schema. The MySQL-era migrations are kept, unconverted, under
+> The MySQL-era migrations are kept, unconverted, under
 > `database/migrations/legacy-mysql/` for historical reference only — see the
 > README there. There is **no in-place upgrade path from a MySQL deployment**;
 > PostgreSQL support replaced MySQL outright.

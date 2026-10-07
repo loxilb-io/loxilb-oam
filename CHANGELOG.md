@@ -20,6 +20,18 @@ image's `org.opencontainers.image.version` label.
 ## [Unreleased]
 
 ### Added
+- Versioned database migrations. The binary now carries the schema — the
+  baseline `database/init/00-init-complete.sql` as version 1, plus numbered
+  files under `database/migrations/postgres/` — and brings the database to it
+  at startup, recording progress in a new `schema_migrations` table. An empty
+  database is initialized by the server itself; a database created from the
+  baseline by an earlier release is adopted as version 1 without being
+  modified. The server refuses to start against a schema newer than the
+  binary (a downgrade) or one whose applied migrations were altered.
+  `OAM_DB_MIGRATE` selects `auto` (default), `check` (apply nothing, refuse to
+  start if a migration is pending) or `off`; `loxilb-oam -migrate` applies
+  pending migrations and exits. No migration beyond the baseline ships in this
+  release — the only change to an existing database is the new table.
 - Converged single-node deployment now uses one independent `loxilb-state`
   PostgreSQL service and one `loxioam` database for OAM plus the Gateway's
   isolated `aigw` and dormant `aigw_mgmt` schemas. The bundle includes the

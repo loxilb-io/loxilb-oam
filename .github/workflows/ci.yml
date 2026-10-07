@@ -137,6 +137,25 @@ jobs:
           OAM_TEST_ADMIN_PASSWORD: ChangeMe-Admin1!
         run: go test -count=1 -v ./tests/rest_api/...
 
+      - name: Schema version recorded
+        # The schema above was loaded with psql, the way a pre-migration
+        # install was created, so the booted server must have adopted it as
+        # version 1. An empty result fails the comparison.
+        env:
+          PGPASSWORD: oampass
+        run: |
+          got=$(psql -h 127.0.0.1 -p 5432 -U oamuser -d loxioam -Atc \
+            "SELECT version || ':' || adopted FROM schema_migrations ORDER BY version LIMIT 1")
+          echo "schema_migrations: $got"
+          test "$got" = "1:true"
+
+      - name: Migration tests (PostgreSQL)
+        # Runs after the server checks: these create and drop scratch databases
+        # on the same PostgreSQL service and skip without OAM_TEST_DATABASE_URL.
+        env:
+          OAM_TEST_DATABASE_URL: postgres://oamuser:oampass@127.0.0.1:5432/loxioam?sslmode=disable
+        run: go test -count=1 -race -v ./internal/migrate/...
+
       - name: Server log (on failure)
         if: failure()
         run: cat server.log || true

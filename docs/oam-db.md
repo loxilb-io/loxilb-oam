@@ -14,8 +14,8 @@ This document is the schema reference. The authoritative definitions live in:
 
 - `database/init/00-init-complete.sql` — full schema for fresh installs (runs
   automatically on first container startup)
-- `database/migrations/*.sql` — incremental migrations applied to existing
-  databases
+- `database/migrations/postgres/*.sql` — every change after that baseline,
+  applied by the server at startup and recorded in `schema_migrations`
 
 ## Database Information
 
@@ -212,8 +212,11 @@ Installation-level settings (e.g. `installation_id`, `first_boot_at`).
 - **Fresh install:** `database/init/00-init-complete.sql` creates all tables,
   performance indexes, and seed rows. Docker Compose mounts it so it runs
   automatically on first PostgreSQL startup.
-- **Existing databases:** apply the numbered files in `database/migrations/` in
-  order.
+- **Existing databases:** the server applies the numbered files in
+  `database/migrations/postgres/` itself at startup and records them in
+  `schema_migrations` (`version`, `name`, `checksum`, `adopted`, `applied_at`).
+  See [database-installation.md](database-installation.md#upgrading-an-existing-database)
+  for `OAM_DB_MIGRATE` and the downgrade rule.
 
 Do not embed credentials in initialization scripts; supply them via the
 environment (see [DEPLOYMENT.md](../DEPLOYMENT.md)).
