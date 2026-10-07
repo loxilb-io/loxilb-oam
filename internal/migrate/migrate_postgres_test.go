@@ -306,3 +306,27 @@ func TestPostgresConcurrentStartersApplyOnce(t *testing.T) {
 	assert.Equal(t, len(migrations), total, "each migration applied by exactly one starter")
 	assert.Len(t, history(t, db), len(migrations))
 }
+
+// Current reports the newest applied migration without writing, and reports
+// "not tracked" as nil rather than as an error.
+func TestPostgresCurrent(t *testing.T) {
+	db := scratchDB(t)
+
+	state, err := Current(t.Context(), db)
+	require.NoError(t, err)
+	assert.Nil(t, state, "no schema_migrations table")
+	assert.False(t, hasTable(t, db, "schema_migrations"), "Current must not create it")
+
+	migrations := embedded(t)
+	_, err = Run(t.Context(), db, migrations, ModeAuto)
+	require.NoError(t, err)
+
+	state, err = Current(t.Context(), db)
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	last := migrations[len(migrations)-1]
+	assert.Equal(t, last.Version, state.Version)
+	assert.Equal(t, last.Name, state.Name)
+	assert.False(t, state.Adopted)
+	assert.False(t, state.AppliedAt.IsZero())
+}

@@ -20,6 +20,25 @@ image's `org.opencontainers.image.version` label.
 ## [Unreleased]
 
 ### Added
+- Appliance status and capability discovery (**alpha**, contract
+  `appliance-ops/v1alpha1`, subject to change). `GET /oam/v1/appliance/capabilities`
+  reports, for each whole-Appliance action (backup, restore, update, rollback,
+  reset, diagnostics), three independent facts: whether the host adapter
+  supports it, whether it can run now and if not why, and whether the caller's
+  role may request it. `GET /oam/v1/appliance/status` reports product identity,
+  per-component liveness and readiness, and the database schema version; a
+  component that cannot be observed is `unknown`, never ready. No action can
+  be executed yet. A deployment without a host adapter — every deployment
+  today — answers with `HOST_NOT_CONFIGURED`. See
+  [docs/appliance-operations.md](docs/appliance-operations.md).
+- Seven capabilities for the Appliance lifecycle: `appliance_read` (every
+  role) and `appliance_backup`, `appliance_restore`, `appliance_update`,
+  `appliance_rollback`, `appliance_reset`, `appliance_diagnostics` (admin
+  only). None is implied by `config_write` or any existing capability.
+- `OAM_APPLIANCE_HOST_SOCKET` and `OAM_APPLIANCE_HOST_KEY_FILE` connect OAM to
+  an Appliance host adapter over a Unix socket with HMAC-signed requests.
+  `cmd/appliance-host-fixture` is a stand-in adapter for development; it
+  executes nothing and labels everything it returns as a fixture.
 - Versioned database migrations. The binary now carries the schema — the
   baseline `database/init/00-init-complete.sql` as version 1, plus numbered
   files under `database/migrations/postgres/` — and brings the database to it

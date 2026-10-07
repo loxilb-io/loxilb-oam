@@ -29,6 +29,16 @@ const (
 	ActConfigWrite   Action = "config_write"   // configuration export/import
 	ActAlertWrite    Action = "alert_write"    // create/acknowledge alerts
 	ActLogRead       Action = "log_read"       // read the server log and its archives
+
+	// Whole-Appliance lifecycle. Each is granted on its own: holding
+	// config_write, or any other capability above, implies none of them.
+	ActApplianceRead        Action = "appliance_read"        // status, capabilities, operation list/detail
+	ActApplianceBackup      Action = "appliance_backup"      // back up the whole Appliance
+	ActApplianceRestore     Action = "appliance_restore"     // restore it from a backup
+	ActApplianceUpdate      Action = "appliance_update"      // install a newer release
+	ActApplianceRollback    Action = "appliance_rollback"    // return to the previous release
+	ActApplianceReset       Action = "appliance_reset"       // factory reset
+	ActApplianceDiagnostics Action = "appliance_diagnostics" // support bundle / sensitive diagnostics export
 )
 
 // roleCapabilities is the single-source capability matrix:
@@ -48,12 +58,25 @@ var roleCapabilities = map[string]map[Action]bool{
 		ActConfigWrite:   true,
 		ActAlertWrite:    true,
 		ActLogRead:       true,
+
+		ActApplianceRead:        true,
+		ActApplianceBackup:      true,
+		ActApplianceRestore:     true,
+		ActApplianceUpdate:      true,
+		ActApplianceRollback:    true,
+		ActApplianceReset:       true,
+		ActApplianceDiagnostics: true,
 	},
+	// Operator and viewer may see the Appliance's state but change none of
+	// it: every lifecycle action starts out admin-only.
 	models.RoleOperator: {
-		ActGatewayWrite: true,
-		ActAlertWrite:   true,
+		ActGatewayWrite:  true,
+		ActAlertWrite:    true,
+		ActApplianceRead: true,
 	},
-	models.RoleViewer: {},
+	models.RoleViewer: {
+		ActApplianceRead: true,
+	},
 }
 
 // Can reports whether a role holds a capability. Legacy role "user" is

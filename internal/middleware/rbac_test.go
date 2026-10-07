@@ -51,6 +51,36 @@ func TestCapabilityMatrix(t *testing.T) {
 		{models.RoleViewer, middleware.ActUserAdmin, false},
 		// unknown role: nothing
 		{"bogus", middleware.ActGatewayWrite, false},
+		{"bogus", middleware.ActApplianceRead, false},
+
+		// Appliance: everyone may look.
+		{models.RoleAdmin, middleware.ActApplianceRead, true},
+		{models.RoleOperator, middleware.ActApplianceRead, true},
+		{models.RoleLegacyUser, middleware.ActApplianceRead, true},
+		{models.RoleViewer, middleware.ActApplianceRead, true},
+	}
+	// Appliance lifecycle actions are admin-only, each on its own.
+	for _, action := range []middleware.Action{
+		middleware.ActApplianceBackup, middleware.ActApplianceRestore, middleware.ActApplianceUpdate,
+		middleware.ActApplianceRollback, middleware.ActApplianceReset, middleware.ActApplianceDiagnostics,
+	} {
+		tests = append(tests,
+			struct {
+				role   string
+				action middleware.Action
+				want   bool
+			}{models.RoleAdmin, action, true},
+			struct {
+				role   string
+				action middleware.Action
+				want   bool
+			}{models.RoleOperator, action, false},
+			struct {
+				role   string
+				action middleware.Action
+				want   bool
+			}{models.RoleViewer, action, false},
+		)
 	}
 
 	for _, tt := range tests {

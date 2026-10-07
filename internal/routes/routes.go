@@ -124,3 +124,20 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, handler *handlers.Handler, user
 		protected.PUT("/loxilbs/:id/firmware/stop", middleware.RequireCapability(userService, middleware.ActInstanceWrite), handler.StoptLoxiLBInstanceFirmware)
 	}
 }
+
+// SetupApplianceRoutes registers the whole-Appliance API under
+// /oam/v1/appliance. It is versioned in the path, unlike the routes above,
+// because its contract is still alpha and will change shape before it is
+// agreed.
+//
+// The routes exist in every deployment. One that is not an Appliance answers
+// them truthfully — every action unsupported, HOST_NOT_CONFIGURED — rather
+// than with 404, so a client needs no second way to learn that.
+func SetupApplianceRoutes(router *gin.Engine, userService *services.UserService, handler *handlers.ApplianceHandler) {
+	appliance := router.Group("/oam/v1/appliance")
+	appliance.Use(middleware.TokenAuthMiddleware(userService))
+	{
+		appliance.GET("/capabilities", handler.Require(middleware.ActApplianceRead), handler.GetCapabilities)
+		appliance.GET("/status", handler.Require(middleware.ActApplianceRead), handler.GetStatus)
+	}
+}
