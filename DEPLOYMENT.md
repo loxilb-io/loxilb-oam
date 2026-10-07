@@ -236,9 +236,12 @@ manifests is correct as-is.
 On first startup the PostgreSQL container runs `database/init/00-init-complete.sql`,
 which creates all tables (users, instances, tokens, logs, alerts,
 acknowledgments, login attempts, instance snapshots, and system config),
-performance indexes, and seed rows. For existing databases, apply the numbered
-files under `database/migrations/` in order. See
-[docs/oam-db.md](docs/oam-db.md) for the schema reference.
+performance indexes, and seed rows. That file is the schema baseline; later
+changes are migrations compiled into the server, which applies any that are
+pending each time it starts (`OAM_DB_MIGRATE`, default `auto`) and refuses a
+database newer than itself. See
+[docs/database-installation.md](docs/database-installation.md#upgrading-an-existing-database)
+and [docs/oam-db.md](docs/oam-db.md) for the schema reference.
 
 The schema is applied only on first boot of an **empty** data volume. To
 reinitialize, destroy the volume:

@@ -81,6 +81,7 @@ services:
       DB_HOST: ${DB_HOST:-postgres}
       DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${DB_NAME:-loxioam}
+      OAM_DB_MIGRATE: ${OAM_DB_MIGRATE:-auto}
       SERVER_PORT: 8080
       TOKEN_EXPIRATION: ${TOKEN_EXPIRATION:-480}
       # Snapshot at-rest encryption: base64-encoded 32-byte AES-256 key

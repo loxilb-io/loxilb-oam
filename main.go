@@ -17,9 +17,11 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"github.com/loxilb-io/loxilb-oam/database"
 	swaggerdocs "github.com/loxilb-io/loxilb-oam/docs"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
 	"github.com/loxilb-io/loxilb-oam/internal/handlers"
+	"github.com/loxilb-io/loxilb-oam/internal/migrate"
 	"github.com/loxilb-io/loxilb-oam/internal/routes"
 	"github.com/loxilb-io/loxilb-oam/internal/services"
 	"github.com/loxilb-io/loxilb-oam/internal/utils"
@@ -115,6 +117,7 @@ func main() {
 	sslKeyFile := flag.String("ssl-key-file", "./ssl/certs/server.key", "Path to SSL private key")
 
 	showVersion := flag.Bool("version", false, "Print the version and exit")
+	migrateOnly := flag.Bool("migrate", false, "Apply pending database migrations and exit")
 
 	flag.Parse()
 
@@ -132,8 +135,12 @@ func main() {
 
 	utils.LogInfo("Starting loxilb-oam " + version)
 
-	// Abort startup if any mandatory secret is unset.
-	requireSecrets()
+	// Abort startup if any mandatory secret is unset. -migrate only touches the
+	// schema, so whatever runs it (an installer, an update job) needs the
+	// database credential and nothing else.
+	if !*migrateOnly {
+		requireSecrets()
+	}
 
 	// The database password has no built-in default: require it via the
 	// -db-password flag or the DB_PASSWORD env var (OAM_DB_PASSWORD alias).
@@ -157,6 +164,11 @@ func main() {
 	}
 	if err != nil {
 		utils.LogError(fmt.Sprintf("Database connection failed (host=%s port=%s db=%s): %v", *dbHost, *dbPort, *dbName, err))
+		if *migrateOnly {
+			// Whatever ran -migrate reads the exit status to learn whether
+			// the schema was migrated; "could not connect" is not success.
+			os.Exit(1)
+		}
 		return
 	}
 	defer db.Close()
@@ -165,6 +177,19 @@ func main() {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// Bring the schema to the version this binary was built for before
+	// anything queries it. Starting against a schema that is behind, ahead or
+	// altered is refused here rather than discovered one failing query at a
+	// time.
+	if err := migrateSchema(db, *migrateOnly); err != nil {
+		utils.LogError("DATABASE: " + err.Error())
+		db.Close()
+		os.Exit(1)
+	}
+	if *migrateOnly {
+		return
+	}
 
 	// Initialize the services
 	userService := services.NewUserService(db)
@@ -299,6 +324,42 @@ func main() {
 	httpServer.Shutdown(ctx)
 	db.Close()
 	utils.LogInfo("Server gracefully stopped")
+}
+
+// migrateSchema applies or verifies the database schema according to
+// OAM_DB_MIGRATE. With force (the -migrate flag) it applies regardless of the
+// configured mode: the flag is the explicit request that "check" mode waits for.
+func migrateSchema(db *sql.DB, force bool) error {
+	mode, err := migrate.ModeFromEnv()
+	if err != nil {
+		return err
+	}
+	if force {
+		mode = migrate.ModeAuto
+	}
+	migrations, err := migrate.Load(database.BaselineVersion, database.BaselineSQL, database.Migrations, database.MigrationsDir)
+	if err != nil {
+		return fmt.Errorf("embedded migrations are invalid: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), config.DbMigrateTimeout)
+	defer cancel()
+	status, err := migrate.Run(ctx, db, migrations, mode)
+	if err != nil {
+		return fmt.Errorf("schema migration failed: %w", err)
+	}
+
+	switch {
+	case mode == migrate.ModeOff:
+		utils.LogWarning(migrate.ModeEnv + "=off — the database schema was neither migrated nor checked.")
+	case len(status.Applied) > 0:
+		utils.LogInfo(fmt.Sprintf("Database schema migrated to version %d (applied %v).", status.Version, status.Applied))
+	case status.Adopted:
+		utils.LogInfo(fmt.Sprintf("Existing database schema recorded as version %d.", status.Version))
+	default:
+		utils.LogInfo(fmt.Sprintf("Database schema is at version %d (up to date).", status.Version))
+	}
+	return nil
 }
 
 // setupInitialAdminIfNeeded creates the bootstrap admin account on a fresh
