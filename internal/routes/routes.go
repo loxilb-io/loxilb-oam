@@ -15,7 +15,10 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
-func SetupRoutes(router *gin.Engine, db *sql.DB, handler *handlers.Handler, userService *services.UserService, alertService *services.AlertService) {
+// SetupRoutes registers the API and returns the rate limiter of its
+// credential endpoints, for routes registered elsewhere that also verify a
+// password and must draw on the same budget.
+func SetupRoutes(router *gin.Engine, db *sql.DB, handler *handlers.Handler, userService *services.UserService, alertService *services.AlertService) *middleware.RateLimiter {
 	// Handle preflight requests
 	router.Use(middleware.CORSMiddleware())
 
@@ -123,6 +126,7 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, handler *handlers.Handler, user
 		protected.PUT("/loxilbs/:id/firmware/start", middleware.RequireCapability(userService, middleware.ActInstanceWrite), handler.StartLoxiLBInstanceFirmware)
 		protected.PUT("/loxilbs/:id/firmware/stop", middleware.RequireCapability(userService, middleware.ActInstanceWrite), handler.StoptLoxiLBInstanceFirmware)
 	}
+	return authLimiter
 }
 
 // SetupApplianceRoutes registers the whole-Appliance API under
@@ -133,7 +137,10 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, handler *handlers.Handler, user
 // The routes exist in every deployment. One that is not an Appliance answers
 // them truthfully — every action unsupported, HOST_NOT_CONFIGURED — rather
 // than with 404, so a client needs no second way to learn that.
-func SetupApplianceRoutes(router *gin.Engine, userService *services.UserService, handler *handlers.ApplianceHandler) {
+//
+// authLimiter is the limiter of the login endpoint: authorizing an operation
+// verifies a password, so it is throttled as a login attempt is.
+func SetupApplianceRoutes(router *gin.Engine, userService *services.UserService, handler *handlers.ApplianceHandler, authLimiter *middleware.RateLimiter) {
 	appliance := router.Group("/oam/v1/appliance")
 	appliance.Use(middleware.TokenAuthMiddleware(userService))
 	{
@@ -147,5 +154,13 @@ func SetupApplianceRoutes(router *gin.Engine, userService *services.UserService,
 		appliance.GET("/operations", handler.Require(middleware.ActApplianceRead), handler.ListOperations)
 		appliance.POST("/operations", handler.Require(middleware.ActApplianceRead), handler.PlanOperation)
 		appliance.GET("/operations/:operation_id", handler.Require(middleware.ActApplianceRead), handler.GetOperation)
+
+		// Acting on an operation. As with planning, the capability depends
+		// on the operation's type and is checked once it has been loaded.
+		appliance.POST("/operations/:operation_id/authorize", middleware.RateLimit(authLimiter),
+			handler.Require(middleware.ActApplianceRead), handler.AuthorizeOperation)
+		appliance.POST("/operations/:operation_id/submit", handler.Require(middleware.ActApplianceRead), handler.SubmitOperation)
+		appliance.POST("/operations/:operation_id/cancel", handler.Require(middleware.ActApplianceRead), handler.CancelOperation)
+		appliance.POST("/operations/:operation_id/reconcile", handler.Require(middleware.ActApplianceRead), handler.ReconcileOperation)
 	}
 }

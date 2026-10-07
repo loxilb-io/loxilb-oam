@@ -30,6 +30,8 @@ func main() {
 	socketPath := flag.String("socket", "", "Unix socket to listen on (required)")
 	keyFile := flag.String("key-file", "", "File holding the shared request-signing key (required)")
 	available := flag.String("available", "", "Comma-separated actions to report as available: backup,restore,update,rollback,reset,diagnostics")
+	outcome := flag.String("outcome", "succeed", "How pretend executions end: succeed, fail, or recovery (ends in RECOVERY_REQUIRED)")
+	stepEvery := flag.Duration("step", 2*time.Second, "How long a pretend execution spends in each step")
 	flag.Parse()
 	if *socketPath == "" || *keyFile == "" {
 		flag.Usage()
@@ -64,7 +66,19 @@ func main() {
 		log.Fatalf("chmod socket: %v", err)
 	}
 
-	server := &http.Server{Handler: hostfixture.New(key, actions...).Handler(), ReadHeaderTimeout: 5 * time.Second}
+	switch hostfixture.Outcome(*outcome) {
+	case hostfixture.OutcomeSucceed, hostfixture.OutcomeFail, hostfixture.OutcomeRecovery:
+	default:
+		log.Fatalf("-outcome must be succeed, fail or recovery")
+	}
+	if *stepEvery <= 0 {
+		log.Fatalf("-step must be positive")
+	}
+	fixture := hostfixture.New(key, actions...)
+	fixture.SetOutcome(hostfixture.Outcome(*outcome))
+	fixture.SetStepEvery(*stepEvery)
+
+	server := &http.Server{Handler: fixture.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)

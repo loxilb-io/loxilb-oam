@@ -17,7 +17,8 @@ type storedPlan struct {
 
 const operationColumns = `id, type, state, phase, installation_id, model, actor_user_id, actor_username,
 	request_id, request_hash, request, plan_hash, plan_expires_at, plan, reconciliation,
-	error_code, error_origin, created_at, updated_at, submitted_at, finished_at`
+	error_code, error_origin, created_at, updated_at, submitted_at, finished_at,
+	host_generation, cancellable`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -30,7 +31,8 @@ func scanOperation(row rowScanner) (*Operation, error) {
 	if err := row.Scan(&op.ID, &op.Type, &op.State, &op.Phase, &op.InstallationID, &op.Model,
 		&op.ActorUserID, &op.Actor, &op.RequestID, &op.RequestHash, &requestJSON, &op.PlanHash,
 		&op.PlanExpiresAt, &planJSON, &op.Reconciliation, &op.ErrorCode, &op.ErrorOrigin,
-		&op.CreatedAt, &op.UpdatedAt, &submittedAt, &finishedAt); err != nil {
+		&op.CreatedAt, &op.UpdatedAt, &submittedAt, &finishedAt,
+		&op.HostGeneration, &op.Cancellable); err != nil {
 		return nil, err
 	}
 	var request PlanRequest
@@ -45,6 +47,12 @@ func scanOperation(row rowScanner) (*Operation, error) {
 		plan.AffectedResources = []string{}
 	}
 	op.Note = request.Note
+	op.request = request
+	// Before submission cancelling is OAM's decision, and always possible.
+	if op.State == StatePlanned || op.State == StateAwaitingAuthorization {
+		op.Cancellable = true
+	}
+	op.Stale = op.Reconciliation == ReconciliationHostUnreachable
 	op.HostFixture = plan.Fixture
 	op.Plan = &plan.Plan
 	op.RequiresReauthentication = op.Type.Action().Destructive()

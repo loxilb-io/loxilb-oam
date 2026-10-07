@@ -20,6 +20,21 @@ image's `org.opencontainers.image.version` label.
 ## [Unreleased]
 
 ### Added
+- Appliance operations can be authorized, submitted, followed and cancelled
+  (**alpha**, `appliance-ops/v1alpha1`; the only host adapter is still the
+  fixture, which executes nothing). `POST …/operations/{id}/authorize`
+  verifies the caller's password — under the same lockout and rate limit as
+  login — and returns a one-use challenge bound to the operation, its plan,
+  the user and the session. `POST …/operations/{id}/submit` consumes it and
+  hands the operation to the host adapter; a backup needs no challenge.
+  `POST …/operations/{id}/cancel` and `…/reconcile` complete the set. Only one
+  operation can be active per installation. OAM follows the adapter's journal
+  every 2 seconds, delivers a submission the adapter missed (including across
+  an OAM restart) exactly once, and marks an operation the journal lost as
+  `RECOVERY_REQUIRED` instead of running it again. Every step is recorded in
+  `appliance_audit`. Adds schema migration `0003` (`appliance_challenges`,
+  `appliance_audit`, one-active-operation index). See
+  [docs/appliance-operations.md](docs/appliance-operations.md).
 - Appliance operations can be planned and read (**alpha**,
   `appliance-ops/v1alpha1`). `POST /oam/v1/appliance/operations` validates a
   backup, restore, update, rollback or reset request with the host adapter and
@@ -28,9 +43,8 @@ image's `org.opencontainers.image.version` label.
   The call is idempotent on a required `Idempotency-Key` header. Plans expire
   after 15 minutes. `GET /oam/v1/appliance/operations` and
   `…/operations/{id}` return them to every role, with the plan withheld from
-  roles that could not run that operation type. Operations cannot be
-  submitted yet. Adds schema migration `0002` (`appliance_operations`), the
-  first migration after the baseline.
+  roles that could not run that operation type. Adds schema migration `0002`
+  (`appliance_operations`), the first migration after the baseline.
 - Appliance status and capability discovery (**alpha**, contract
   `appliance-ops/v1alpha1`, subject to change). `GET /oam/v1/appliance/capabilities`
   reports, for each whole-Appliance action (backup, restore, update, rollback,

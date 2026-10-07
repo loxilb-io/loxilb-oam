@@ -238,7 +238,8 @@ func main() {
 	if applianceHost.Configured() {
 		utils.LogInfo("Appliance host adapter configured (" + appliance.HostSocketEnv + ").")
 	}
-	applianceHandler := handlers.NewApplianceHandler(appliance.NewService(applianceHost, db, version), userService)
+	applianceService := appliance.NewService(applianceHost, db, version)
+	applianceHandler := handlers.NewApplianceHandler(applianceService, userService)
 
 	// First-time setup: create the bootstrap admin if needed. A fresh
 	// installation without an admin account is unusable (every login fails),
@@ -260,6 +261,13 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+
+	// Follow submitted Appliance operations in the host adapter's journal.
+	// This is also what picks up, after a restart, an operation that was
+	// recorded as submitted but never delivered.
+	if applianceHost.Configured() {
+		go applianceService.RunReconciler(ctx, appliance.ReconcileInterval)
+	}
 
 	// Periodically report database reachability.
 	//
@@ -306,8 +314,8 @@ func main() {
 		utils.LogInfo("OAM_TRUSTED_PROXIES is not set — X-Forwarded-For is ignored and the peer address is used as the client IP. If OAM runs behind a reverse proxy, set it to that proxy's address so rate limiting and login lockout see real client IPs.")
 	}
 
-	routes.SetupRoutes(router, db, handler, userService, alertService)
-	routes.SetupApplianceRoutes(router, userService, applianceHandler)
+	authLimiter := routes.SetupRoutes(router, db, handler, userService, alertService)
+	routes.SetupApplianceRoutes(router, userService, applianceHandler, authLimiter)
 
 	// Create HTTP/HTTPS server
 	port := fmt.Sprintf(":%s", *serverPort)

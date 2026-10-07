@@ -27,9 +27,14 @@ type Host struct {
 	nonces *appliance.NonceCache
 	now    func() time.Time
 
-	mu        sync.Mutex
-	versions  []string
-	available map[appliance.Action]bool
+	mu          sync.Mutex
+	versions    []string
+	available   map[appliance.Action]bool
+	outcome     Outcome
+	stepEvery   time.Duration
+	jobs        map[string]*job
+	submissions map[string]int
+	executions  map[string]int
 }
 
 // New returns a fixture that authenticates requests with key, speaks the
@@ -37,11 +42,15 @@ type Host struct {
 // other action is reported as unsupported by the host.
 func New(key []byte, available ...appliance.Action) *Host {
 	h := &Host{
-		key:       key,
-		nonces:    appliance.NewNonceCache(),
-		now:       time.Now,
-		versions:  []string{appliance.SchemaVersion},
-		available: map[appliance.Action]bool{},
+		key:         key,
+		nonces:      appliance.NewNonceCache(),
+		now:         time.Now,
+		versions:    []string{appliance.SchemaVersion},
+		available:   map[appliance.Action]bool{},
+		outcome:     OutcomeSucceed,
+		jobs:        map[string]*job{},
+		submissions: map[string]int{},
+		executions:  map[string]int{},
 	}
 	for _, a := range available {
 		h.available[a] = true
@@ -63,6 +72,9 @@ func (h *Host) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/capabilities", h.capabilities)
 	mux.HandleFunc("GET /v1/identity", h.identity)
 	mux.HandleFunc("POST /v1/plans", h.plan)
+	mux.HandleFunc("POST /v1/jobs", h.submitJob)
+	mux.HandleFunc("GET /v1/jobs/{id}", h.getJob)
+	mux.HandleFunc("POST /v1/jobs/{id}/cancel", h.cancelJob)
 	return h.authenticated(mux)
 }
 
@@ -189,12 +201,17 @@ func (h *Host) plan(w http.ResponseWriter, r *http.Request) {
 		plan.AffectedResources = []string{"oam-database", "gateway-config", "host-config", "sessions", "backups"}
 	}
 	writeJSON(w, appliance.HostPlan{
-		// The hash covers what was asked and what it resolved to — not the
-		// operation ID, so the same request plans to the same hash.
-		PlanHash:       fakeDigest(string(req.Type), req.ArchiveRef, req.TargetReleaseRef, plan.ArchiveDigest, plan.TargetReleaseDigest, fixtureInstallationID),
+		PlanHash:       planHash(req.Type, req.ArchiveRef, req.TargetReleaseRef),
 		InstallationID: fixtureInstallationID,
 		Model:          "fixture",
 		Fixture:        true,
 		Plan:           plan,
 	})
+}
+
+// planHash covers what was asked and the installation it was asked of — not
+// the operation ID, so the same request always plans to the same hash and a
+// submit can be checked against it.
+func planHash(t appliance.OperationType, archiveRef, targetReleaseRef string) string {
+	return fakeDigest(string(t), archiveRef, targetReleaseRef, fixtureInstallationID)
 }

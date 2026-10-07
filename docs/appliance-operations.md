@@ -1,9 +1,10 @@
 # Appliance operations (alpha)
 
 > **Status: alpha.** Contract `appliance-ops/v1alpha1`. Names, fields and enum
-> values may change before the contract is agreed with its consumers. Status,
-> capability discovery and *planning* exist; **no Appliance action can be
-> executed through OAM yet** — a plan can be made and read, not submitted.
+> values may change before the contract is agreed with its consumers. OAM's
+> side is complete — plan, authorize, submit, follow, cancel — but **no real
+> host adapter exists yet**: the only adapter is a fixture that executes
+> nothing. Nothing here has been run against an Appliance.
 
 An *Appliance* is an installation where OAM, its database and the gateway are
 delivered and operated as one unit. Backing that unit up, restoring, updating,
@@ -17,8 +18,8 @@ still present there and says so, rather than returning `404`.
 ## Endpoints
 
 All require authentication and the `appliance_read` capability, which every
-role holds. Planning additionally requires the capability for the operation
-type.
+role holds. Planning an operation, and authorizing, submitting, cancelling or
+reconciling one, additionally require the capability for its type.
 
 ### `GET /oam/v1/appliance/capabilities`
 
@@ -80,7 +81,18 @@ reported as ready. Managed gateway instances are not listed yet.
 An operation is one backup, restore, update, rollback or reset. It is
 *planned* first: the host adapter validates the request against the
 installation and says what executing it would involve. Planning changes
-nothing on the host.
+nothing on the host. A planned operation is then *submitted*, and OAM follows
+the host adapter until it ends:
+
+```
+backup:    plan ────────────────► submit ──► QUEUED ► RUNNING ► VERIFYING ► SUCCEEDED
+the rest:  plan ──► authorize ──► submit ──►   …
+                    (password)    (challenge)
+```
+
+Only one operation can be active on an installation at a time — from
+authorization (or, for a backup, submission) until it reaches a terminal
+state.
 
 ### `POST /oam/v1/appliance/operations` — plan
 
@@ -142,12 +154,151 @@ The list is newest first. `items` is always an array. Query parameters:
 `limit` (1–100, default 20), `cursor` (the previous page's `next_cursor`),
 `state`, `type`.
 
+### `POST /oam/v1/appliance/operations/{operation_id}/authorize`
+
+Required before submitting anything with `requires_reauthentication: true`.
+
+```http
+POST /oam/v1/appliance/operations/{operation_id}/authorize
+Content-Type: application/json
+
+{ "password": "<the caller's current password>" }
+```
+
+```json
+{ "challenge": "<64 hex characters>", "expires_at": "…", "operation_id": "…", "plan_hash": "…" }
+```
+
+- The challenge is returned once (`Cache-Control: no-store`). OAM keeps only
+  its SHA-256. It is good for **one** submit of **this** operation and plan, by
+  **this** user in **this** session (the token that authorized), on this
+  installation.
+- It expires after 5 minutes, or with the plan if that is sooner.
+- Authorizing again replaces the previous challenge.
+- The operation becomes `AWAITING_AUTHORIZATION` and occupies the
+  installation until it is submitted, cancelled, or its plan expires.
+- Everything that does not depend on the password is checked first, so a
+  request that could never be authorized does not cost an attempt.
+- A wrong password counts as a failed login: the same lockout, keyed by user
+  and client address, with the same thresholds. A locked-out caller gets `429
+  TOO_MANY_ATTEMPTS` and `Retry-After`, and cannot log in either until it
+  lapses. The endpoint also shares the login endpoint's per-address rate
+  limit, whose `429` is the API's ordinary body, not the envelope.
+- A session whose token carries no `jti` (issued before tokens had one) cannot
+  authorize: `403 REAUTHENTICATION_REQUIRED`. Logging in again resolves it.
+
+| Status | `code` | Meaning |
+|---|---|---|
+| `401` | `REAUTHENTICATION_FAILED` | Wrong password. |
+| `403` | `PERMISSION_DENIED`, `REAUTHENTICATION_REQUIRED` | |
+| `409` | `AUTHORIZATION_NOT_REQUIRED` | The operation is a backup. |
+| `409` | `OPERATION_CONFLICT` | Another operation is active; `recovery.operation_id` names it. |
+| `409` | `OPERATION_STATE_INVALID` | Already submitted, or cancelled. |
+| `410` | `PLAN_EXPIRED` | Plan again. |
+| `429` | `TOO_MANY_ATTEMPTS` | Locked out. |
+
+### `POST /oam/v1/appliance/operations/{operation_id}/submit`
+
+```http
+POST /oam/v1/appliance/operations/{operation_id}/submit
+Content-Type: application/json
+
+{ "plan_hash": "<the plan_hash that was reviewed>", "challenge": "<from authorize>" }
+```
+
+`challenge` is required exactly when the operation requires
+reauthentication. The answer is `202` and the operation as it stands, usually
+`QUEUED`; follow it with `GET`.
+
+Submit takes no `Idempotency-Key`: it is idempotent on the operation.
+Submitting an operation that was already submitted returns it unchanged, with
+`202`, and starts nothing.
+
+In one database transaction OAM consumes the challenge, moves the operation to
+`QUEUED` and writes the audit record; only then does it ask the host adapter.
+So:
+
+- of any number of simultaneous submits presenting one challenge, one is
+  accepted and the host starts one job;
+- if the adapter cannot be reached, the submit still answers `202`: the
+  operation is `QUEUED` with `host_generation: 0` and `stale: true`, and OAM
+  delivers it when the adapter answers — also after OAM itself restarts;
+- if the adapter refuses the job (the installation changed since planning),
+  the operation is `FAILED` with the adapter's `error_code` and
+  `error_origin: "host"`.
+
+| Status | `code` | Meaning |
+|---|---|---|
+| `400` | `INVALID_REQUEST`, `CHALLENGE_REQUIRED` | |
+| `403` | `PERMISSION_DENIED` | Including a role that lost the capability since planning. |
+| `403` | `CHALLENGE_MISMATCH` | Unknown, or issued for another operation, plan, user or session. Deliberately one code for all of these. |
+| `403` | `REAUTHENTICATION_REQUIRED` | The session cannot hold a challenge. |
+| `409` | `PLAN_STALE` | `plan_hash` is not this operation's. |
+| `409` | `CHALLENGE_CONSUMED` | |
+| `409` | `OPERATION_CONFLICT` | Another operation is active; `recovery.operation_id` names it. |
+| `409` | `OPERATION_STATE_INVALID` | Cancelled, or changed state while the request was in flight. |
+| `410` | `PLAN_EXPIRED`, `CHALLENGE_EXPIRED` | |
+
+### `POST /oam/v1/appliance/operations/{operation_id}/cancel`
+
+No body. `202` and the operation.
+
+- Before submission it always succeeds: the operation becomes `CANCELLED`
+  with `error_code: "CANCELLED_BY_USER"`.
+- After submission the host adapter decides. `cancellable` on the operation is
+  its last word on whether it would agree; once the operation has passed
+  `plan.irreversible_after_phase` the answer is `409
+  OPERATION_NOT_CANCELLABLE`.
+- If the adapter cannot be reached: `502 HOST_UNREACHABLE`, nothing changed.
+- A submission the adapter never received is cancelled by OAM, and is then
+  never delivered. Should OAM deliver it while the cancel is in flight, the
+  answer is `409 OPERATION_STATE_INVALID` — never a cancellation that did not
+  happen; ask again and the adapter decides.
+- Cancelling a cancelled operation returns it; cancelling one that ended any
+  other way is `409 OPERATION_STATE_INVALID`.
+
+### `POST /oam/v1/appliance/operations/{operation_id}/reconcile`
+
+No body. `200` and the operation. OAM reads the host adapter's journal for
+every unfinished operation every 2 seconds on its own; this reads it for one
+operation now. It is never needed for correctness and never causes anything
+to be executed.
+
 ### States
 
-`PLANNED` and `CANCELLED` are the only states an operation can be in today.
-The contract reserves `AWAITING_AUTHORIZATION`, `QUEUED`, `RUNNING`,
-`VERIFYING`, `SUCCEEDED`, `FAILED`, `COMPENSATING`, `ROLLED_BACK` and
-`RECOVERY_REQUIRED` for when operations can be submitted.
+| State | Set by | |
+|---|---|---|
+| `PLANNED` | OAM | Planned, not submitted. |
+| `AWAITING_AUTHORIZATION` | OAM | A challenge was issued. Occupies the installation. |
+| `QUEUED` | OAM, then host | Submitted. `host_generation: 0` means the adapter has not confirmed it yet. |
+| `RUNNING`, `VERIFYING` | host | `phase` says where. |
+| `COMPENSATING` | host | Failed past the point of no return; the host is undoing it. |
+| `SUCCEEDED`, `FAILED`, `ROLLED_BACK`, `CANCELLED` | host, or OAM before submission | Terminal. `finished_at` is set. |
+| `RECOVERY_REQUIRED` | host or OAM | Automation has ended and an operator must look. **Not terminal: it keeps the installation occupied**, and every action reports `unavailable_reason: "RECOVERY_REQUIRED"`. There is no API to clear it yet. |
+
+Fields that describe how well OAM knows the state:
+
+- `host_generation` — the generation of the adapter's journal entry this
+  operation reflects. An entry is applied only if its generation is higher
+  than the one stored, so a repeated or late answer changes nothing.
+- `stale` — the adapter could not be read at the last attempt; `state` is the
+  last one known. `reconciliation` is then `HOST_UNREACHABLE`.
+- `reconciliation: "HOST_UNKNOWN"` with `error_code: "HOST_JOB_LOST"` — the
+  adapter's journal no longer has an operation it had reported on. OAM does
+  **not** submit it again, since it cannot know how far it got; the operation
+  becomes `RECOVERY_REQUIRED`.
+- `error_code` / `error_origin` — why it ended as it did, and whether OAM
+  (`PLAN_EXPIRED`, `CANCELLED_BY_USER`, `HOST_JOB_LOST`) or the host said so.
+
+### Audit trail
+
+Every plan, authorization (granted or denied), submit (accepted or denied),
+cancel request and state change is one row of `appliance_audit`: operation,
+event, actor, request ID, client address, old and new state, and a small
+`detail` object whose fields are fixed in code. It never contains a password,
+a challenge, a token or archive content. Rows for what OAM learned from the
+host have no actor. The trail is in the database only; there is no API to
+read it yet.
 
 ## Errors
 
@@ -171,7 +322,9 @@ body of the rest of the API:
   `_`, `-`; at most 64 characters), or one OAM generated. It is returned in the
   `X-Request-ID` response header on success too.
 - `recovery.action` is one of `RETRY`, `REAUTHENTICATE`, `REPLAN`,
-  `CONTACT_SUPPORT`, `NONE`.
+  `WAIT_FOR_OPERATION`, `CONTACT_SUPPORT`, `NONE`. With `WAIT_FOR_OPERATION`,
+  `recovery.operation_id` is the operation in the way.
+- `operation_id` is present on errors from routes under one operation.
 
 A request with no valid session is rejected before it reaches these endpoints
 and keeps the API's ordinary `401` body.
@@ -216,8 +369,23 @@ process able to replace the socket could describe an installation that does not
 exist. It could not make OAM's requests verify anywhere else, since it does not
 hold the key.
 
-The adapter serves `GET /v1/capabilities`, `GET /v1/identity` and
-`POST /v1/plans`. It refuses a plan it understood with `422` and a body of
+The adapter serves:
+
+| | |
+|---|---|
+| `GET /v1/capabilities`, `GET /v1/identity` | What the installation is and offers. |
+| `POST /v1/plans` | Validate a request. No side effects. |
+| `POST /v1/jobs` | Execute a plan. **Idempotent on `operation_id`**: a job the journal already holds is returned as it stands and nothing is started. The request carries `installation_id` and `plan_hash`; the adapter refuses a job planned for another installation or a plan that no longer holds. |
+| `GET /v1/jobs/{operation_id}` | The journal entry; `404` if there is none. |
+| `POST /v1/jobs/{operation_id}/cancel` | Stop it if that is still possible; refuse with `422` if not. |
+
+A journal entry is `{operation_id, state, phase, generation, cancellable,
+error_code}`. `generation` starts at 1 and rises with every change. OAM only
+ever asks; nothing is pushed to it, so the journal must survive an adapter
+restart — a job OAM was told about and can no longer find becomes
+`RECOVERY_REQUIRED`.
+
+The adapter refuses a request it understood with `422` and a body of
 `{"code": "UPPER_SNAKE_CASE", "message": "…"}`; OAM relays the code and not the
 message.
 
@@ -241,6 +409,13 @@ OAM_APPLIANCE_HOST_KEY_FILE=/tmp/appliance.key \
 The fixture plans any action listed in `-available` against an invented
 installation. An `archive_ref` or `target_release_ref` of `missing` is
 rejected, to exercise the host-refusal path.
+
+A submitted job walks a fixed script — `QUEUED`, `RUNNING/prepare`, a
+type-specific phase, `VERIFYING/verify`, `SUCCEEDED` — one step per `-step`
+(default `2s`). `-outcome fail` ends it in `FAILED` after `prepare`;
+`-outcome recovery` in `COMPENSATING` and then `RECOVERY_REQUIRED`. Its
+journal is in memory: restarting the fixture loses it, which is itself a way
+to exercise `HOST_JOB_LOST`.
 
 A result obtained against the fixture shows how OAM behaves. It is not evidence
 that an Appliance works.

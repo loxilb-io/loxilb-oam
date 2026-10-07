@@ -64,6 +64,38 @@ func (s OperationState) Valid() bool {
 	return false
 }
 
+// hostOwned reports whether s is a state the host adapter reports, as opposed
+// to one only OAM sets before submission.
+func (s OperationState) hostOwned() bool {
+	switch s {
+	case StateQueued, StateRunning, StateVerifying, StateSucceeded, StateFailed,
+		StateCompensating, StateRolledBack, StateRecoveryRequired, StateCancelled:
+		return true
+	}
+	return false
+}
+
+// Terminal reports whether nothing further will happen to an operation in
+// this state. RECOVERY_REQUIRED is not terminal: it ends automation, but the
+// host may still report how an operator resolved it.
+func (s OperationState) Terminal() bool {
+	switch s {
+	case StateSucceeded, StateFailed, StateRolledBack, StateCancelled:
+		return true
+	}
+	return false
+}
+
+// Active reports whether an operation in this state occupies the
+// installation, so that no other may be authorized or submitted.
+func (s OperationState) Active() bool {
+	switch s {
+	case StateAwaitingAuthorization, StateQueued, StateRunning, StateVerifying, StateCompensating, StateRecoveryRequired:
+		return true
+	}
+	return false
+}
+
 // PlanTTL is how long a plan may be submitted after it was made. The host
 // validated the request against the installation as it was then; the longer
 // the wait, the less that validation is worth.
@@ -149,9 +181,20 @@ type Plan struct {
 	AffectedResources      []string `json:"affected_resources"`
 }
 
+// ChallengeTTL is how long an authorization challenge may be used. It never
+// outlives the plan it authorizes.
+const ChallengeTTL = 5 * time.Minute
+
 // Reconciliation values: how this row relates to the host journal.
 const (
+	// ReconciliationInSync: the row reflects the journal as last read.
 	ReconciliationInSync = "IN_SYNC"
+	// ReconciliationHostUnreachable: the journal could not be read; the row
+	// shows the last state known and may be stale.
+	ReconciliationHostUnreachable = "HOST_UNREACHABLE"
+	// ReconciliationHostUnknown: the journal has no entry for an operation
+	// it had previously reported on.
+	ReconciliationHostUnknown = "HOST_UNKNOWN"
 )
 
 // Operation is one planned or executed whole-Appliance operation, as returned
@@ -178,19 +221,30 @@ type Operation struct {
 	Plan          *Plan     `json:"plan,omitempty"`
 	Redacted      bool      `json:"redacted"`
 
-	RequiresReauthentication bool   `json:"requires_reauthentication"`
-	Reconciliation           string `json:"reconciliation"`
-	ErrorCode                string `json:"error_code,omitempty"`
-	ErrorOrigin              string `json:"error_origin,omitempty"`
+	RequiresReauthentication bool `json:"requires_reauthentication"`
+	// Cancellable: a cancel request would be accepted now. Decided by OAM
+	// before submission and by the host adapter after.
+	Cancellable bool `json:"cancellable"`
+	// HostGeneration is the host journal generation this operation reflects;
+	// 0 until the host has reported on it.
+	HostGeneration int64  `json:"host_generation"`
+	Reconciliation string `json:"reconciliation"`
+	// Stale: the host could not be read at the last attempt, so State may be
+	// out of date.
+	Stale       bool   `json:"stale"`
+	ErrorCode   string `json:"error_code,omitempty"`
+	ErrorOrigin string `json:"error_origin,omitempty"`
 
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	SubmittedAt *time.Time `json:"submitted_at,omitempty"`
 	FinishedAt  *time.Time `json:"finished_at,omitempty"`
 
-	// Not serialized: who owns the row, and the idempotency identity.
-	ActorUserID int    `json:"-"`
-	RequestHash string `json:"-"`
+	// Not serialized: who owns the row, the idempotency identity, and the
+	// request as planned (needed to submit it).
+	ActorUserID int         `json:"-"`
+	RequestHash string      `json:"-"`
+	request     PlanRequest `json:"-"`
 }
 
 // redacted returns a copy without the detail reserved for callers who may run

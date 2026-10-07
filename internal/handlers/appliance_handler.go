@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -59,14 +60,24 @@ func requestID(c *gin.Context) string {
 // writeApplianceError sends the appliance error envelope. The origin is also
 // set as a header, where the gateway proxy already puts it.
 func writeApplianceError(c *gin.Context, status int, code, origin, message, recovery string) {
-	c.Header(services.ErrorOriginHeader, origin)
-	c.AbortWithStatusJSON(status, appliance.ErrorBody{
+	writeApplianceRecovery(c, status, code, origin, message, appliance.Recovery{Action: recovery})
+}
+
+// writeApplianceRecovery is writeApplianceError for a recovery that names
+// something. On a route under an operation the envelope says which one.
+func writeApplianceRecovery(c *gin.Context, status int, code, origin, message string, recovery appliance.Recovery) {
+	body := appliance.ErrorBody{
 		Error:     message,
 		Code:      code,
 		Origin:    origin,
 		RequestID: requestID(c),
-		Recovery:  &appliance.Recovery{Action: recovery},
-	})
+		Recovery:  &recovery,
+	}
+	if id := c.Param("operation_id"); appliance.ValidOperationID(id) {
+		body.OperationID = id
+	}
+	c.Header(services.ErrorOriginHeader, origin)
+	c.AbortWithStatusJSON(status, body)
 }
 
 // Require gates an appliance route on a capability, like
@@ -153,7 +164,20 @@ func (h *ApplianceHandler) caller(c *gin.Context) appliance.Caller {
 			capability, ok := actionCapability[action]
 			return ok && middleware.Can(user.Role, capability)
 		},
+		SessionID: sessionID(c),
+		RequestID: requestID(c),
+		SourceIP:  c.ClientIP(),
 	}
+}
+
+// sessionID returns the jti of the caller's token: the session an
+// authorization is bound to. Empty for a token issued before tokens had one.
+func sessionID(c *gin.Context) string {
+	value, _ := c.Get("username") // set by TokenAuthMiddleware
+	if claims, ok := value.(*utils.Claims); ok && claims != nil {
+		return claims.ID
+	}
+	return ""
 }
 
 var hostCodeRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
@@ -162,7 +186,40 @@ var hostCodeRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
 // recognized is logged and reported as an internal error without its text.
 func writeOperationError(c *gin.Context, err error) {
 	var rejection *appliance.HostRejection
+	var conflict *appliance.ConflictError
+	oam := func(status int, code, message, recovery string) {
+		writeApplianceError(c, status, code, appliance.OriginOAM, message, recovery)
+	}
 	switch {
+	case errors.As(err, &conflict):
+		// Name the operation in the way, so a client can show or follow it.
+		// If it finished in the meantime, asking again is all there is to do.
+		recovery := appliance.Recovery{Action: appliance.RecoveryWait, OperationID: conflict.BlockingOperationID}
+		if conflict.BlockingOperationID == "" {
+			recovery = appliance.Recovery{Action: appliance.RecoveryRetry}
+		}
+		writeApplianceRecovery(c, http.StatusConflict, appliance.CodeOperationConflict, appliance.OriginOAM,
+			"Another operation is active on this installation", recovery)
+	case errors.Is(err, appliance.ErrPlanExpired):
+		oam(http.StatusGone, appliance.CodePlanExpired, err.Error(), appliance.RecoveryReplan)
+	case errors.Is(err, appliance.ErrPlanStale):
+		oam(http.StatusConflict, appliance.CodePlanStale, err.Error(), appliance.RecoveryReplan)
+	case errors.Is(err, appliance.ErrOperationState):
+		oam(http.StatusConflict, appliance.CodeOperationStateInvalid, err.Error(), appliance.RecoveryNone)
+	case errors.Is(err, appliance.ErrNotCancellable):
+		oam(http.StatusConflict, appliance.CodeOperationNotCancellable, err.Error(), appliance.RecoveryNone)
+	case errors.Is(err, appliance.ErrAuthorizationNotRequired):
+		oam(http.StatusConflict, appliance.CodeAuthorizationNotRequired, err.Error(), appliance.RecoveryNone)
+	case errors.Is(err, appliance.ErrSessionUnbound):
+		oam(http.StatusForbidden, appliance.CodeReauthenticationRequired, err.Error(), appliance.RecoveryReauthenticate)
+	case errors.Is(err, appliance.ErrChallengeRequired):
+		oam(http.StatusBadRequest, appliance.CodeChallengeRequired, err.Error(), appliance.RecoveryNone)
+	case errors.Is(err, appliance.ErrChallengeMismatch):
+		oam(http.StatusForbidden, appliance.CodeChallengeMismatch, err.Error(), appliance.RecoveryNone)
+	case errors.Is(err, appliance.ErrChallengeConsumed):
+		oam(http.StatusConflict, appliance.CodeChallengeConsumed, err.Error(), appliance.RecoveryNone)
+	case errors.Is(err, appliance.ErrChallengeExpired):
+		oam(http.StatusGone, appliance.CodeChallengeExpired, err.Error(), appliance.RecoveryNone)
 	case errors.Is(err, appliance.ErrIdempotencyKey):
 		writeApplianceError(c, http.StatusBadRequest, appliance.CodeIdempotencyKeyInvalid, appliance.OriginOAM, err.Error(), appliance.RecoveryNone)
 	case errors.Is(err, appliance.ErrSchemaVersion):
@@ -198,11 +255,27 @@ func writeOperationError(c *gin.Context, err error) {
 	}
 }
 
+// decodeBody reads a bounded JSON request body into out. It answers the
+// request itself and reports false when the body is not acceptable.
+func decodeBody(c *gin.Context, out any) bool {
+	body := http.MaxBytesReader(c.Writer, c.Request.Body, maxPlanRequestBytes)
+	decoder := json.NewDecoder(body)
+	// An unknown field is refused: on an alpha contract it is far more
+	// likely a renamed field silently ignored than something harmless.
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
+		writeApplianceError(c, http.StatusBadRequest, appliance.CodeInvalidRequest, appliance.OriginOAM,
+			"Invalid request body", appliance.RecoveryNone)
+		return false
+	}
+	return true
+}
+
 // IdempotencyKeyHeader names the request header that makes planning safe to
 // retry.
 const IdempotencyKeyHeader = "Idempotency-Key"
 
-// maxPlanRequestBytes bounds the plan request body.
+// maxPlanRequestBytes bounds a request body on these endpoints.
 const maxPlanRequestBytes = 16 << 10
 
 // PlanOperation handles POST /oam/v1/appliance/operations.
@@ -227,14 +300,7 @@ const maxPlanRequestBytes = 16 << 10
 // @Router /oam/v1/appliance/operations [post]
 func (h *ApplianceHandler) PlanOperation(c *gin.Context) {
 	var req appliance.PlanRequest
-	body := http.MaxBytesReader(c.Writer, c.Request.Body, maxPlanRequestBytes)
-	decoder := json.NewDecoder(body)
-	// An unknown field is refused: on an alpha contract it is far more
-	// likely a renamed field silently ignored than something harmless.
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
-		writeApplianceError(c, http.StatusBadRequest, appliance.CodeInvalidRequest, appliance.OriginOAM,
-			"Invalid request body", appliance.RecoveryNone)
+	if !decodeBody(c, &req) {
 		return
 	}
 	op, created, err := h.service.PlanOperation(c.Request.Context(), h.caller(c), c.GetHeader(IdempotencyKeyHeader), requestID(c), req)
@@ -308,4 +374,182 @@ func (h *ApplianceHandler) ListOperations(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, list)
+}
+
+// tooManyAttempts answers a reauthentication refused by the login lockout.
+func tooManyAttempts(c *gin.Context, remaining time.Duration) {
+	c.Header("Retry-After", strconv.Itoa(int(remaining.Seconds())+1))
+	writeApplianceError(c, http.StatusTooManyRequests, appliance.CodeTooManyAttempts, appliance.OriginOAM,
+		"Too many failed attempts. Try again later.", appliance.RecoveryRetry)
+}
+
+// AuthorizeOperation handles POST /oam/v1/appliance/operations/:operation_id/authorize.
+// @Summary Authorize a destructive Appliance operation (alpha)
+// @Description Verifies the caller's current password and returns a one-use challenge for submitting this operation. The challenge is bound to the operation, its plan, the installation, the caller and the caller's session; it expires after 5 minutes or with the plan, whichever is sooner, and authorizing again replaces it. The operation moves to AWAITING_AUTHORIZATION and occupies the installation until it is submitted, cancelled or expires. Failed passwords count toward the same lockout as failed logins. Operations that do not require reauthentication (backup) are refused with AUTHORIZATION_NOT_REQUIRED.
+// @Tags appliance
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param operation_id path string true "Operation ID"
+// @Param request body appliance.AuthorizeRequest true "The caller's current password"
+// @Success 200 {object} appliance.Challenge
+// @Failure 400 {object} appliance.ErrorBody
+// @Failure 401 {object} appliance.ErrorBody "REAUTHENTICATION_FAILED: wrong password"
+// @Failure 403 {object} appliance.ErrorBody "PERMISSION_DENIED, or REAUTHENTICATION_REQUIRED for a session that predates session identifiers"
+// @Failure 404 {object} appliance.ErrorBody
+// @Failure 409 {object} appliance.ErrorBody "OPERATION_CONFLICT, OPERATION_STATE_INVALID or AUTHORIZATION_NOT_REQUIRED"
+// @Failure 410 {object} appliance.ErrorBody "PLAN_EXPIRED"
+// @Failure 429 {object} appliance.ErrorBody "TOO_MANY_ATTEMPTS"
+// @Security BearerAuth
+// @Router /oam/v1/appliance/operations/{operation_id}/authorize [post]
+func (h *ApplianceHandler) AuthorizeOperation(c *gin.Context) {
+	var req appliance.AuthorizeRequest
+	if !decodeBody(c, &req) {
+		return
+	}
+	if req.Password == "" {
+		writeApplianceError(c, http.StatusBadRequest, appliance.CodeInvalidRequest, appliance.OriginOAM,
+			"password is required", appliance.RecoveryNone)
+		return
+	}
+	ctx := c.Request.Context()
+	caller := h.caller(c)
+	id := c.Param("operation_id")
+
+	// Everything that does not depend on the password is settled first: a
+	// request that could never be authorized must not cost an attempt.
+	if err := h.service.CanAuthorize(ctx, caller, id); err != nil {
+		writeOperationError(c, err)
+		return
+	}
+
+	// The same lockout as login, keyed the same way, so guessing a password
+	// here is no easier than guessing it there.
+	now := time.Now()
+	blocked, remaining, err := h.userService.IsLoginBlocked(caller.Username, caller.SourceIP, now)
+	if err != nil {
+		utils.LogError("Failed to check login block status: " + err.Error())
+	}
+	if blocked {
+		h.service.AuthorizationDenied(ctx, caller, id, appliance.CodeTooManyAttempts)
+		tooManyAttempts(c, remaining)
+		return
+	}
+	_, _, valid, err := h.userService.ValidateUser(caller.Username, req.Password)
+	if !valid || err != nil {
+		utils.LogWarning("Appliance operation " + id + ": reauthentication failed for user " + caller.Username)
+		blockedUntil, recordErr := h.userService.RecordFailedLogin(caller.Username, caller.SourceIP, now)
+		if recordErr != nil {
+			utils.LogError("Failed to record failed login attempt: " + recordErr.Error())
+		}
+		var validation *services.ValidationError
+		switch {
+		case blockedUntil != nil:
+			h.service.AuthorizationDenied(ctx, caller, id, appliance.CodeTooManyAttempts)
+			tooManyAttempts(c, time.Until(*blockedUntil))
+		case errors.As(err, &validation) && validation.Type == services.ErrSystemError.Type:
+			writeApplianceError(c, http.StatusInternalServerError, appliance.CodeInternal, appliance.OriginOAM,
+				"Internal error", appliance.RecoveryContactSupport)
+		default:
+			h.service.AuthorizationDenied(ctx, caller, id, appliance.CodeReauthenticationFailed)
+			writeApplianceError(c, http.StatusUnauthorized, appliance.CodeReauthenticationFailed, appliance.OriginOAM,
+				"The password is not correct", appliance.RecoveryNone)
+		}
+		return
+	}
+	if err := h.userService.ClearLoginAttempts(caller.Username, caller.SourceIP); err != nil {
+		utils.LogError("Failed to clear login attempts: " + err.Error())
+	}
+
+	challenge, err := h.service.Authorize(ctx, caller, id)
+	if err != nil {
+		writeOperationError(c, err)
+		return
+	}
+	utils.LogInfo("Appliance operation authorized: id=" + id + " by=" + caller.Username)
+	// The challenge is a credential for one destructive act.
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, challenge)
+}
+
+// SubmitOperation handles POST /oam/v1/appliance/operations/:operation_id/submit.
+// @Summary Submit an Appliance operation for execution (alpha)
+// @Description Hands a planned operation to the host adapter. `plan_hash` must be the plan the caller reviewed. An operation that requires reauthentication must have been authorized and must present its challenge, which is consumed. Only one operation can be active per installation. The answer is 202 with the operation as it stands; follow it with GET. Submitting an operation that was already submitted returns it unchanged. If the host adapter could not be reached the operation stays QUEUED with `stale` true and OAM delivers it when the adapter answers; it is never executed twice.
+// @Tags appliance
+// @Accept json
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param operation_id path string true "Operation ID"
+// @Param request body appliance.SubmitRequest true "The plan being submitted and, when required, its challenge"
+// @Success 202 {object} appliance.Operation
+// @Failure 400 {object} appliance.ErrorBody "INVALID_REQUEST or CHALLENGE_REQUIRED"
+// @Failure 401 {object} appliance.ErrorBody
+// @Failure 403 {object} appliance.ErrorBody "PERMISSION_DENIED, CHALLENGE_MISMATCH or REAUTHENTICATION_REQUIRED"
+// @Failure 404 {object} appliance.ErrorBody
+// @Failure 409 {object} appliance.ErrorBody "OPERATION_CONFLICT, OPERATION_STATE_INVALID, PLAN_STALE or CHALLENGE_CONSUMED"
+// @Failure 410 {object} appliance.ErrorBody "PLAN_EXPIRED or CHALLENGE_EXPIRED"
+// @Security BearerAuth
+// @Router /oam/v1/appliance/operations/{operation_id}/submit [post]
+func (h *ApplianceHandler) SubmitOperation(c *gin.Context) {
+	var req appliance.SubmitRequest
+	if !decodeBody(c, &req) {
+		return
+	}
+	if req.PlanHash == "" {
+		writeApplianceError(c, http.StatusBadRequest, appliance.CodeInvalidRequest, appliance.OriginOAM,
+			"plan_hash is required", appliance.RecoveryNone)
+		return
+	}
+	op, err := h.service.Submit(c.Request.Context(), h.caller(c), c.Param("operation_id"), req.PlanHash, req.Challenge)
+	if err != nil {
+		writeOperationError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, op)
+}
+
+// CancelOperation handles POST /oam/v1/appliance/operations/:operation_id/cancel.
+// @Summary Cancel an Appliance operation (alpha)
+// @Description Before submission cancelling always succeeds. After, the host adapter decides: it refuses once the operation has passed its irreversible phase (`cancellable` false). Cancelling a cancelled operation returns it unchanged.
+// @Tags appliance
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param operation_id path string true "Operation ID"
+// @Success 202 {object} appliance.Operation
+// @Failure 401 {object} appliance.ErrorBody
+// @Failure 403 {object} appliance.ErrorBody
+// @Failure 404 {object} appliance.ErrorBody
+// @Failure 409 {object} appliance.ErrorBody "OPERATION_NOT_CANCELLABLE or OPERATION_STATE_INVALID"
+// @Failure 502 {object} appliance.ErrorBody "The host adapter did not answer"
+// @Security BearerAuth
+// @Router /oam/v1/appliance/operations/{operation_id}/cancel [post]
+func (h *ApplianceHandler) CancelOperation(c *gin.Context) {
+	op, err := h.service.Cancel(c.Request.Context(), h.caller(c), c.Param("operation_id"))
+	if err != nil {
+		writeOperationError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, op)
+}
+
+// ReconcileOperation handles POST /oam/v1/appliance/operations/:operation_id/reconcile.
+// @Summary Re-read an Appliance operation from the host adapter (alpha)
+// @Description OAM follows submitted operations on its own; this asks it to read the host adapter's journal for one operation now and returns the result. It never causes anything to be executed twice. If the adapter does not answer, the operation is returned as last known with `stale` true.
+// @Tags appliance
+// @Produce json
+// @Param Authorization header string true "Bearer token"
+// @Param operation_id path string true "Operation ID"
+// @Success 200 {object} appliance.Operation
+// @Failure 401 {object} appliance.ErrorBody
+// @Failure 403 {object} appliance.ErrorBody
+// @Failure 404 {object} appliance.ErrorBody
+// @Security BearerAuth
+// @Router /oam/v1/appliance/operations/{operation_id}/reconcile [post]
+func (h *ApplianceHandler) ReconcileOperation(c *gin.Context) {
+	op, err := h.service.Reconcile(c.Request.Context(), h.caller(c), c.Param("operation_id"))
+	if err != nil {
+		writeOperationError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, op)
 }

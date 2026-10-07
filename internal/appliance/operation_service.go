@@ -13,6 +13,12 @@ type Caller struct {
 	UserID    int
 	Username  string
 	Permitted func(Action) bool
+	// SessionID is the jti of the caller's token; empty for a token issued
+	// before tokens carried one.
+	SessionID string
+	// RequestID and SourceIP are recorded in the audit trail.
+	RequestID string
+	SourceIP  string
 }
 
 var (
@@ -106,6 +112,8 @@ func (s *Service) PlanOperation(ctx context.Context, caller Caller, key, request
 	if op == nil {
 		return nil, false, errors.New("operation vanished between insert and read")
 	}
+	audit(ctx, s.db, auditEntry{OperationID: op.ID, Event: AuditPlan, Actor: &caller, NewState: StatePlanned,
+		Detail: auditDetail{Type: op.Type, PlanHash: op.PlanHash}})
 	return op, true, nil
 }
 
