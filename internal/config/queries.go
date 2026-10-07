@@ -124,7 +124,7 @@ const (
 	SelectInstanceSnapshotsCountQuery = "SELECT COUNT(*) FROM instance_snapshots WHERE instance_id = $1"
 
 	SelectSnapshotByIDQuery = `
-		SELECT ` + snapshotMetaColumns + `, last_restore_response
+		SELECT ` + snapshotMetaColumns + `, last_restore_response, last_restore_components
 		FROM instance_snapshots
 		WHERE id = $1
 	`
@@ -150,8 +150,9 @@ const (
 		SET restore_count = restore_count + 1,
 		    last_restored_at = NOW(),
 		    last_restore_result = $1,
-		    last_restore_response = $2
-		WHERE id = $3
+		    last_restore_response = $2,
+		    last_restore_components = $3
+		WHERE id = $4
 	`
 
 	SelectSnapshotScheduleQuery = `

@@ -240,7 +240,7 @@ func TestSnapshotGatewayClientUsesServiceIdentityForFetchAndRestore(t *testing.T
 
 	_, _, err := client.FetchSnapshot(instance)
 	require.NoError(t, err)
-	_, _, err = client.Restore(instance, []byte(`{"kind":"loxilb-snapshot"}`), RestoreModeDryRun)
+	_, _, err = client.Restore(instance, []byte(`{"kind":"loxilb-snapshot"}`), RestoreModeDryRun, nil)
 	require.NoError(t, err)
 
 	require.Len(t, requests, 2)
@@ -248,6 +248,18 @@ func TestSnapshotGatewayClientUsesServiceIdentityForFetchAndRestore(t *testing.T
 	restore := requests[1]
 	assert.Equal(t, observedRequest{http.MethodGet, "/config/snapshot", "Bearer snapshot-service-token", ""}, fetch)
 	assert.Equal(t, observedRequest{http.MethodPost, "/config/restore?mode=dry-run", "Bearer snapshot-service-token", "application/json"}, restore)
+}
+
+// The selection is one URL-encoded parameter, and it is left out entirely
+// when there is none: the gateway reads an empty `components` as every domain.
+func TestRestoreQueryEncodesTheSelection(t *testing.T) {
+	assert.Equal(t, "mode=dry-run", restoreQuery(RestoreModeDryRun, nil))
+	assert.Equal(t, "mode=commit", restoreQuery(RestoreModeCommit, []string{}))
+	assert.Equal(t, "components=auditsink&mode=commit", restoreQuery(RestoreModeCommit, []string{"auditsink"}))
+	assert.Equal(t, "components=cert%2Cauditsink&mode=commit", restoreQuery(RestoreModeCommit, []string{"cert", "auditsink"}))
+	assert.Equal(t, restoreQuery(RestoreModeDryRun, []string{"cert", "auditsink"}),
+		strings.Replace(restoreQuery(RestoreModeCommit, []string{"cert", "auditsink"}), "mode=commit", "mode=dry-run", 1),
+		"dry-run and commit differ in the mode only")
 }
 
 func TestGatewayServiceIdentityAuthorizeFailsClosedForInvalidValue(t *testing.T) {

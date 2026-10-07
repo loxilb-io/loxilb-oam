@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,6 +30,44 @@ func TestSnapshotErrorMarksRelayedGatewayStatus(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, recorder.Code, "the Gateway's status is still relayed verbatim")
 		assert.Equal(t, services.ErrorOriginGateway, recorder.Header().Get(services.ErrorOriginHeader))
 	}
+}
+
+func TestDecodeRestoreRequest(t *testing.T) {
+	req, err := decodeRestoreRequest([]byte(`{"mode":"commit","target_instance_id":2}`))
+	assert.NoError(t, err)
+	assert.Nil(t, req.Components, "no selection: the whole document")
+	assert.Equal(t, "commit", req.Mode)
+
+	req, err = decodeRestoreRequest([]byte(`{"components":["cert","auditsink"]}`))
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"cert", "auditsink"}, req.Components)
+
+	// Present but empty reaches the service as an empty selection, which the
+	// service refuses; it must not arrive there as "no selection".
+	req, err = decodeRestoreRequest([]byte(`{"components":[]}`))
+	assert.NoError(t, err)
+	assert.NotNil(t, req.Components)
+	assert.Empty(t, req.Components)
+
+	for _, body := range []string{`{"components":null}`, `{"components":"auditsink"}`, `{"components":{}}`, `{"mode":`, `[]`} {
+		_, err := decodeRestoreRequest([]byte(body))
+		assert.Error(t, err, body)
+	}
+}
+
+// What OAM refuses or cannot do on the restore path, as distinct statuses.
+func TestSnapshotErrorStatuses(t *testing.T) {
+	for want, err := range map[int]error{
+		http.StatusBadRequest:          fmt.Errorf("%w: components must name at least one domain", services.ErrInvalidRestoreRequest),
+		http.StatusUnprocessableEntity: services.ErrSnapshotCorrupted,
+		http.StatusServiceUnavailable:  fmt.Errorf("authorizing: %w", services.ErrGatewayServiceIdentityUnavailable),
+		http.StatusBadGateway:          &services.GatewayError{Body: "connection refused"},
+	} {
+		assert.Equal(t, want, writeSnapshotErrorFor(err).Code, "%v", err)
+	}
+	// The same condition answers 503 on the instance proxy.
+	status, _, _ := classifyProxyError(services.ErrGatewayServiceIdentityUnavailable)
+	assert.Equal(t, http.StatusServiceUnavailable, status)
 }
 
 // OAM's own failures must stay unmarked: marking them "gateway" would keep a

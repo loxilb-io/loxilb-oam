@@ -36,6 +36,7 @@ type fakeGateway struct {
 	restoreBody   []byte
 	restoreErr    error
 	restoreCalls  []string // modes, in order
+	restoreComps  [][]string
 	restoreDocs   [][]byte
 }
 
@@ -50,8 +51,9 @@ func (f *fakeGateway) FetchSnapshot(_ *models.LoxiLBInstance) ([]byte, http.Head
 	return f.snapshotBody, h, nil
 }
 
-func (f *fakeGateway) Restore(_ *models.LoxiLBInstance, doc []byte, mode string) (int, []byte, error) {
+func (f *fakeGateway) Restore(_ *models.LoxiLBInstance, doc []byte, mode string, components []string) (int, []byte, error) {
 	f.restoreCalls = append(f.restoreCalls, mode)
+	f.restoreComps = append(f.restoreComps, components)
 	f.restoreDocs = append(f.restoreDocs, doc)
 	if f.restoreErr != nil {
 		return 0, nil, f.restoreErr
@@ -107,6 +109,10 @@ func expectInstanceFetch(mock sqlmock.Sqlmock, id int) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, name, host, port, protocol, description, version, api_endpoint, cimage, ctag, is_active, created_at FROM loxilb_instances WHERE id = $1")).
 		WithArgs(id).WillReturnRows(instanceRow(mock, id))
 }
+
+// snapDetailCols is the single-snapshot column set: the metadata plus the
+// record of the last restore.
+var snapDetailCols = append(append([]string{}, snapMetaCols...), "last_restore_response", "last_restore_components")
 
 var snapMetaCols = []string{"id", "instance_id", "name", "description", "trigger_type",
 	"schema_version", "gateway_version", "size_bytes", "checksum", "stored_checksum",
@@ -176,9 +182,9 @@ func TestTakeSnapshotHappyPath(t *testing.T) {
 			len(doc), env.Checksum, sqlmock.AnyArg(), sqlmock.AnyArg(), false, false, "admin").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("SELECT (.+) FROM instance_snapshots").
-		WillReturnRows(sqlmock.NewRows(append(append([]string{}, snapMetaCols...), "last_restore_response")).
+		WillReturnRows(sqlmock.NewRows(snapDetailCols).
 			AddRow("some-id", 1, "nightly", "desc", "manual", "1.0", "v0.9.9", len(doc),
-				env.Checksum, "sha256:x", false, false, true, "admin", time.Now(), 0, nil, nil, nil))
+				env.Checksum, "sha256:x", false, false, true, "admin", time.Now(), 0, nil, nil, nil, nil))
 
 	snap, err := svc.TakeSnapshot(1, models.TakeSnapshotRequest{Name: "nightly", Description: "desc"}, "admin")
 	require.NoError(t, err)
@@ -234,9 +240,9 @@ func TestDeleteSnapshotPinnedRequiresForce(t *testing.T) {
 	svc, mock := newService(t, nil, nil)
 
 	pinnedRow := func() *sqlmock.Rows {
-		return sqlmock.NewRows(append(append([]string{}, snapMetaCols...), "last_restore_response")).
+		return sqlmock.NewRows(snapDetailCols).
 			AddRow("sid-1", 1, "keeper", "", "manual", "1.0", "v0.9.9", 10,
-				"sha256:a", "sha256:b", false, true, true, "admin", time.Now(), 0, nil, nil, nil)
+				"sha256:a", "sha256:b", false, true, true, "admin", time.Now(), 0, nil, nil, nil, nil)
 	}
 	mock.ExpectQuery("SELECT (.+) FROM instance_snapshots").WillReturnRows(pinnedRow())
 	err := svc.DeleteSnapshot("sid-1", false)
@@ -321,11 +327,11 @@ func TestRestoreCommitTakesPreSnapshotAndRecords(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO instance_snapshots")).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery("SELECT (.+) FROM instance_snapshots"). // storeSnapshot re-reads the row
-									WillReturnRows(sqlmock.NewRows(append(append([]string{}, snapMetaCols...), "last_restore_response")).
+									WillReturnRows(sqlmock.NewRows(snapDetailCols).
 										AddRow("pre-id", 1, "pre-restore-x", "", "pre_restore", "1.0", "v0.9.9", len(raw),
-				"sha256:a", "sha256:b", false, false, true, "admin", time.Now(), 0, nil, nil, nil))
+				"sha256:a", "sha256:b", false, false, true, "admin", time.Now(), 0, nil, nil, nil, nil))
 	mock.ExpectExec("UPDATE instance_snapshots").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "sid-1").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), nil, "sid-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	out, err := svc.RestoreSnapshot("sid-1", models.RestoreSnapshotRequest{Mode: "commit"}, "admin")
@@ -358,7 +364,180 @@ func TestRestoreCommitAbortsWhenPreSnapshotFails(t *testing.T) {
 func TestRestoreRejectsBadMode(t *testing.T) {
 	svc, _ := newService(t, nil, nil)
 	_, err := svc.RestoreSnapshot("sid-1", models.RestoreSnapshotRequest{Mode: "yolo"}, "admin")
-	assert.ErrorIs(t, err, services.ErrInvalidSnapshotDoc)
+	assert.ErrorIs(t, err, services.ErrInvalidRestoreRequest)
+	assert.NotErrorIs(t, err, services.ErrInvalidSnapshotDoc, "a bad mode says nothing about the document")
+}
+
+// docCovering is sampleDoc with an included_domains list, as a gateway of
+// schema 1.2 or later writes it.
+func docCovering(t *testing.T, domains ...string) []byte {
+	t.Helper()
+	var doc map[string]interface{}
+	require.NoError(t, json.Unmarshal(sampleDoc(t), &doc))
+	doc["included_domains"] = domains
+	b, err := json.Marshal(doc)
+	require.NoError(t, err)
+	return b
+}
+
+// The gateway reads an empty selection as "every domain". A selection that
+// is present but names nothing usable must therefore stop in OAM: no
+// database read, no gateway call.
+func TestRestoreRefusesAMalformedSelectionBeforeAnyCall(t *testing.T) {
+	selections := map[string][]string{
+		"empty list":       {},
+		"empty name":       {""},
+		"comma":            {","},
+		"two in one name":  {"auditsink,cert"},
+		"whitespace":       {" auditsink"},
+		"upper case":       {"AuditSink"},
+		"duplicate":        {"auditsink", "auditsink"},
+		"one bad of two":   {"auditsink", "../x"},
+		"too long":         {strings.Repeat("a", 65)},
+		"query characters": {"auditsink&mode=commit"},
+	}
+	for name, components := range selections {
+		for _, mode := range []string{"dry-run", "commit"} {
+			gw := &fakeGateway{restoreStatus: 200, restoreBody: []byte(`{}`)}
+			svc, mock := newService(t, gw, nil)
+			_, err := svc.RestoreSnapshot("sid-1", models.RestoreSnapshotRequest{Mode: mode, Components: components}, "admin")
+			assert.ErrorIs(t, err, services.ErrInvalidRestoreRequest, "%s, %s", name, mode)
+			assert.Empty(t, gw.restoreCalls, "%s, %s", name, mode)
+			assert.NoError(t, mock.ExpectationsWereMet(), "%s, %s", name, mode)
+		}
+	}
+}
+
+func TestRestoreRefusesADomainTheDocumentDoesNotCover(t *testing.T) {
+	raw := docCovering(t, "loadbalancer", "auditsink")
+	gw := &fakeGateway{restoreStatus: 200, restoreBody: []byte(`{}`)}
+	svc, mock := newService(t, gw, nil)
+	blob, _, err := svc.SealBlob(raw)
+	require.NoError(t, err)
+	expectSnapshotBlobFetch(mock, blob, services.RawChecksum(raw), false)
+
+	// Commit, so that a pre-restore snapshot would show up as an unexpected
+	// call if the refusal came too late.
+	_, err = svc.RestoreSnapshot("sid-1", models.RestoreSnapshotRequest{Mode: "commit", Components: []string{"auditsink", "cert"}}, "admin")
+	assert.ErrorIs(t, err, services.ErrInvalidRestoreRequest)
+	assert.Contains(t, err.Error(), `"cert"`)
+	assert.Empty(t, gw.restoreCalls)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// A document older than schema 1.2 has no included_domains. It declares
+// nothing, so OAM refuses nothing and the gateway decides.
+func TestRestoreLeavesCoverageToTheGatewayWhenTheDocumentDeclaresNone(t *testing.T) {
+	raw := sampleDoc(t)
+	gw := &fakeGateway{restoreStatus: 200, restoreBody: []byte(`{"mode":"dry-run"}`)}
+	svc, mock := newService(t, gw, nil)
+	blob, _, err := svc.SealBlob(raw)
+	require.NoError(t, err)
+	expectSnapshotBlobFetch(mock, blob, services.RawChecksum(raw), false)
+	expectInstanceFetch(mock, 1)
+
+	out, err := svc.RestoreSnapshot("sid-1", models.RestoreSnapshotRequest{Components: []string{"auditsink"}}, "admin")
+	require.NoError(t, err)
+	assert.Equal(t, [][]string{{"auditsink"}}, gw.restoreComps)
+	assert.Equal(t, []string{"auditsink"}, out.Components)
+}
+
+func TestRestoreWithoutASelectionRestoresTheWholeDocument(t *testing.T) {
+	raw := docCovering(t, "loadbalancer", "auditsink")
+	gw := &fakeGateway{restoreStatus: 200, restoreBody: []byte(`{"mode":"dry-run"}`)}
+	svc, mock := newService(t, gw, nil)
+	blob, _, err := svc.SealBlob(raw)
+	require.NoError(t, err)
+	expectSnapshotBlobFetch(mock, blob, services.RawChecksum(raw), false)
+	expectInstanceFetch(mock, 1)
+
+	out, err := svc.RestoreSnapshot("sid-1", models.RestoreSnapshotRequest{}, "admin")
+	require.NoError(t, err)
+	require.Len(t, gw.restoreComps, 1)
+	assert.Nil(t, gw.restoreComps[0])
+	assert.Nil(t, out.Components)
+}
+
+// The dry-run and the commit of one selection reach the gateway with the same
+// selection, in the caller's order; the commit records it; and a restore onto
+// another instance keeps both the target and the safety snapshot of it.
+func TestRestoreSendsAndRecordsTheSelection(t *testing.T) {
+	raw := docCovering(t, "loadbalancer", "cert", "auditsink")
+	selection := []string{"cert", "auditsink"}
+	target := 2
+	gw := &fakeGateway{snapshotBody: raw, restoreStatus: 200, restoreBody: []byte(`{"mode":"commit","result":"ok"}`)}
+	svc, mock := newService(t, gw, nil)
+	blob, _, err := svc.SealBlob(raw)
+	require.NoError(t, err)
+
+	expectSnapshotBlobFetch(mock, blob, services.RawChecksum(raw), false)
+	expectInstanceFetch(mock, target)
+	dry, err := svc.RestoreSnapshot("sid-1", models.RestoreSnapshotRequest{TargetInstanceID: &target, Components: selection}, "admin")
+	require.NoError(t, err)
+	assert.Empty(t, dry.PreRestoreSnapshotID)
+
+	expectSnapshotBlobFetch(mock, blob, services.RawChecksum(raw), false)
+	expectInstanceFetch(mock, target) // resolve restore target
+	expectInstanceFetch(mock, target) // the pre_restore snapshot is taken of the target
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO instance_snapshots")).
+		WithArgs(sqlmock.AnyArg(), target, sqlmock.AnyArg(), sqlmock.AnyArg(), "pre_restore", sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "admin").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("SELECT (.+) FROM instance_snapshots").
+		WillReturnRows(sqlmock.NewRows(snapDetailCols).
+			AddRow("pre-id", target, "pre-restore-x", "", "pre_restore", "1.0", "v0.9.9", len(raw),
+				"sha256:a", "sha256:b", false, false, true, "admin", time.Now(), 0, nil, nil, nil, nil))
+	mock.ExpectExec("UPDATE instance_snapshots").
+		WithArgs("ok", sqlmock.AnyArg(), "cert,auditsink", "sid-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	commit, err := svc.RestoreSnapshot("sid-1", models.RestoreSnapshotRequest{Mode: "commit", TargetInstanceID: &target, Components: selection}, "admin")
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"dry-run", "commit"}, gw.restoreCalls)
+	assert.Equal(t, [][]string{selection, selection}, gw.restoreComps)
+	assert.Equal(t, selection, commit.Components)
+	assert.Equal(t, target, commit.InstanceID)
+	assert.True(t, commit.CrossInstance)
+	assert.Equal(t, "pre-id", commit.PreRestoreSnapshotID)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// The gateway's ROLLBACK-FAILED is recorded as a failure, with the selection
+// that was being restored.
+func TestRestoreRecordsARollbackFailureWithItsSelection(t *testing.T) {
+	raw := docCovering(t, "auditsink")
+	gw := &fakeGateway{snapshotBody: raw, restoreStatus: 500, restoreBody: []byte(`{"mode":"commit","result":"ROLLBACK-FAILED"}`)}
+	svc, mock := newService(t, gw, nil)
+	blob, _, err := svc.SealBlob(raw)
+	require.NoError(t, err)
+
+	expectSnapshotBlobFetch(mock, blob, services.RawChecksum(raw), false)
+	expectInstanceFetch(mock, 1)
+	expectInstanceFetch(mock, 1)
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO instance_snapshots")).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("SELECT (.+) FROM instance_snapshots").
+		WillReturnRows(sqlmock.NewRows(snapDetailCols).
+			AddRow("pre-id", 1, "pre-restore-x", "", "pre_restore", "1.0", "v0.9.9", len(raw),
+				"sha256:a", "sha256:b", false, false, true, "admin", time.Now(), 0, nil, nil, nil, nil))
+	mock.ExpectExec("UPDATE instance_snapshots").
+		WithArgs(models.RestoreResultRollbackFailed, sqlmock.AnyArg(), "auditsink", "sid-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	out, err := svc.RestoreSnapshot("sid-1", models.RestoreSnapshotRequest{Mode: "commit", Components: []string{"auditsink"}}, "admin")
+	require.NoError(t, err)
+	assert.Equal(t, 500, out.GatewayStatus)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetSnapshotReturnsTheLastRestoreSelection(t *testing.T) {
+	svc, mock := newService(t, nil, nil)
+	mock.ExpectQuery("SELECT (.+) FROM instance_snapshots").
+		WillReturnRows(sqlmock.NewRows(snapDetailCols).
+			AddRow("sid-1", 1, "snap", "", "manual", "1.2", "v0.9.9", 10,
+				"sha256:a", "sha256:b", false, false, true, "admin", time.Now(), 1, time.Now(), "ok", `{"result":"ok"}`, "cert,auditsink"))
+	snap, err := svc.GetSnapshot("sid-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"cert", "auditsink"}, snap.LastRestoreComponents)
 }
 
 func TestMapGatewayRestoreResult(t *testing.T) {
