@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"github.com/loxilb-io/loxilb-oam/database"
 	swaggerdocs "github.com/loxilb-io/loxilb-oam/docs"
+	"github.com/loxilb-io/loxilb-oam/internal/appliance"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
 	"github.com/loxilb-io/loxilb-oam/internal/handlers"
 	"github.com/loxilb-io/loxilb-oam/internal/migrate"
@@ -226,6 +227,19 @@ func main() {
 	}
 	handler := handlers.NewHandler(userService, loxiLBService, logService, alertService, proxyService, snapshotService, config.TokenExpirationMinutes)
 
+	// The Appliance host adapter, if this deployment has one. Unset is normal
+	// and means "not an Appliance"; half-set or unreadable is refused, so an
+	// Appliance cannot come up reporting that it has no host adapter.
+	applianceHost, err := appliance.HostClientFromEnv()
+	if err != nil {
+		utils.LogError("CONFIG: invalid Appliance host adapter configuration: " + err.Error())
+		os.Exit(1)
+	}
+	if applianceHost.Configured() {
+		utils.LogInfo("Appliance host adapter configured (" + appliance.HostSocketEnv + ").")
+	}
+	applianceHandler := handlers.NewApplianceHandler(appliance.NewService(applianceHost, db, version), userService)
+
 	// First-time setup: create the bootstrap admin if needed. A fresh
 	// installation without an admin account is unusable (every login fails),
 	// so abort startup instead of running in that state — most commonly hit
@@ -293,6 +307,7 @@ func main() {
 	}
 
 	routes.SetupRoutes(router, db, handler, userService, alertService)
+	routes.SetupApplianceRoutes(router, userService, applianceHandler)
 
 	// Create HTTP/HTTPS server
 	port := fmt.Sprintf(":%s", *serverPort)

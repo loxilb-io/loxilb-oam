@@ -1,0 +1,118 @@
+package handlers_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/loxilb-io/loxilb-oam/internal/appliance"
+	"github.com/loxilb-io/loxilb-oam/internal/handlers"
+	"github.com/loxilb-io/loxilb-oam/internal/middleware"
+	"github.com/loxilb-io/loxilb-oam/internal/models"
+	"github.com/loxilb-io/loxilb-oam/internal/services"
+)
+
+// applianceRouter wires the capability gate and the capabilities endpoint for
+// a caller whose role is read from a mocked users table, as it is in
+// production. found=false simulates a token whose user no longer exists.
+func applianceRouter(t *testing.T, role string, found bool) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+
+	rows := sqlmock.NewRows([]string{"id", "username", "email", "role", "created_at"})
+	if found {
+		rows.AddRow(7, "alice", "alice@test.local", role, time.Now())
+	}
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, username, email, role, created_at FROM users WHERE username = $1")).
+		WithArgs("alice").WillReturnRows(rows)
+
+	userService := services.NewUserService(db)
+	h := handlers.NewApplianceHandler(appliance.NewService(appliance.UnconfiguredHost(), db, "test"), userService)
+
+	r := gin.New()
+	// The token says admin throughout: the gate must go by the database.
+	r.Use(withClaims("alice", models.RoleAdmin))
+	r.GET("/oam/v1/appliance/capabilities", h.Require(middleware.ActApplianceRead), h.GetCapabilities)
+	r.GET("/oam/v1/appliance/restricted", h.Require(middleware.ActApplianceReset), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	return r
+}
+
+func get(r http.Handler, path string, headers map[string]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestApplianceCapabilitiesPermittedFollowsDatabaseRole(t *testing.T) {
+	for role, wantPermitted := range map[string]bool{models.RoleAdmin: true, models.RoleOperator: false, models.RoleViewer: false} {
+		rec := get(applianceRouter(t, role, true), "/oam/v1/appliance/capabilities", nil)
+		require.Equal(t, http.StatusOK, rec.Code, role)
+
+		var caps appliance.Capabilities
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &caps))
+		assert.Equal(t, appliance.SchemaVersion, caps.SchemaVersion)
+		require.Len(t, caps.Actions, len(appliance.Actions))
+		for _, c := range caps.Actions {
+			assert.Equal(t, wantPermitted, c.Permitted, "%s / %s", role, c.Action)
+			assert.Equal(t, appliance.ReasonHostNotConfigured, c.UnavailableReason)
+		}
+		assert.Contains(t, rec.Body.String(), `"host_contract_versions":[]`)
+		assert.NotEmpty(t, rec.Header().Get(handlers.RequestIDHeader))
+	}
+}
+
+// A denial carries the envelope: a stable code, the origin, the request ID
+// and a recovery action — and still the plain `error` string.
+func TestApplianceDenialUsesErrorEnvelope(t *testing.T) {
+	rec := get(applianceRouter(t, models.RoleOperator, true), "/oam/v1/appliance/restricted",
+		map[string]string{handlers.RequestIDHeader: "req-123"})
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	var body appliance.ErrorBody
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, appliance.CodePermissionDenied, body.Code)
+	assert.Equal(t, appliance.OriginOAM, body.Origin)
+	assert.Equal(t, "req-123", body.RequestID)
+	assert.NotEmpty(t, body.Error)
+	require.NotNil(t, body.Recovery)
+	assert.Equal(t, appliance.RecoveryNone, body.Recovery.Action)
+	assert.Equal(t, appliance.OriginOAM, rec.Header().Get(services.ErrorOriginHeader))
+	assert.Equal(t, "req-123", rec.Header().Get(handlers.RequestIDHeader))
+}
+
+func TestApplianceUnknownCallerIsUnauthorized(t *testing.T) {
+	rec := get(applianceRouter(t, "", false), "/oam/v1/appliance/capabilities", nil)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	var body appliance.ErrorBody
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, appliance.CodeUnauthorized, body.Code)
+	assert.Equal(t, appliance.RecoveryReauthenticate, body.Recovery.Action)
+}
+
+// A caller-supplied request ID is echoed only if it is short and plain; it
+// ends up in logs and response headers.
+func TestApplianceRequestIDIsSanitized(t *testing.T) {
+	for _, bad := range []string{"has space", "new\nline", "<script>", string(make([]byte, 65))} {
+		rec := get(applianceRouter(t, models.RoleAdmin, true), "/oam/v1/appliance/capabilities",
+			map[string]string{handlers.RequestIDHeader: bad})
+		got := rec.Header().Get(handlers.RequestIDHeader)
+		assert.NotEqual(t, bad, got)
+		assert.Regexp(t, `^[0-9a-f]{24}$`, got)
+	}
+}

@@ -2590,9 +2590,317 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/oam/v1/appliance/capabilities": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "For each whole-Appliance action, reports three independent facts: whether the host adapter supports it, whether it can run now (and if not, why), and whether the caller's role may request it. A deployment with no host adapter reports every action as unsupported with HOST_NOT_CONFIGURED. Contract appliance-ops/v1alpha1 — subject to change.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "appliance"
+                ],
+                "summary": "Appliance capabilities (alpha)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.Capabilities"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    }
+                }
+            }
+        },
+        "/oam/v1/appliance/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Product identity (from the host adapter, when there is one), each component's version with separately observed liveness and readiness, and OAM's database schema version. A component that could not be observed is \"unknown\" and stale, never ready. Contract appliance-ops/v1alpha1 — subject to change.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "appliance"
+                ],
+                "summary": "Appliance status (alpha)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.Status"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/appliance.ErrorBody"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "appliance.Action": {
+            "type": "string",
+            "enum": [
+                "backup",
+                "restore",
+                "update",
+                "rollback",
+                "reset",
+                "diagnostics"
+            ],
+            "x-enum-varnames": [
+                "ActionBackup",
+                "ActionRestore",
+                "ActionUpdate",
+                "ActionRollback",
+                "ActionReset",
+                "ActionDiagnostics"
+            ]
+        },
+        "appliance.ActionCapability": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "$ref": "#/definitions/appliance.Action"
+                },
+                "available": {
+                    "description": "Available: it can be executed now.",
+                    "type": "boolean"
+                },
+                "permitted": {
+                    "description": "Permitted: the caller's role may request it. Independent of the above.",
+                    "type": "boolean"
+                },
+                "requires_reauthentication": {
+                    "description": "RequiresReauthentication: executing it needs a fresh password check.",
+                    "type": "boolean"
+                },
+                "supported": {
+                    "description": "Supported: the host adapter implements the action in a contract\nversion OAM speaks.",
+                    "type": "boolean"
+                },
+                "unavailable_reason": {
+                    "description": "UnavailableReason is set exactly when Available is false.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/appliance.UnavailableReason"
+                        }
+                    ]
+                }
+            }
+        },
+        "appliance.Capabilities": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/appliance.ActionCapability"
+                    }
+                },
+                "host_configured": {
+                    "type": "boolean"
+                },
+                "host_contract_versions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "host_fixture": {
+                    "description": "HostFixture is true when the host adapter declares itself a test\nfixture. Nothing a fixture reports describes a real installation.",
+                    "type": "boolean"
+                },
+                "observed_at": {
+                    "type": "string"
+                },
+                "schema_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.Component": {
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "type": "string"
+                },
+                "liveness": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "observed_at": {
+                    "type": "string"
+                },
+                "readiness": {
+                    "type": "string"
+                },
+                "stale": {
+                    "description": "Stale: the observation could not be refreshed for this response.",
+                    "type": "boolean"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.DatabaseStatus": {
+            "type": "object",
+            "properties": {
+                "adopted": {
+                    "type": "boolean"
+                },
+                "applied_at": {
+                    "type": "string"
+                },
+                "latest_migration": {
+                    "type": "string"
+                },
+                "schema_version": {
+                    "description": "SchemaVersion is 0 when the schema is not tracked (OAM_DB_MIGRATE=off\non a database that was never migrated by the server).",
+                    "type": "integer"
+                }
+            }
+        },
+        "appliance.ErrorBody": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "operation_id": {
+                    "type": "string"
+                },
+                "origin": {
+                    "type": "string"
+                },
+                "recovery": {
+                    "$ref": "#/definitions/appliance.Recovery"
+                },
+                "request_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.Product": {
+            "type": "object",
+            "properties": {
+                "fixture": {
+                    "type": "boolean"
+                },
+                "installation_id": {
+                    "type": "string"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "release_digest": {
+                    "type": "string"
+                },
+                "release_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.Recovery": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.Status": {
+            "type": "object",
+            "properties": {
+                "components": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/appliance.Component"
+                    }
+                },
+                "database": {
+                    "$ref": "#/definitions/appliance.DatabaseStatus"
+                },
+                "product": {
+                    "$ref": "#/definitions/appliance.Product"
+                },
+                "schema_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "appliance.UnavailableReason": {
+            "type": "string",
+            "enum": [
+                "HOST_NOT_CONFIGURED",
+                "HOST_UNREACHABLE",
+                "HOST_UNSUPPORTED",
+                "SCHEMA_MISMATCH",
+                "OPERATION_IN_PROGRESS",
+                "RECOVERY_REQUIRED"
+            ],
+            "x-enum-varnames": [
+                "ReasonHostNotConfigured",
+                "ReasonHostUnreachable",
+                "ReasonHostUnsupported",
+                "ReasonSchemaMismatch",
+                "ReasonOperationInProgress",
+                "ReasonRecoveryRequired"
+            ]
+        },
         "models.AcknowledgeRequest": {
             "type": "object",
             "required": [

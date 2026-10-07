@@ -32,6 +32,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Mode selects what Run may do to the database.
@@ -366,4 +367,33 @@ func applyOne(ctx context.Context, conn *sql.Conn, m Migration) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// CurrentState is the newest applied migration.
+type CurrentState struct {
+	Version   int
+	Name      string
+	Adopted   bool
+	AppliedAt time.Time
+}
+
+// Current returns the newest applied migration, or nil when the schema is not
+// tracked: schema_migrations is absent or empty, as on a database that has
+// only ever been run with OAM_DB_MIGRATE=off. It never writes.
+func Current(ctx context.Context, db *sql.DB) (*CurrentState, error) {
+	tracked, err := tableExists(ctx, db, "schema_migrations")
+	if err != nil || !tracked {
+		return nil, err
+	}
+	var state CurrentState
+	err = db.QueryRowContext(ctx,
+		"SELECT version, name, adopted, applied_at FROM schema_migrations ORDER BY version DESC LIMIT 1").
+		Scan(&state.Version, &state.Name, &state.Adopted, &state.AppliedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
 }

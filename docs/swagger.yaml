@@ -1,4 +1,161 @@
 definitions:
+  appliance.Action:
+    enum:
+    - backup
+    - restore
+    - update
+    - rollback
+    - reset
+    - diagnostics
+    type: string
+    x-enum-varnames:
+    - ActionBackup
+    - ActionRestore
+    - ActionUpdate
+    - ActionRollback
+    - ActionReset
+    - ActionDiagnostics
+  appliance.ActionCapability:
+    properties:
+      action:
+        $ref: '#/definitions/appliance.Action'
+      available:
+        description: 'Available: it can be executed now.'
+        type: boolean
+      permitted:
+        description: 'Permitted: the caller''s role may request it. Independent of
+          the above.'
+        type: boolean
+      requires_reauthentication:
+        description: 'RequiresReauthentication: executing it needs a fresh password
+          check.'
+        type: boolean
+      supported:
+        description: |-
+          Supported: the host adapter implements the action in a contract
+          version OAM speaks.
+        type: boolean
+      unavailable_reason:
+        allOf:
+        - $ref: '#/definitions/appliance.UnavailableReason'
+        description: UnavailableReason is set exactly when Available is false.
+    type: object
+  appliance.Capabilities:
+    properties:
+      actions:
+        items:
+          $ref: '#/definitions/appliance.ActionCapability'
+        type: array
+      host_configured:
+        type: boolean
+      host_contract_versions:
+        items:
+          type: string
+        type: array
+      host_fixture:
+        description: |-
+          HostFixture is true when the host adapter declares itself a test
+          fixture. Nothing a fixture reports describes a real installation.
+        type: boolean
+      observed_at:
+        type: string
+      schema_version:
+        type: string
+    type: object
+  appliance.Component:
+    properties:
+      digest:
+        type: string
+      liveness:
+        type: string
+      name:
+        type: string
+      observed_at:
+        type: string
+      readiness:
+        type: string
+      stale:
+        description: 'Stale: the observation could not be refreshed for this response.'
+        type: boolean
+      version:
+        type: string
+    type: object
+  appliance.DatabaseStatus:
+    properties:
+      adopted:
+        type: boolean
+      applied_at:
+        type: string
+      latest_migration:
+        type: string
+      schema_version:
+        description: |-
+          SchemaVersion is 0 when the schema is not tracked (OAM_DB_MIGRATE=off
+          on a database that was never migrated by the server).
+        type: integer
+    type: object
+  appliance.ErrorBody:
+    properties:
+      code:
+        type: string
+      error:
+        type: string
+      operation_id:
+        type: string
+      origin:
+        type: string
+      recovery:
+        $ref: '#/definitions/appliance.Recovery'
+      request_id:
+        type: string
+    type: object
+  appliance.Product:
+    properties:
+      fixture:
+        type: boolean
+      installation_id:
+        type: string
+      model:
+        type: string
+      release_digest:
+        type: string
+      release_version:
+        type: string
+    type: object
+  appliance.Recovery:
+    properties:
+      action:
+        type: string
+    type: object
+  appliance.Status:
+    properties:
+      components:
+        items:
+          $ref: '#/definitions/appliance.Component'
+        type: array
+      database:
+        $ref: '#/definitions/appliance.DatabaseStatus'
+      product:
+        $ref: '#/definitions/appliance.Product'
+      schema_version:
+        type: string
+    type: object
+  appliance.UnavailableReason:
+    enum:
+    - HOST_NOT_CONFIGURED
+    - HOST_UNREACHABLE
+    - HOST_UNSUPPORTED
+    - SCHEMA_MISMATCH
+    - OPERATION_IN_PROGRESS
+    - RECOVERY_REQUIRED
+    type: string
+    x-enum-varnames:
+    - ReasonHostNotConfigured
+    - ReasonHostUnreachable
+    - ReasonHostUnsupported
+    - ReasonSchemaMismatch
+    - ReasonOperationInProgress
+    - ReasonRecoveryRequired
   models.AcknowledgeRequest:
     properties:
       user_id:
@@ -2179,6 +2336,71 @@ paths:
       summary: Get current user profile
       tags:
       - users
+  /oam/v1/appliance/capabilities:
+    get:
+      description: 'For each whole-Appliance action, reports three independent facts:
+        whether the host adapter supports it, whether it can run now (and if not,
+        why), and whether the caller''s role may request it. A deployment with no
+        host adapter reports every action as unsupported with HOST_NOT_CONFIGURED.
+        Contract appliance-ops/v1alpha1 — subject to change.'
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/appliance.Capabilities'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/appliance.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/appliance.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Appliance capabilities (alpha)
+      tags:
+      - appliance
+  /oam/v1/appliance/status:
+    get:
+      description: Product identity (from the host adapter, when there is one), each
+        component's version with separately observed liveness and readiness, and OAM's
+        database schema version. A component that could not be observed is "unknown"
+        and stale, never ready. Contract appliance-ops/v1alpha1 — subject to change.
+      parameters:
+      - description: Bearer token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/appliance.Status'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/appliance.ErrorBody'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/appliance.ErrorBody'
+      security:
+      - BearerAuth: []
+      summary: Appliance status (alpha)
+      tags:
+      - appliance
 securityDefinitions:
   BearerAuth:
     description: JWT bearer token from POST /oam/login, sent as "Bearer <token>".
