@@ -108,6 +108,22 @@ image's `org.opencontainers.image.version` label.
   costs a handshake on every request.
 
 ### Changed — BREAKING
+- The instance proxy (`/oam/loxilbs/{id}/netlox/*`) now authorizes by Gateway
+  path as well as by method. Day-to-day configuration is unchanged: every role
+  reads it, `admin` and `operator` change it. What changes:
+  - `/auth/*` is not available through the proxy to any role.
+  - `/config/snapshot`, `/config/export`, `/config/restore`, `/config/import`
+    and `/config/persist` are `admin` only, reads included, matching the
+    instance snapshot routes.
+  - `/audit/*` changes are `admin` only; reading the audit policy and sinks
+    needs `admin` or `operator`. `/audit/status` stays readable by every role.
+  - `/logs` and `/log-archives` need `admin` or `operator`.
+  - A Gateway path OAM does not list is `admin` only.
+  - A path with `.` or `..` segments, empty segments, an encoded `/` or `\`,
+    `?`, `#` or control characters is refused with `400`; methods other than
+    `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE` get `405`.
+
+  The full table is in `docs/proxy-functionality.md`.
 - **The datastore is now PostgreSQL 18; MySQL is no longer supported.** There is
   no in-place upgrade: a MySQL deployment cannot be pointed at this release.
   Stand the stack up against an empty PostgreSQL database, then move any data
@@ -205,6 +221,11 @@ image's `org.opencontainers.image.version` label.
   [docs/instance-proxy.md](docs/instance-proxy.md) for the full status contract.
 
 ### Security
+- The instance proxy decided on the HTTP method alone, while it reaches the
+  Gateway with OAM's own identity. It now decides on the Gateway path too, on
+  one canonical form of the path that is also the form forwarded, and resolves
+  the caller from the database for reads as well as writes. See the breaking
+  change above for what each role may reach.
 - The break-glass admin reset now actually revokes the account's tokens. It
   deleted from a `user_tokens` table that does not exist, so a stolen bearer
   token kept working for its full TTL while the CLI reported that all sessions

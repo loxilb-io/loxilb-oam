@@ -157,9 +157,10 @@ func (p *ProxyService) GatewayAuthMode() string {
 	return p.identity.Mode()
 }
 
-// ForwardRequest forwards the request in c to targetPath on the LoxiLB instance
-// identified by instanceID.
-func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath string) error {
+// ForwardRequest forwards the request in c to path on the LoxiLB instance
+// identified by instanceID. path is the canonical path the caller was
+// authorized for; the outbound URL is built from it and from nothing else.
+func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, path GatewayPath) error {
 	startTime := time.Now()
 
 	// Fetch LoxiLB instance details
@@ -169,24 +170,10 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 		return fmt.Errorf("%w (id %d)", ErrInstanceNotFound, instanceID)
 	}
 
-	baseURL := strings.TrimSuffix(instance.ApiEndpoint, "/")
-
-	// Handle path overlap - if the target path starts with the version that's already in ApiEndpoint
-	// Extract version from ApiEndpoint (e.g., "v1" from "https://host:port/netlox/v1")
-	apiEndpointParts := strings.Split(baseURL, "/")
-	if len(apiEndpointParts) > 0 {
-		lastPart := apiEndpointParts[len(apiEndpointParts)-1]
-		// If target path starts with the same version (with or without leading slash), remove the version from baseURL
-		if strings.HasPrefix(targetPath, "/"+lastPart+"/") || strings.HasPrefix(targetPath, "/"+lastPart) {
-			baseURL = strings.TrimSuffix(baseURL, "/"+lastPart)
-		}
-	}
-
-	targetURL := fmt.Sprintf("%s/%s", baseURL, strings.TrimPrefix(targetPath, "/"))
-
-	// Preserve query parameters from original request
-	if c.Request.URL.RawQuery != "" {
-		targetURL += "?" + c.Request.URL.RawQuery
+	targetURL, err := gatewayTargetURL(instance.ApiEndpoint, path, c.Request.URL.RawQuery)
+	if err != nil {
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, "", 0, 500, time.Since(startTime).Milliseconds(), fmt.Sprintf("Failed to build target URL: %v", err))
+		return fmt.Errorf("%w: %w", ErrProxyCreateRequest, err)
 	}
 
 	// Read request body
@@ -206,7 +193,7 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	// an L4 rule on the edge address:port is processed in eBPF ahead of
 	// netfilter, so once the gateway has accepted it there is no error to
 	// observe — only a console that stopped answering.
-	if err := checkReservedEndpoint(config.ReservedEndpoints(), c.Request.Method, targetPath, requestBody); err != nil {
+	if err := checkReservedEndpoint(config.ReservedEndpoints(), c.Request.Method, path.String(), requestBody); err != nil {
 		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), http.StatusConflict, time.Since(startTime).Milliseconds(), err.Error())
 		return err
 	}

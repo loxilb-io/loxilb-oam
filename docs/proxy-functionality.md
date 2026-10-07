@@ -57,15 +57,35 @@ All LoxiLB API calls can now be made through the OAM proxy using the following U
 
 - **Every** proxy request requires OAM authentication (a `Bearer` token from
   `POST /oam/login`). Unauthenticated requests get `401`.
-- Authorization is then gated **by HTTP method**:
+- Authorization is then decided **by HTTP method and Gateway path**. The proxy
+  speaks to the instance with OAM's own identity, so OAM decides here what
+  each OAM role may reach:
 
-  | Methods | Required capability | Roles allowed |
-  |---------|--------------------|---------------|
-  | `GET`, `HEAD`, `OPTIONS` | none beyond authentication | `admin`, `operator`, `viewer` |
-  | `POST`, `PUT`, `PATCH`, `DELETE`, … | `gateway_write` | `admin`, `operator` |
+  | Gateway path | Read (`GET`, `HEAD`) | Change (`POST`, `PUT`, `PATCH`, `DELETE`) |
+  |--------------|----------------------|-------------------------------------------|
+  | `/auth/*` | nobody | nobody |
+  | `/config/snapshot`, `/config/export`, `/config/restore`, `/config/import`, `/config/persist` | `admin` | `admin` |
+  | `/audit/status` | every role | — |
+  | other `/audit/*` | `admin`, `operator` | `admin` |
+  | `/logs`, `/log-archives` | `admin`, `operator` | `admin` |
+  | the other `/config/*` families (load balancers, endpoints, firewall, routes, …), `/status`, `/metrics`, `/meta`, `/version`, `/diagnostics`, `/nodegraph`, `/sni`, `/maintenance` | every role | `admin`, `operator` |
+  | anything else | `admin` | `admin` |
 
-  A `viewer` attempting any mutating call receives `403`. See
-  `RequireGatewayCapability` in `internal/middleware/rbac.go`.
+  A path that is not listed is admin-only, so an API a newer instance adds
+  does not become available to other roles on its own. The list is
+  `ClassifyGatewayRequest` in `internal/services/gateway_path.go`; the check
+  is `RequireGatewayAccess` in `internal/middleware/rbac.go`.
+
+  Gateway accounts and the Gateway's management token cannot be managed
+  through the proxy. Configuration snapshots are taken and restored with the
+  instance snapshot routes (`/oam/instances/{id}/snapshots`,
+  `/oam/snapshots/{sid}/restore`), which keep a safety copy and a record of
+  each restore.
+- The path is taken literally. The leading `/v1` is optional and one trailing
+  `/` is ignored; a path containing `.` or `..` segments, empty segments
+  (`//`), an encoded `/` or `\`, `?`, `#` or control characters is refused
+  with `400`. Matching is case-sensitive.
+- A refused request is answered by OAM. Nothing is sent to the instance.
 - The proxy authenticates *to* the LoxiLB instance only at the transport layer
   (TLS); it does not add application credentials to the forwarded request.
 - Access is not scoped per instance: a role that may write can write to **any**
@@ -95,9 +115,10 @@ All proxy requests are logged with the following information:
 
 ### Error Handling
 The proxy returns appropriate HTTP status codes:
-- `400 Bad Request` — invalid instance ID or missing path
+- `400 Bad Request` — invalid instance ID, or a path the proxy does not forward
 - `401 Unauthorized` — missing, expired, or revoked token
-- `403 Forbidden` — the role lacks `gateway_write` for a mutating method
+- `403 Forbidden` — the role may not send this method to this Gateway path
+- `405 Method Not Allowed` — a method the proxy does not forward
 - `404 Not Found` — LoxiLB instance not registered
 - `429 Too Many Requests` — per-IP rate limit exceeded
 - `502 Bad Gateway` — the instance could not be reached, or answered
@@ -113,8 +134,9 @@ The full status/message contract, and why classifying these correctly matters
 to an operator, is in **[instance-proxy.md](instance-proxy.md)**.
 
 ### Supported HTTP Methods
-All methods are forwarded (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`,
-`OPTIONS`), subject to the method-based authorization above.
+`GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE` are forwarded, subject to
+the authorization above. `OPTIONS` is answered by OAM as a CORS preflight and
+never reaches the instance. Any other method gets `405`.
 
 ## Configuration
 

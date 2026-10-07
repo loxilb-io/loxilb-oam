@@ -46,7 +46,7 @@ func relayGatewayResponse(t *testing.T, status int, upstreamHeaders, preset http
 		}
 	}
 
-	require.NoError(t, proxy.ForwardRequest(ctx, 1, "/v1/config/cistate/all"))
+	require.NoError(t, proxy.ForwardRequest(ctx, 1, mustGatewayPath(t, "/v1/config/cistate/all")))
 	require.NoError(t, mock.ExpectationsWereMet())
 	return recorder
 }

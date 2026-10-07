@@ -132,6 +132,15 @@ func proxyInstanceRow(endpoint string) *sqlmock.Rows {
 	)
 }
 
+// mustGatewayPath is the canonical form of a proxy path, as the gateway access
+// middleware would hand it to the proxy.
+func mustGatewayPath(t *testing.T, raw string) GatewayPath {
+	t.Helper()
+	path, err := CanonicalGatewayPath(raw, raw)
+	require.NoError(t, err)
+	return path
+}
+
 func expectProxyInstance(mock sqlmock.Sqlmock, endpoint string) {
 	mock.ExpectQuery(regexp.QuoteMeta(config.SelectLoxiLBInstanceByIDQuery)).
 		WithArgs(driver.Value(1)).
@@ -167,7 +176,7 @@ func forwardProxyRequest(t *testing.T, identity GatewayServiceIdentity, endpoint
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/oam/loxilbs/1/netlox/v1/meta", nil)
 	ctx.Request.Header = headers.Clone()
 
-	require.NoError(t, proxy.ForwardRequest(ctx, 1, "/v1/meta"))
+	require.NoError(t, proxy.ForwardRequest(ctx, 1, mustGatewayPath(t, "/v1/meta")))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

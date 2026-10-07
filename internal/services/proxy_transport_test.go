@@ -36,7 +36,7 @@ func forwardWithTransportError(t *testing.T, cause error) error {
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/oam/loxilbs/1/netlox/v1/meta", nil)
 
-	err = proxy.ForwardRequest(ctx, 1, "/v1/meta")
+	err = proxy.ForwardRequest(ctx, 1, mustGatewayPath(t, "/v1/meta"))
 	require.NoError(t, mock.ExpectationsWereMet())
 	return err
 }
@@ -89,7 +89,7 @@ func TestForwardRequestReturnsSentinelForMissingInstance(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/oam/loxilbs/1/netlox/v1/meta", nil)
 
-	err = proxy.ForwardRequest(ctx, 1, "/v1/meta")
+	err = proxy.ForwardRequest(ctx, 1, mustGatewayPath(t, "/v1/meta"))
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInstanceNotFound)
 }

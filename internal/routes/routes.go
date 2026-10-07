@@ -117,9 +117,10 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, handler *handlers.Handler, user
 		protected.POST("/snapshots/:sid/restore", middleware.RequireCapability(userService, middleware.ActConfigWrite), handler.RestoreSnapshot)
 
 		// LoxiLB Proxy - Forward requests to LoxiLB instances (auth-only, no license gate).
-		// Method-gated: GET/HEAD/OPTIONS for all roles, mutating
-		// methods require gateway_write (admin/operator).
-		protected.Any("/loxilbs/:id/netlox/*path", middleware.RateLimit(proxyLimiter), middleware.RequireGatewayCapability(userService), handler.ProxyToLoxiLB)
+		// Gated by method and Gateway path: what a role may reach is decided
+		// by services.ClassifyGatewayRequest, and a path it does not list is
+		// admin-only.
+		protected.Any("/loxilbs/:id/netlox/*path", middleware.RateLimit(proxyLimiter), middleware.RequireGatewayAccess(userService), handler.ProxyToLoxiLB)
 
 		// LoxiLB Firmware Management — instance mutation, admin-only
 		protected.PUT("/loxilbs/:id/firmware", middleware.RequireCapability(userService, middleware.ActInstanceWrite), handler.UpdateLoxiLBInstanceFirmware)

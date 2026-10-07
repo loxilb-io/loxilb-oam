@@ -1,19 +1,11 @@
 package middleware_test
 
 import (
-	"net/http"
-	"net/http/httptest"
-	"regexp"
 	"testing"
-	"time"
 
 	"github.com/loxilb-io/loxilb-oam/internal/middleware"
 	"github.com/loxilb-io/loxilb-oam/internal/models"
-	"github.com/loxilb-io/loxilb-oam/internal/services"
-	"github.com/loxilb-io/loxilb-oam/internal/utils"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,6 +19,7 @@ func TestCapabilityMatrix(t *testing.T) {
 		{models.RoleAdmin, middleware.ActUserAdmin, true},
 		{models.RoleAdmin, middleware.ActInstanceWrite, true},
 		{models.RoleAdmin, middleware.ActGatewayWrite, true},
+		{models.RoleAdmin, middleware.ActGatewayAdmin, true},
 		{models.RoleAdmin, middleware.ActConfigWrite, true},
 		{models.RoleAdmin, middleware.ActAlertWrite, true},
 		{models.RoleAdmin, middleware.ActLogRead, true},
@@ -36,6 +29,9 @@ func TestCapabilityMatrix(t *testing.T) {
 		{models.RoleOperator, middleware.ActUserAdmin, false},
 		{models.RoleOperator, middleware.ActInstanceWrite, false},
 		{models.RoleOperator, middleware.ActConfigWrite, false},
+		{models.RoleOperator, middleware.ActGatewayAdmin, false},
+		{models.RoleLegacyUser, middleware.ActGatewayAdmin, false},
+		{models.RoleViewer, middleware.ActGatewayAdmin, false},
 		// the raw server log is admin-only: it can incidentally carry
 		// credentials or tokens from any code path, so a lower-privileged
 		// reader could escalate. Reads of *resources* stay ungated.
@@ -99,59 +95,4 @@ func TestRoleHelpers(t *testing.T) {
 	assert.True(t, models.IsValidRole(models.RoleLegacyUser))
 	assert.False(t, models.IsValidRole("root"))
 	assert.False(t, models.IsValidRole(""))
-}
-
-// gatewayRequest exercises RequireGatewayCapability with a sqlmock-backed
-// user of the given role behind valid JWT claims, returning the status code.
-func gatewayRequest(t *testing.T, role, method string) int {
-	t.Helper()
-	gin.SetMode(gin.TestMode)
-
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatalf("sqlmock: %v", err)
-	}
-	defer db.Close()
-
-	userService := services.NewUserService(db)
-
-	// Mutating methods resolve the caller from the DB; safe methods do not.
-	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
-	default:
-		rows := sqlmock.NewRows([]string{"id", "username", "email", "role", "created_at"}).
-			AddRow(7, "alice", "alice@test.local", role, time.Now())
-		mock.ExpectQuery(regexp.QuoteMeta("SELECT id, username, email, role, created_at FROM users WHERE username = $1")).
-			WithArgs("alice").
-			WillReturnRows(rows)
-	}
-
-	router := gin.New()
-	// Simulate TokenAuthMiddleware having placed the claims in the context.
-	router.Use(func(c *gin.Context) {
-		c.Set("username", &utils.Claims{Username: "alice", Role: role})
-	})
-	router.Any("/proxy/*path", middleware.RequireGatewayCapability(userService), func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"forwarded": true})
-	})
-
-	req := httptest.NewRequest(method, "/proxy/v1/version", nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	return rec.Code
-}
-
-func TestGatewayMethodGating(t *testing.T) {
-	// Reads pass for every role
-	for _, role := range []string{models.RoleAdmin, models.RoleOperator, models.RoleViewer, models.RoleLegacyUser} {
-		assert.Equal(t, http.StatusOK, gatewayRequest(t, role, http.MethodGet), "GET as %s", role)
-	}
-
-	// Writes: admin/operator (and legacy user) pass, viewer is blocked
-	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
-		assert.Equal(t, http.StatusOK, gatewayRequest(t, models.RoleAdmin, method), "%s as admin", method)
-		assert.Equal(t, http.StatusOK, gatewayRequest(t, models.RoleOperator, method), "%s as operator", method)
-		assert.Equal(t, http.StatusOK, gatewayRequest(t, models.RoleLegacyUser, method), "%s as legacy user", method)
-		assert.Equal(t, http.StatusForbidden, gatewayRequest(t, models.RoleViewer, method), "%s as viewer", method)
-	}
 }
