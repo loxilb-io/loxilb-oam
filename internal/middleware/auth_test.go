@@ -75,7 +75,7 @@ func TestTokenAuthRevokedToken(t *testing.T) {
 	userService := services.NewUserService(db)
 
 	// The store lookup finds no matching, unexpired token → revoked.
-	mock.ExpectQuery("SELECT user_id FROM api_tokens WHERE token_value").
+	mock.ExpectQuery("SELECT t.user_id FROM api_tokens t JOIN users u").
 		WithArgs(token).
 		WillReturnRows(sqlmock.NewRows([]string{"user_id"}))
 
@@ -100,7 +100,7 @@ func TestTokenAuthValidToken(t *testing.T) {
 	userService := services.NewUserService(db)
 
 	// A live token present in the store passes the middleware.
-	mock.ExpectQuery("SELECT user_id FROM api_tokens WHERE token_value").
+	mock.ExpectQuery("SELECT t.user_id FROM api_tokens t JOIN users u").
 		WithArgs(token).
 		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow("1"))
 
