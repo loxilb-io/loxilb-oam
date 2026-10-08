@@ -154,7 +154,7 @@ jobs:
         # on the same PostgreSQL service and skip without OAM_TEST_DATABASE_URL.
         env:
           OAM_TEST_DATABASE_URL: postgres://oamuser:oampass@127.0.0.1:5432/loxioam?sslmode=disable
-        run: go test -count=1 -race -v ./internal/migrate/... ./internal/appliance/...
+        run: go test -count=1 -race -v ./internal/migrate/... ./internal/appliance/... ./internal/services/...
 
       - name: Server log (on failure)
         if: failure()

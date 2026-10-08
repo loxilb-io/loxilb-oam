@@ -34,8 +34,11 @@ const (
 	CountLoxiLBInstanceByNameQuery     = "SELECT COUNT(*) FROM loxilb_instances WHERE LOWER(name) = LOWER($1) AND id <> $2"
 	CountLoxiLBInstanceByEndpointQuery = "SELECT COUNT(*) FROM loxilb_instances WHERE LOWER(api_endpoint) = LOWER($1) AND id <> $2"
 	InsertTokenQuery                   = "INSERT INTO api_tokens (token_value, user_id, scopes, expires_at) VALUES ($1, $2, $3, $4)"
-	ValidateTokenQuery                 = "SELECT user_id FROM api_tokens WHERE token_value = $1 AND expires_at > NOW()"
-	DeleteTokenQuery                   = "DELETE FROM api_tokens WHERE token_value = $1"
+	// Require the owner to still exist, including for historical orphan tokens.
+	// Cast the numeric user id to text; api_tokens.user_id can contain arbitrary
+	// legacy text and must not be cast to an integer during authentication.
+	ValidateTokenQuery = "SELECT t.user_id FROM api_tokens t JOIN users u ON u.id::text = t.user_id WHERE t.token_value = $1 AND t.expires_at > NOW()"
+	DeleteTokenQuery   = "DELETE FROM api_tokens WHERE token_value = $1"
 	// SelectLogsQuery previously selected 10 columns — `message` twice and a
 	// non-existent `create_at` — against a 9-column Scan, so it could only ever
 	// fail. The list now matches LogService.FetchLogs exactly.
