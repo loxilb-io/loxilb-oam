@@ -458,7 +458,9 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 
 		// Handle specific error types
 		switch {
-		case strings.Contains(err.Error(), "user not found"):
+		case errors.Is(err, services.ErrAdminDeletion):
+			c.JSON(http.StatusForbidden, gin.H{"error": "Cannot remove the last administrator"})
+		case errors.Is(err, services.ErrUserNotFound), strings.Contains(err.Error(), "user not found"):
 			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		case strings.Contains(err.Error(), "username already exists"):
 			c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
