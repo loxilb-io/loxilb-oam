@@ -732,6 +732,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/models.ErrorResponse"
                         }
+                    },
+                    "503": {
+                        "description": "Authentication storage unavailable; retry after 5 seconds",
+                        "schema": {
+                            "$ref": "#/definitions/models.ErrorResponse"
+                        }
                     }
                 }
             }

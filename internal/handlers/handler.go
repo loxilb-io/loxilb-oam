@@ -76,6 +76,7 @@ func (h *Handler) invalidateProxyConnections() {
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 429 {object} models.ErrorResponse "Too many failed login attempts"
 // @Failure 500 {object} models.ErrorResponse
+// @Failure 503 {object} models.ErrorResponse "Authentication storage unavailable; retry after 5 seconds"
 // @Router /oam/login [post]
 func (h *Handler) Login(c *gin.Context) {
 	var loginRequest models.LoginRequest
@@ -93,7 +94,8 @@ func (h *Handler) Login(c *gin.Context) {
 	isBlocked, remainingTime, err := h.userService.IsLoginBlocked(loginRequest.Username, clientIP, now)
 	if err != nil {
 		utils.LogError("Failed to check login block status: " + err.Error())
-		// Continue with login - don't fail on tracking errors
+		utils.AuthenticationUnavailable(c)
+		return
 	}
 
 	if isBlocked {
@@ -114,11 +116,21 @@ func (h *Handler) Login(c *gin.Context) {
 
 	// Validate user credentials using the service
 	user_id, _, valid, err := h.userService.ValidateUser(loginRequest.Username, loginRequest.Password)
+	if err != nil {
+		var validationErr *services.ValidationError
+		if !errors.As(err, &validationErr) || (validationErr.Type != "USER_NOT_FOUND" && validationErr.Type != "INVALID_PASSWORD") {
+			utils.LogError("Authentication store unavailable: " + err.Error())
+			utils.AuthenticationUnavailable(c)
+			return
+		}
+	}
 	if !valid || err != nil {
-		// Record failed login attempt
+		// Only definitive credential failures count toward lockout.
 		blockedUntil, recordErr := h.userService.RecordFailedLogin(loginRequest.Username, clientIP, now)
 		if recordErr != nil {
 			utils.LogError("Failed to record failed login attempt: " + recordErr.Error())
+			utils.AuthenticationUnavailable(c)
+			return
 		}
 
 		// Check if this failure triggered a lockout
@@ -137,33 +149,17 @@ func (h *Handler) Login(c *gin.Context) {
 			return
 		}
 
-		// Handle specific validation errors
-		if err != nil {
-			switch err.(*services.ValidationError).Type {
-			case "USER_NOT_FOUND":
-				utils.LogWarning("User not found: " + loginRequest.Username)
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
-			case "INVALID_PASSWORD":
-				utils.LogWarning("Invalid password for user: " + loginRequest.Username)
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
-			case "SYSTEM_ERROR":
-				utils.LogError("System error during validation: " + err.Error())
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-			default:
-				utils.LogError("Unknown validation error: " + err.Error())
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-			}
-		} else {
-			utils.LogWarning("Invalid credentials for user: " + loginRequest.Username)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
-		}
+		// Do not disclose whether the username or password was incorrect.
+		utils.LogWarning("Invalid credentials for user: " + loginRequest.Username)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
 
 	// Successful authentication - clear any login attempt records
 	if clearErr := h.userService.ClearLoginAttempts(loginRequest.Username, clientIP); clearErr != nil {
 		utils.LogError("Failed to clear login attempts: " + clearErr.Error())
-		// Don't fail the login on clearing errors
+		utils.AuthenticationUnavailable(c)
+		return
 	}
 
 	// Include role/user_id claims (informational — authz reads the DB)
@@ -186,7 +182,7 @@ func (h *Handler) Login(c *gin.Context) {
 			return
 		}
 		utils.LogError("Failed to save token: " + err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not save token"})
+		utils.AuthenticationUnavailable(c)
 		return
 	}
 
