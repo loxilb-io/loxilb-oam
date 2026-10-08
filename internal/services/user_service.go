@@ -954,6 +954,13 @@ func (s *UserService) UpdateAdminCredentials(currentUsername, currentPassword, n
 			return fmt.Errorf("failed to update system config: %w", err)
 		}
 
+		// The setup path changes the same credential as a normal password
+		// update. Revoke previous sessions before committing either the user
+		// change or the setup flag; the handler issues a fresh token afterward.
+		if _, err := tx.Exec("DELETE FROM api_tokens WHERE user_id = $1", strconv.Itoa(userID)); err != nil {
+			return fmt.Errorf("failed to revoke initial-credential sessions: %w", err)
+		}
+
 		// Commit transaction
 		if err = tx.Commit(); err != nil {
 			return fmt.Errorf("failed to commit credential update: %w", err)

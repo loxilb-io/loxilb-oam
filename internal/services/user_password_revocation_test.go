@@ -1,6 +1,7 @@
 package services_test
 
 import (
+	"database/sql"
 	"errors"
 	"regexp"
 	"testing"
@@ -84,5 +85,46 @@ func TestRejectedPasswordPreservesSessions(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInitialAdminCredentialUpdateRevokesSessions(t *testing.T) {
+	for _, failure := range []string{"", "revoke", "commit"} {
+		t.Run(failure, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			hash, err := passwordutils.HashPassword("Previous!72Secret")
+			if err != nil {
+				t.Fatal(err)
+			}
+			mock.ExpectBegin()
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT id, password FROM users WHERE username = $1 AND role = $2")).WithArgs("admin", "admin").WillReturnRows(sqlmock.NewRows([]string{"id", "password"}).AddRow(42, hash))
+			mock.ExpectQuery(regexp.QuoteMeta(config.SelectUserPasswordQuery)).WithArgs("recovered-admin").WillReturnError(sql.ErrNoRows)
+			mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM users WHERE username = $1 AND id != $2")).WithArgs("recovered-admin", 42).WillReturnError(sql.ErrNoRows)
+			mock.ExpectExec("UPDATE users").WithArgs("recovered-admin", sqlmock.AnyArg(), "admin@example.invalid", 42).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec("INSERT INTO system_config").WillReturnResult(sqlmock.NewResult(0, 1))
+			revoke := mock.ExpectExec(regexp.QuoteMeta("DELETE FROM api_tokens WHERE user_id = $1")).WithArgs("42")
+			if failure == "revoke" {
+				revoke.WillReturnError(errors.New("token store unavailable"))
+				mock.ExpectRollback()
+			} else {
+				revoke.WillReturnResult(sqlmock.NewResult(0, 2))
+				if failure == "commit" {
+					mock.ExpectCommit().WillReturnError(errors.New("commit unavailable"))
+				} else {
+					mock.ExpectCommit()
+				}
+			}
+			err = services.NewUserService(db).UpdateAdminCredentials("admin", "Previous!72Secret", "recovered-admin", "Changed!81Secret", "admin@example.invalid")
+			if (err != nil) != (failure != "") {
+				t.Fatalf("failure=%q error=%v", failure, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
