@@ -28,6 +28,20 @@
 name: loxilb-data
 
 services:
+  gateway-audit-init:
+    # A new Docker volume root starts at 0755. The Gateway audit writer
+    # requires 0700 and otherwise refuses audited management operations.
+    image: ${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}
+    user: "0:0"
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ['chmod 700 /audit; test "$$(stat -c %a /audit)" = 700']
+    volumes:
+      - gateway_audit:/audit
+    restart: "no"
+
   gateway:
     image: ${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}
     container_name: loxilb-gateway
@@ -41,6 +55,9 @@ services:
     cap_add:
       - SYS_ADMIN
     restart: unless-stopped
+    depends_on:
+      gateway-audit-init:
+        condition: service_completed_successfully
     environment:
       # Plaintext REST API on loopback only. Management authentication still
       # applies; the bind restriction adds host-level exposure control. This
