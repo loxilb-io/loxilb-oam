@@ -3,11 +3,14 @@ package services
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
 	"github.com/loxilb-io/loxilb-oam/internal/models"
 	"github.com/loxilb-io/loxilb-oam/internal/utils"
 	"time"
 )
+
+var ErrInvalidAlert = errors.New("invalid alert")
 
 type AlertService struct {
 	DB *sql.DB
@@ -37,11 +40,11 @@ func (s *AlertService) CreateAlert(alertReq models.CreateAlertRequest) (int, err
 	}
 
 	if !validTypes[alertReq.Type] {
-		return 0, errors.New("invalid alert type")
+		return 0, fmt.Errorf("%w: invalid alert type", ErrInvalidAlert)
 	}
 
 	if !validSeverities[alertReq.Severity] {
-		return 0, errors.New("invalid severity level")
+		return 0, fmt.Errorf("%w: invalid severity level", ErrInvalidAlert)
 	}
 
 	err := utils.RetryOperation(func() error {
@@ -84,19 +87,22 @@ func (s *AlertService) GetActiveAlerts() ([]models.Alert, error) {
 func (s *AlertService) AcknowledgeAlert(alertID, userID int) (time.Time, error) {
 	ackTime := time.Now()
 
-	err := utils.RetryOperation(func() error {
-		query := config.InsertAckQuery
-		_, err := s.DB.Exec(query, alertID, userID, ackTime)
-		if err != nil {
-			return err
-		}
-
-		updateQuery := config.UpdateAckQuery
-		_, err = s.DB.Exec(updateQuery, ackTime, alertID)
-		return err
-	}, config.MaxRetries, config.RetryDelay)
-
-	return ackTime, err
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(config.InsertAckQuery, alertID, userID, ackTime); err != nil {
+		return time.Time{}, err
+	}
+	if _, err = tx.Exec(config.UpdateAckQuery, ackTime, alertID); err != nil {
+		return time.Time{}, err
+	}
+	// Do not retry a write after a possibly ambiguous commit result.
+	if err = tx.Commit(); err != nil {
+		return time.Time{}, err
+	}
+	return ackTime, nil
 }
 
 // GetAlertHistory returns alerts within the given time range, applying limit
