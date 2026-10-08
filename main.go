@@ -196,7 +196,8 @@ func main() {
 	gatewayIdentity, err := services.GatewayServiceIdentityFromEnv()
 	if err != nil {
 		utils.LogError(fmt.Sprintf("SECURITY: invalid Gateway service identity configuration: %s", err))
-		return
+		db.Close()
+		os.Exit(1)
 	}
 	// The mode is safe to report; the token itself is never logged.
 	utils.LogInfo(fmt.Sprintf("Gateway service authentication mode: %s", gatewayIdentity.Mode()))
@@ -206,7 +207,8 @@ func main() {
 		// A set-but-invalid SNAPSHOT_ENC_KEY must fail boot loudly rather
 		// than silently storing secret-bearing snapshots unencrypted.
 		utils.LogError(fmt.Sprintf("Failed to initialize snapshot service: %s", err))
-		return
+		db.Close()
+		os.Exit(1)
 	}
 	// pollingService := polling.NewPollingService(alertService, loxiLBService)
 
@@ -217,7 +219,8 @@ func main() {
 		expirationMinutes, err := strconv.Atoi(*expirationMinutesFlag)
 		if err != nil || expirationMinutes <= 0 {
 			utils.LogError(fmt.Sprintf("Invalid token expiration time: %s", *expirationMinutesFlag))
-			return
+			db.Close()
+			os.Exit(1)
 		}
 		config.TokenExpirationMinutes = expirationMinutes
 	}
@@ -321,22 +324,32 @@ func main() {
 		Handler: router,
 	}
 	// Start HTTP or HTTPS based on the flag
+	serverErrors := make(chan error, 1)
 	go func() {
 		if *enableHTTPS {
 			utils.LogInfo(fmt.Sprintf("Starting HTTPS server on :%s", port))
 			if err := httpServer.ListenAndServeTLS(*sslCertFile, *sslKeyFile); err != nil && err != http.ErrServerClosed {
 				utils.LogError(fmt.Sprintf("[%s] Could not start HTTPS server: %s", time.Now().Format(time.RFC3339), err))
+				serverErrors <- err
 			}
 		} else {
 			utils.LogInfo(fmt.Sprintf("Starting HTTP server on :%s", *serverPort))
 			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				utils.LogError(fmt.Sprintf("[%s] Could not start HTTP server: %s", time.Now().Format(time.RFC3339), err))
+				serverErrors <- err
 			}
 		}
 	}()
 
 	// Handle graceful shutdown
-	<-signalChan
+	select {
+	case <-signalChan:
+	case <-serverErrors:
+		cancel()
+		httpServer.Close()
+		db.Close()
+		os.Exit(1)
+	}
 	utils.LogInfo("Shutdown signal received, shutting down server...")
 
 	cancel()
