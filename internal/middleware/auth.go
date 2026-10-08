@@ -17,6 +17,7 @@ server-side token store (api_tokens), which is where logout deletes it — witho
 the store check a "logged-out" token keeps working until natural expiry.
 If the token is valid, it sets the username in the context and calls the next handler.
 If the token is invalid or revoked, it returns a 401 Unauthorized response.
+Token-store errors fail closed with 503 so clients can retain a valid session.
 */
 func TokenAuthMiddleware(userService *services.UserService) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -47,7 +48,7 @@ func TokenAuthMiddleware(userService *services.UserService) gin.HandlerFunc {
 		valid, err := userService.ValidateToken(token)
 		if err != nil {
 			utils.LogError("Token store lookup failed: " + err.Error())
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Could not validate token"})
+			utils.AuthenticationUnavailable(c)
 			c.Abort()
 			return
 		}

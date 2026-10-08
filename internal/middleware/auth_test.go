@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -110,5 +111,31 @@ func TestTokenAuthValidToken(t *testing.T) {
 	authRouter(userService).ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestTokenAuthStoreOutageRetainsSessionOnRecovery(t *testing.T) {
+	token, err := utils.GenerateToken("alice", "admin", 1, 60)
+	assert.NoError(t, err)
+	db, mock, err := sqlmock.New()
+	assert.NoError(t, err)
+	defer db.Close()
+	router := authRouter(services.NewUserService(db))
+	mock.ExpectQuery("SELECT t.user_id FROM api_tokens t JOIN users u").WithArgs(token).
+		WillReturnError(errors.New("private database connection failure"))
+	mock.ExpectQuery("SELECT t.user_id FROM api_tokens t JOIN users u").WithArgs(token).
+		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow("1"))
+	for _, expected := range []int{http.StatusServiceUnavailable, http.StatusOK} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		router.ServeHTTP(rec, req)
+		assert.Equal(t, expected, rec.Code)
+		if expected == http.StatusServiceUnavailable {
+			assert.Equal(t, "5", rec.Header().Get("Retry-After"))
+			assert.Contains(t, rec.Body.String(), "authentication_unavailable")
+			assert.NotContains(t, rec.Body.String(), "private database")
+		}
+	}
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
