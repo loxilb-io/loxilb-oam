@@ -236,6 +236,7 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 		setParts := []string{}
 		args := []interface{}{}
 		updatedFields := []string{}
+		passwordChanged := false
 
 		for field, value := range updates {
 			switch field {
@@ -286,6 +287,7 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 					setParts = append(setParts, "password")
 					args = append(args, hashedPasswordBase64)
 					updatedFields = append(updatedFields, "password")
+					passwordChanged = true
 				}
 			}
 		}
@@ -305,7 +307,20 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 			strings.Join(assignments, ", "), len(setParts)+1)
 		args = append(args, userID)
 
-		result, err := s.DB.Exec(query, args...)
+		// Password recovery must revoke the target user's existing sessions as
+		// part of the same commit. Otherwise a failed token deletion would
+		// leave changed credentials with the old bearer sessions still usable.
+		execUpdate := s.DB.Exec
+		var tx *sql.Tx
+		if passwordChanged {
+			tx, err = s.DB.Begin()
+			if err != nil {
+				return fmt.Errorf("failed to begin password update: %w", err)
+			}
+			defer tx.Rollback()
+			execUpdate = tx.Exec
+		}
+		result, err := execUpdate(query, args...)
 		if err != nil {
 			if isDuplicateEntryError(err) {
 				return errors.New("username already exists")
@@ -320,6 +335,15 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 		// treat it as success rather than a 500.
 		if _, err := result.RowsAffected(); err != nil {
 			return fmt.Errorf("failed to get affected rows: %w", err)
+		}
+
+		if tx != nil {
+			if _, err := tx.Exec("DELETE FROM api_tokens WHERE user_id = $1", strconv.Itoa(userID)); err != nil {
+				return fmt.Errorf("failed to revoke password-update sessions: %w", err)
+			}
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("failed to commit password update: %w", err)
+			}
 		}
 
 		utils.LogInfo(fmt.Sprintf("User %d updated successfully. Fields: [%s]", userID, strings.Join(updatedFields, ", ")))
