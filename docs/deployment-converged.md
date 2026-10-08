@@ -691,7 +691,15 @@ docker volume create loxilb-data_gateway_audit
 docker volume create loxilb-mgmt_oam_logs
 docker run --rm --network none --entrypoint sh -v "$PWD/private-log-migration/gateway:/source:ro" -v loxilb-data_gateway_audit:/destination "$(docker inspect --format '{{.Image}}' loxilb-gateway)" -c 'cp -a /source/. /destination/'
 docker run --rm --network none --entrypoint sh -v "$PWD/private-log-migration/oam:/source:ro" -v loxilb-mgmt_oam_logs:/destination "$(docker inspect --format '{{.Image}}' loxilb-mgmt-oam-loxilb-1)" -c 'cp -a /source/. /destination/'
+docker run --rm --network none --entrypoint sh -v loxilb-data_gateway_audit:/destination "$(docker inspect --format '{{.Image}}' loxilb-gateway)" -c 'chmod 700 /destination && stat -c "%a" /destination'
 ```
+
+Expected audit-directory mode: `700`. Verify it before starting Gateway. Its audit
+writer refuses a directory with broader permissions; the process may run while
+audited management operations return503 `audit_unavailable`. A successful copy
+does not establish audit readiness. After recreation, verify an authenticated
+management request succeeds and produces a new audit record as well as retaining
+the old records. Preserve a permission-related failure in the migration record.
 
 Use this seeding procedure only for new, empty scenario-owned volumes. Do not
 overwrite an existing volume or remove retained evidence. Recreate each approved
