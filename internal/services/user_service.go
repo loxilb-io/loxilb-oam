@@ -467,7 +467,7 @@ func (s *UserService) ValidateUser(username, password string) (int, string, bool
 		if passwordUtils.NeedsRehash(hashedPasswordBase64) {
 			if newHash, hashErr := passwordUtils.HashPassword(password); hashErr != nil {
 				utils.LogError("Failed to rehash password for user " + username + ": " + hashErr.Error())
-			} else if _, updErr := s.DB.Exec(config.UpdateUserPasswordQuery, newHash, user_id); updErr != nil {
+			} else if _, updErr := s.DB.Exec("UPDATE users SET password = $1 WHERE id = $2 AND password = $3", newHash, user_id, hashedPasswordBase64); updErr != nil {
 				utils.LogError("Failed to store rehashed password for user " + username + ": " + updErr.Error())
 			} else {
 				utils.LogInfo("Upgraded password hash for user " + username + " (" + passwordUtils.GetPasswordHashInfo(hashedPasswordBase64) + " -> pbkdf2-versioned)")
@@ -479,6 +479,35 @@ func (s *UserService) ValidateUser(username, password string) (int, string, bool
 	utils.LogWarning("Invalid password for user: " + username)
 
 	return 0, "", false, ErrInvalidPassword // Invalid password
+}
+
+// SaveTokenForCredentials serializes issuance with password replacement and
+// deletion. The handlers' earlier validation is not authority to issue a token
+// after a recovery has committed. Hold the users row until token insertion.
+func (s *UserService) SaveTokenForCredentials(userID int, username, password, token string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var hash string
+	if err := tx.QueryRow("SELECT password FROM users WHERE id = $1 AND username = $2 FOR UPDATE", userID, username).Scan(&hash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	valid, err := passwordUtils.VerifyPassword(password, hash)
+	if err != nil {
+		return ErrSystemError
+	}
+	if !valid {
+		return ErrInvalidPassword
+	}
+	if _, err := tx.Exec(config.InsertTokenQuery, token, strconv.Itoa(userID), "", time.Now().Add(time.Duration(config.TokenExpirationMinutes)*time.Minute)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SaveToken saves the generated token for the given username in the database with the configured expiration time.
