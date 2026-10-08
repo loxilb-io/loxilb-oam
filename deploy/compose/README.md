@@ -198,3 +198,66 @@ projects so neither side temporarily uses a different value.
 > dev overlay builds only the OAM image, from this repository (`OAM_SRC`,
 > default `../..`); the console image is always pulled — set `UI_IMAGE` /
 > `UI_TAG` in `.env` to run a build of your own.
+
+### Opt-in OAM runtime role separate from the database owner
+
+The default database project's `POSTGRES_USER` is the PostgreSQL bootstrap
+superuser. Do not copy that credential into a production OAM runtime as a
+least-privilege claim. Keep the state project's owner credentials and existing
+roles unchanged, migrate the schema as its owner, then provision a **new,
+dedicated** OAM application role. The application starts in read-only schema
+check mode; migrations remain a separately authorized owner operation.
+
+From an authorized `psql` owner session against the migrated OAM database,
+set `OAM_APP_DB_USER` and `OAM_APP_DB_PASSWORD` through a private environment
+file or your secret manager. The password must not appear in shell history or
+`psql -v` arguments. Run the following command from this directory:
+
+```bash
+psql -v ON_ERROR_STOP=1 -f database/oam-app-db-bootstrap.sql
+```
+
+The script reads those two environment variables. It grants DML on the current
+named OAM tables and USAGE/SELECT on their owned sequences, plus SELECT on
+`schema_migrations`. It grants no table ownership, schema CREATE, DBA role
+membership or access to `aigw`/`aigw_mgmt`. Missing inputs, existing elevated or
+owner/member roles, inherited public CREATE, and inherited migration/Gateway
+access cause an error and transaction rollback. It does not demote existing
+roles or revoke shared PUBLIC grants. Check grants before reusing an existing
+application role; it must have no unrelated direct table/function privileges.
+
+Keep the role/password in a separate mode0600 management environment file
+(for example `private/oam-app.env`). Do not modify the state `.env` or run its
+bootstrap jobs with the application credential. Add the overlay **last**:
+
+```bash
+docker compose --env-file .env --env-file private/oam-app.env \
+  -f docker-compose.yml -f docker-compose.prod.yml \
+  -f docker-compose.converged.yml -f docker-compose.oam-app-db.yml \
+  up -d --no-deps --force-recreate oam-loxilb
+```
+
+Retain any deployment-specific overlays before the application-role overlay.
+Require OAM readiness, same-session authenticated reads, login and an authorized
+write. Verify the role flags and grants through an application connection:
+
+```sql
+SELECT current_user, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+FROM pg_roles WHERE rolname = current_user;
+SELECT has_schema_privilege(current_user, 'public', 'CREATE');
+SELECT has_table_privilege(current_user, 'public.schema_migrations', 'UPDATE');
+```
+
+All five elevated flags and both privilege checks must be false. In a dedicated
+test database, additionally require permission denials for CREATE ROLE,
+CREATE DATABASE, a public-table CREATE, Gateway schema reads and migration
+history UPDATE. A service health200 alone is insufficient. PostgreSQL transport
+TLS remains independently configured; this overlay does not enable it.
+
+For an upgrade, preserve backups, stop the OAM writer, apply reviewed migrations
+with the owner credential, rerun the grant script for new named tables if the
+release requires them, and restart in `check` mode. Do not select `off` to bypass
+a pending schema. Roll back the runtime credential by omitting only this final
+overlay and private environment file, retaining the other deployment overlays;
+verify the same-session/configuration/traffic and log-volume boundaries again.
+Do not delete roles, volumes or migration records as rollback.
