@@ -82,6 +82,8 @@ services:
       postgres:
         condition: service_healthy
     volumes:
+      # Process logs and archives survive management container recreation.
+      - oam_logs:/var/log
       # Instance CA bundle lives here; OAM_INSTANCE_CA_BUNDLE points inside it.
       - ./certs:/etc/loxilb-oam/certs:ro
     # On frontend (egress to managed instances) + backend (reach PostgreSQL).
@@ -147,6 +149,7 @@ networks:
   backend:       # isolated in prod (see docker-compose.prod.yml): DB + intra-stack
 
 volumes:
+  oam_logs:
   postgres_data:
   ui_build:
   caddy_data:

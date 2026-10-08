@@ -179,8 +179,12 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	err = h.userService.SaveToken(strconv.Itoa(user_id), token)
+	err = h.userService.SaveTokenForCredentials(user_id, loginRequest.Username, loginRequest.Password, token)
 	if err != nil {
+		if errors.Is(err, services.ErrInvalidPassword) || errors.Is(err, services.ErrUserNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+			return
+		}
 		utils.LogError("Failed to save token: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not save token"})
 		return
@@ -458,7 +462,9 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 
 		// Handle specific error types
 		switch {
-		case strings.Contains(err.Error(), "user not found"):
+		case errors.Is(err, services.ErrAdminDeletion):
+			c.JSON(http.StatusForbidden, gin.H{"error": "Cannot remove the last administrator"})
+		case errors.Is(err, services.ErrUserNotFound), strings.Contains(err.Error(), "user not found"):
 			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		case strings.Contains(err.Error(), "username already exists"):
 			c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
@@ -1700,7 +1706,7 @@ func (h *Handler) UpdateAdminCredentials(c *gin.Context) {
 
 	// The token must exist in the server-side store or the auth middleware
 	// will reject it as revoked.
-	if err := h.userService.SaveToken(strconv.Itoa(adminUserID), newToken); err != nil {
+	if err := h.userService.SaveTokenForCredentials(adminUserID, req.NewUsername, req.NewPassword, newToken); err != nil {
 		utils.LogError("Failed to save new access token: " + err.Error())
 		c.JSON(http.StatusOK, models.AdminUpdateResponse{
 			Success: true,

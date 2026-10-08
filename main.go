@@ -165,12 +165,8 @@ func main() {
 	}
 	if err != nil {
 		utils.LogError(fmt.Sprintf("Database connection failed (host=%s port=%s db=%s): %v", *dbHost, *dbPort, *dbName, err))
-		if *migrateOnly {
-			// Whatever ran -migrate reads the exit status to learn whether
-			// the schema was migrated; "could not connect" is not success.
-			os.Exit(1)
-		}
-		return
+		// Serving and migration startup both failed; supervisors must see failure.
+		os.Exit(1)
 	}
 	defer db.Close()
 

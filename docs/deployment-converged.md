@@ -651,3 +651,51 @@ intentional fail-closed token mismatch.
 | `/netlox/v1/metrics` returns 401 | Expected without the service token: converged mode sets `--metrics-auth=require`. Configure the scraper with the token file rather than disabling authentication. |
 | Prometheus cannot scrape the gateway | `:11111` is loopback-only by design — run Prometheus with `network_mode: host` (see §7). |
 | Everything "healthy" but no traffic is handled | Docker Desktop. `network_mode: host` is Linux-only. |
+
+## Audit and process-log retention
+
+The data project keeps Gateway trail files in `gateway_audit` mounted at
+`/var/log/loxilb/audit`. The management project keeps OAM logs and archives in
+`oam_logs` mounted at `/var/log`. Ordinary project `down` retains these volumes;
+`down --volumes`, host disk loss and deliberate volume deletion do not.
+Include them in the approved retention and backup scope. A local volume does
+not establish remote collector delivery, replicated durability or an Appliance
+restore contract.
+
+For an existing installation, preserve the container-layer files **before** the
+first recreation that introduces the mounts. Use the existing project/container
+names and a private directory; these examples use the default converged names:
+
+```bash
+umask 077
+mkdir -p private-log-migration/gateway private-log-migration/oam
+chmod 700 private-log-migration
+docker cp loxilb-gateway:/var/log/loxilb/audit/. private-log-migration/gateway/
+docker cp loxilb-mgmt-oam-loxilb-1:/var/log/loxioam.log private-log-migration/oam/
+```
+
+Also copy any existing OAM archives selected by your retention policy. Stop
+writers in a scheduled maintenance window and take a final copy; the running
+copy above is a preservation checkpoint, not a quiesced backup.
+
+```bash
+docker stop loxilb-gateway loxilb-mgmt-oam-loxilb-1
+docker cp loxilb-gateway:/var/log/loxilb/audit/. private-log-migration/gateway/
+docker cp loxilb-mgmt-oam-loxilb-1:/var/log/loxioam.log private-log-migration/oam/
+```
+
+Seed the new empty volumes before recreation, retaining those private copies independently:
+
+```bash
+docker volume create loxilb-data_gateway_audit
+docker volume create loxilb-mgmt_oam_logs
+docker run --rm --network none --entrypoint sh -v "$PWD/private-log-migration/gateway:/source:ro" -v loxilb-data_gateway_audit:/destination "$(docker inspect --format '{{.Image}}' loxilb-gateway)" -c 'cp -a /source/. /destination/'
+docker run --rm --network none --entrypoint sh -v "$PWD/private-log-migration/oam:/source:ro" -v loxilb-mgmt_oam_logs:/destination "$(docker inspect --format '{{.Image}}' loxilb-mgmt-oam-loxilb-1)" -c 'cp -a /source/. /destination/'
+```
+
+Use this seeding procedure only for new, empty scenario-owned volumes. Do not
+overwrite an existing volume or remove retained evidence. Recreate each approved
+project with its normal Compose files; compare original audit records by identity and content hash across active
+and rotated segments, and compare the OAM log prefix afterward, then verify new records append. Management recreation
+must leave the data/state projects running. Do not use `down --volumes` for
+ordinary upgrades or recovery.

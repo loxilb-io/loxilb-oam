@@ -91,6 +91,8 @@ services:
       - --aikey-db-name=${DB_NAME:-loxioam}
       - --aikey-db-password-file=/run/secrets/aigw_db_password
     volumes:
+      # Audit records must survive an image upgrade/container recreation.
+      - gateway_audit:/var/log/loxilb/audit
       - /dev/log:/dev/log
       # Configuration snapshot. Without this bind mount the gateway's config
       # survives a restart but is LOST on image upgrade (container recreate).
@@ -111,3 +113,7 @@ secrets:
     file: ${AIGW_DB_PASSWORD_FILE:-./secrets/aigw_db_password}
   gateway_service_token:
     file: ${GATEWAY_SERVICE_TOKEN_FILE:-./secrets/gateway_service_token}
+
+# Kept by ordinary down; include in retention and backup procedures.
+volumes:
+  gateway_audit:
