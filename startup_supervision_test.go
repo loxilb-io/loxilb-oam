@@ -13,7 +13,7 @@ import (
 
 // Runs real main in a subprocess so process supervision is tested rather than
 // merely asserting that a configuration validator returns an error.
-func TestStartupSupervisionHelper(t *testing.T) {
+func TestStartupSupervisionHelper(_ *testing.T) {
 	if os.Getenv("OAM_STARTUP_TEST_HELPER") != "1" {
 		return
 	}
