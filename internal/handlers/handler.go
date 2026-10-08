@@ -1236,6 +1236,10 @@ func (h *Handler) CreateAlert(c *gin.Context) {
 	}
 
 	alertID, err := h.alertService.CreateAlert(alertReq)
+	if errors.Is(err, services.ErrInvalidAlert) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if err != nil {
 		utils.LogError("Failed to create alert: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1307,7 +1311,7 @@ func (h *Handler) GetActiveAlerts(c *gin.Context) {
 
 // AcknowledgeAlert handles acknowledging an alert
 // @Summary Acknowledge alert
-// @Description Acknowledges an alert by ID
+// @Description Acknowledges an alert by ID as the authenticated user. Body user_id must match the caller.
 // @Tags alerts
 // @Accept json
 // @Produce json
@@ -1316,6 +1320,8 @@ func (h *Handler) GetActiveAlerts(c *gin.Context) {
 // @Param Authorization header string true "Bearer token"
 // @Success 200 {object} models.AcknowledgeResponse
 // @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Failure 500 {object} models.ErrorResponse
 // @Security BearerAuth
 // @Router /oam/alerts/{id}/acknowledge [put]
@@ -1332,7 +1338,16 @@ func (h *Handler) AcknowledgeAlert(c *gin.Context) {
 		return
 	}
 
-	ackTime, err := h.alertService.AcknowledgeAlert(alertID, ackReq.UserID)
+	caller := middleware.ResolveCaller(c, h.userService)
+	if caller == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	if ackReq.UserID != caller.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Acknowledgement must identify the authenticated user"})
+		return
+	}
+	ackTime, err := h.alertService.AcknowledgeAlert(alertID, caller.ID)
 	if err != nil {
 		utils.LogError("Failed to acknowledge alert: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
