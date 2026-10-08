@@ -656,7 +656,13 @@ intentional fail-closed token mismatch.
 
 The data project keeps Gateway trail files in `gateway_audit` mounted at
 `/var/log/loxilb/audit`. The management project keeps OAM logs and archives in
-`oam_logs` mounted at `/var/log`. Ordinary project `down` retains these volumes;
+`oam_logs` mounted at `/var/log`. Before Gateway starts, `gateway-audit-init`
+uses the same pinned image with no network or additional capabilities to set
+the audit volume directory to0700. Its successful completion gates Gateway
+startup; it does not delete or rewrite retained records. A successful read-only
+API response does not prove the audit writer is ready: also verify an approved
+audited management operation and the resulting new audit record.
+Ordinary project `down` retains these volumes;
 `down --volumes`, host disk loss and deliberate volume deletion do not.
 Include them in the approved retention and backup scope. A local volume does
 not establish remote collector delivery, replicated durability or an Appliance
