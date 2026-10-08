@@ -236,6 +236,7 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 		setParts := []string{}
 		args := []interface{}{}
 		updatedFields := []string{}
+		roleChanged := false
 		passwordChanged := false
 
 		for field, value := range updates {
@@ -261,6 +262,7 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 					setParts = append(setParts, "role")
 					args = append(args, role)
 					updatedFields = append(updatedFields, "role")
+					roleChanged = true
 				}
 			case "password":
 				if password, ok := value.(string); ok && password != "" {
@@ -312,13 +314,18 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 		// leave changed credentials with the old bearer sessions still usable.
 		execUpdate := s.DB.Exec
 		var tx *sql.Tx
-		if passwordChanged {
+		if passwordChanged || roleChanged {
 			tx, err = s.DB.Begin()
 			if err != nil {
 				return fmt.Errorf("failed to begin password update: %w", err)
 			}
 			defer tx.Rollback()
 			execUpdate = tx.Exec
+		}
+		if roleChanged {
+			if err := protectLastAdmin(tx, userID, updates["role"] == "admin"); err != nil {
+				return err
+			}
 		}
 		result, err := execUpdate(query, args...)
 		if err != nil {
@@ -338,8 +345,10 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 		}
 
 		if tx != nil {
-			if _, err := tx.Exec("DELETE FROM api_tokens WHERE user_id = $1", strconv.Itoa(userID)); err != nil {
-				return fmt.Errorf("failed to revoke password-update sessions: %w", err)
+			if passwordChanged {
+				if _, err := tx.Exec("DELETE FROM api_tokens WHERE user_id = $1", strconv.Itoa(userID)); err != nil {
+					return fmt.Errorf("failed to revoke password-update sessions: %w", err)
+				}
 			}
 			if err := tx.Commit(); err != nil {
 				return fmt.Errorf("failed to commit password update: %w", err)
@@ -355,47 +364,46 @@ func (s *UserService) UpdateUser(userID int, updates map[string]interface{}) err
 // It prevents deletion of the last admin user to avoid system lockout.
 // Multiple admin users can be deleted as long as at least one admin remains.
 // It performs the database operation with retry logic and handles any errors encountered.
-func (s *UserService) DeleteUser(id string) error {
-	return utils.RetryOperation(func() error {
-		// First, check if the user has admin role
-		var role string
-		checkRoleQuery := "SELECT role FROM users WHERE id = $1"
-		err := s.DB.QueryRow(checkRoleQuery, id).Scan(&role)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				utils.LogWarning("Attempted to delete non-existent user with ID: " + id)
-				return ErrUserNotFound
-			}
-			utils.LogError("Failed to check user role before deletion: " + err.Error())
-			return err
-		}
-
-		// If user is admin, check if they are the last admin
-		if role == "admin" {
-			adminCount, err := s.GetAdminCount()
-			if err != nil {
-				utils.LogError("Failed to count admin users: " + err.Error())
-				return err
-			}
-
-			// Prevent deletion if this is the last admin
-			if adminCount <= 1 {
-				utils.LogWarning("Attempted to delete the last admin user with ID: " + id)
-				return ErrAdminDeletion
-			}
-
-			utils.LogInfo(fmt.Sprintf("Allowing deletion of admin user (ID: %s) - %d admin(s) will remain", id, adminCount-1))
-		}
-
-		// Proceed with deletion
-		query := config.DeleteUserQuery
-		_, err = s.DB.Exec(query, id)
-		if err != nil {
-			utils.LogError("Failed to delete user: " + err.Error())
-		} else {
-			utils.LogInfo("User deleted successfully: ID " + id)
+// protectLastAdmin must run before a users write and hold the lock until commit.
+// A table lock covers inserts and writes from other OAM processes as well as
+// concurrent demotion/deletion. Count and mutation must share the transaction.
+func protectLastAdmin(tx *sql.Tx, id interface{}, remainsAdmin bool) error {
+	if _, err := tx.Exec("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+		return fmt.Errorf("lock administrator membership: %w", err)
+	}
+	var role string
+	if err := tx.QueryRow("SELECT role FROM users WHERE id = $1", id).Scan(&role); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUserNotFound
 		}
 		return err
+	}
+	if role == "admin" && !remainsAdmin {
+		var count int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'admin'").Scan(&count); err != nil {
+			return err
+		}
+		if count <= 1 {
+			return ErrAdminDeletion
+		}
+	}
+	return nil
+}
+
+func (s *UserService) DeleteUser(id string) error {
+	return utils.RetryOperation(func() error {
+		tx, err := s.DB.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err := protectLastAdmin(tx, id, false); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(config.DeleteUserQuery, id); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}, config.MaxRetries, config.RetryDelay)
 }
 
@@ -467,7 +475,7 @@ func (s *UserService) ValidateUser(username, password string) (int, string, bool
 		if passwordUtils.NeedsRehash(hashedPasswordBase64) {
 			if newHash, hashErr := passwordUtils.HashPassword(password); hashErr != nil {
 				utils.LogError("Failed to rehash password for user " + username + ": " + hashErr.Error())
-			} else if _, updErr := s.DB.Exec(config.UpdateUserPasswordQuery, newHash, user_id); updErr != nil {
+			} else if _, updErr := s.DB.Exec("UPDATE users SET password = $1 WHERE id = $2 AND password = $3", newHash, user_id, hashedPasswordBase64); updErr != nil {
 				utils.LogError("Failed to store rehashed password for user " + username + ": " + updErr.Error())
 			} else {
 				utils.LogInfo("Upgraded password hash for user " + username + " (" + passwordUtils.GetPasswordHashInfo(hashedPasswordBase64) + " -> pbkdf2-versioned)")
@@ -479,6 +487,35 @@ func (s *UserService) ValidateUser(username, password string) (int, string, bool
 	utils.LogWarning("Invalid password for user: " + username)
 
 	return 0, "", false, ErrInvalidPassword // Invalid password
+}
+
+// SaveTokenForCredentials serializes issuance with password replacement and
+// deletion. The handlers' earlier validation is not authority to issue a token
+// after a recovery has committed. Hold the users row until token insertion.
+func (s *UserService) SaveTokenForCredentials(userID int, username, password, token string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var hash string
+	if err := tx.QueryRow("SELECT password FROM users WHERE id = $1 AND username = $2 FOR UPDATE", userID, username).Scan(&hash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	valid, err := passwordUtils.VerifyPassword(password, hash)
+	if err != nil {
+		return ErrSystemError
+	}
+	if !valid {
+		return ErrInvalidPassword
+	}
+	if _, err := tx.Exec(config.InsertTokenQuery, token, strconv.Itoa(userID), "", time.Now().Add(time.Duration(config.TokenExpirationMinutes)*time.Minute)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SaveToken saves the generated token for the given username in the database with the configured expiration time.
