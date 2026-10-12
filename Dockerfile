@@ -28,7 +28,7 @@ WORKDIR /app
 
 # ca-certificates: outbound TLS to managed LoxiLB instances. Alpine's busybox
 # already provides the `sh` (CMD) and `wget` (compose healthcheck) used at runtime.
-RUN apk add --no-cache ca-certificates && \
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates && \
     mkdir -p /var/log/oam /var/log && chmod 755 /var/log
 
 # Copy only what the runtime needs: the two binaries and the helper scripts
