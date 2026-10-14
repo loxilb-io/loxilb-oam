@@ -1,3 +1,4 @@
 # Never commit filled-in environment or rendered secrets.
 .env
 *.local
+/backups/

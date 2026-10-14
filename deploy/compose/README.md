@@ -69,8 +69,12 @@ and authentication-aware verification:
 ```bash
 scripts/init-converged.sh          # -y for defaults, --no-start to set up only
 ```
+Persistence is managed by named external volumes. See [PERSISTENT-UPGRADE.md](PERSISTENT-UPGRADE.md) for adoption, image upgrade, rollback and explicit certificate/token refresh. Protected host files are initial provisioning sources; changing them does not silently rotate an existing volume. [VALIDATION.md](VALIDATION.md) records the source/runtime checks and qualification limits.
+
 By hand:
 ```bash
+# prepare stable external volumes from protected host seed files first
+scripts/prepare-converged-volumes.py
 # shared state — one PostgreSQL server, one loxioam database
 docker compose -f docker-compose.database.yml up -d postgres
 docker compose -f docker-compose.database.yml run --rm gateway-db-bootstrap
@@ -180,18 +184,21 @@ Register each instance in the UI/API as `https://<host>:8091/netlox/v1`.
 docker compose ... ps                 # status
 docker compose ... logs -f caddy      # edge logs
 docker compose ... down               # stop (keep data)
-docker compose ... down -v            # stop + destroy DB/volumes
+docker compose ... down -v            # destructive reset for disposable non-converged dev data only
 ```
 
 In converged mode, run those commands against the intended project file. Never
-use `down -v` for `docker-compose.database.yml`; its volume contains OAM state
-plus Gateway API keys and quotas.
+use volume removal/pruning as an upgrade or rollback step. Converged external
+volumes are independent stores; the database contains OAM state plus Gateway
+API keys and quotas. See PERSISTENT-UPGRADE.md for protected backups.
 
 The converged token file is generated once at
 `secrets/gateway_service_token` with mode `0600` and is never printed. Re-running
 the initializer preserves it. Rotate it only as a coordinated data-plane and
-management-plane restart: replace the file atomically, then recreate both
-projects so neither side temporarily uses a different value.
+management-plane maintenance: stop all shared-token consumers, prepare the
+protected seed, run `scripts/prepare-converged-volumes.py --refresh gateway-token`,
+then recreate the affected services. Replacing the host seed alone does not change
+the persistent token. Verify validity/revocation and actual OAM linkage as well.
 
 > **Layout note:** this bundle lives in the `loxilb-oam` repo so the PostgreSQL schema
 > (`../../database/init`) and the future k8s overlays stay single-sourced. The

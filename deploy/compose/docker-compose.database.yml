@@ -14,7 +14,11 @@ services:
       POSTGRES_USER: ${DB_USER:-oamuser}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     volumes:
-      - postgres_data:/var/lib/postgresql
+      - type: volume
+        source: postgres_data
+        target: /var/lib/postgresql
+        volume:
+          nocopy: true
       - ${DB_INIT_DIR:-../../database/init}:/docker-entrypoint-initdb.d:ro
     ports:
       # The host-network Gateway reaches this listener. It is never exposed on
@@ -52,17 +56,26 @@ services:
       PGUSER: ${DB_USER:-oamuser}
       PGDATABASE: ${DB_NAME:-loxioam}
       PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
-    secrets:
-      - aigw_db_password
-      - aigw_mgmt_db_password
     volumes:
       - ./database/aigw-db-bootstrap.sql:/bootstrap/aigw-db-bootstrap.sql:ro
+      - type: volume
+        source: aigw_password
+        target: /run/aigw-secrets
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        source: mgmt_password
+        target: /run/mgmt-secrets
+        read_only: true
+        volume:
+          nocopy: true
     command:
       - sh
       - -ec
       - |
-        export AIGW_DB_PASSWORD="$$(cat /run/secrets/aigw_db_password)"
-        export AIGW_MGMT_DB_PASSWORD="$$(cat /run/secrets/aigw_mgmt_db_password)"
+        export AIGW_DB_PASSWORD="$$(cat /run/aigw-secrets/aigw_db_password)"
+        export AIGW_MGMT_DB_PASSWORD="$$(cat /run/mgmt-secrets/aigw_mgmt_db_password)"
         psql -q -v ON_ERROR_STOP=1 -f /bootstrap/aigw-db-bootstrap.sql
         psql -qAt -v ON_ERROR_STOP=1 -c "SELECT nspname FROM pg_namespace WHERE nspname IN ('aigw','aigw_mgmt') ORDER BY 1"
     networks: [database]
@@ -76,10 +89,11 @@ networks:
 
 volumes:
   postgres_data:
+    external: true
     name: ${CONVERGED_PG_VOLUME:-loxilb-state-postgres-data}
-
-secrets:
-  aigw_db_password:
-    file: ${AIGW_DB_PASSWORD_FILE:-./secrets/aigw_db_password}
-  aigw_mgmt_db_password:
-    file: ${AIGW_MGMT_DB_PASSWORD_FILE:-./secrets/aigw_mgmt_db_password}
+  aigw_password:
+    external: true
+    name: ${AIGW_DB_PASSWORD_VOLUME:-loxilb-aigw-db-password}
+  mgmt_password:
+    external: true
+    name: ${AIGW_MGMT_DB_PASSWORD_VOLUME:-loxilb-aigw-mgmt-db-password}
