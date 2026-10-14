@@ -31,7 +31,7 @@ services:
   gateway-audit-init:
     # A new Docker volume root starts at 0755. The Gateway audit writer
     # requires 0700 and otherwise refuses audited management operations.
-    image: ${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}
+    image: ${IGW_IMAGE_REF:-${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}}
     user: "0:0"
     network_mode: none
     cap_drop: [ALL]
@@ -39,11 +39,15 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command: ['chmod 700 /audit; test "$$(stat -c %a /audit)" = 700']
     volumes:
-      - gateway_audit:/audit
+      - type: volume
+        source: gateway_audit
+        target: /audit
+        volume:
+          nocopy: true
     restart: "no"
 
   gateway:
-    image: ${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}
+    image: ${IGW_IMAGE_REF:-${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}}
     container_name: loxilb-gateway
     # The gateway is a data plane: it attaches eBPF to host NICs and its L7
     # fullproxy binds VIPs in the host network namespace. Neither is possible
@@ -106,31 +110,55 @@ services:
       - --aikey-db-port=${CONVERGED_PG_HOST_PORT:-5432}
       - --aikey-db-user=${AIGW_DB_USER:-aigwuser}
       - --aikey-db-name=${DB_NAME:-loxioam}
-      - --aikey-db-password-file=/run/secrets/aigw_db_password
+      - --aikey-db-password-file=/run/db-secrets/aigw_db_password
     volumes:
       # Audit records must survive an image upgrade/container recreation.
-      - gateway_audit:/var/log/loxilb/audit
+      - type: volume
+        source: gateway_audit
+        target: /var/log/loxilb/audit
+        volume:
+          nocopy: true
       - /dev/log:/dev/log
-      # Configuration snapshot. Without this bind mount the gateway's config
-      # survives a restart but is LOST on image upgrade (container recreate).
-      - ${IGW_CONFIG_DIR:-/opt/loxilb/config}:/etc/loxilb
-      # The management CA script already emits certs where loxilb expects them
-      # (server.crt / server.key), so on a converged node the instance
-      # certificate mounts straight in — nothing is copied between hosts.
-      #   scripts/generate-instance-certs.sh ${GW_HOST}
-      - ./certs/instance-ca/${GW_HOST:?set GW_HOST in .env}:/opt/loxilb/cert:ro
-    secrets:
-      - aigw_db_password
-      - source: gateway_service_token
-        target: gateway_service_token
-        mode: 0400
-
-secrets:
-  aigw_db_password:
-    file: ${AIGW_DB_PASSWORD_FILE:-./secrets/aigw_db_password}
-  gateway_service_token:
-    file: ${GATEWAY_SERVICE_TOKEN_FILE:-./secrets/gateway_service_token}
+      # Persistent config includes managed CA/client/server certificates and
+      # snapshot-node.secret. Seed once before startup; upgrades reuse the volume.
+      - type: volume
+        source: gateway_config
+        target: /etc/loxilb
+        volume:
+          nocopy: true
+      - type: volume
+        source: gateway_tls
+        target: /opt/loxilb/cert
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        source: gateway_token
+        target: /run/secrets
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        source: aigw_password
+        target: /run/db-secrets
+        read_only: true
+        volume:
+          nocopy: true
 
 # Kept by ordinary down; include in retention and backup procedures.
 volumes:
   gateway_audit:
+    external: true
+    name: ${GATEWAY_AUDIT_VOLUME:-loxilb-data_gateway_audit}
+  gateway_config:
+    external: true
+    name: ${IGW_CONFIG_VOLUME:-loxilb-gateway-config}
+  gateway_tls:
+    external: true
+    name: ${IGW_TLS_VOLUME:-loxilb-gateway-tls}
+  gateway_token:
+    external: true
+    name: ${GATEWAY_TOKEN_VOLUME:-loxilb-gateway-token}
+  aigw_password:
+    external: true
+    name: ${AIGW_DB_PASSWORD_VOLUME:-loxilb-aigw-db-password}

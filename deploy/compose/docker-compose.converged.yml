@@ -46,10 +46,21 @@ services:
     networks:
       - frontend
       - database
-    secrets:
-      - source: gateway_service_token
-        target: gateway_service_token
-        mode: 0400
+    # Override the base cert-tree bind: OAM gets only the public trust bundle.
+    volumes: !override
+      - oam_logs:/var/log
+      - type: volume
+        source: instance_ca
+        target: /etc/loxilb-oam/certs
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        source: gateway_token
+        target: /run/secrets
+        read_only: true
+        volume:
+          nocopy: true
     # Bound so a traffic spike on the data plane cannot be starved by, nor
     # starve, the management plane. The gateway itself is deliberately
     # unlimited: it is the workload this node exists to run.
@@ -73,6 +84,17 @@ services:
     # SITE_ADDRESS can name the port Caddy actually listens on and its site
     # block matches the Host header the browser sends. Converged mode publishes
     # HTTPS only: port 80 belongs to the data plane.
+    volumes: !override
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - type: volume
+        source: edge_tls
+        target: /certs/edge
+        read_only: true
+        volume:
+          nocopy: true
+      - ui_build:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
     ports: !override
       - "${EDGE_BIND_IP:-0.0.0.0}:${EDGE_HTTPS_PORT:-8443}:${EDGE_HTTPS_PORT:-8443}"
     deploy:
@@ -86,6 +108,13 @@ networks:
     external: true
     name: ${CONVERGED_DB_NETWORK:-loxilb-converged-db}
 
-secrets:
-  gateway_service_token:
-    file: ${GATEWAY_SERVICE_TOKEN_FILE:-./secrets/gateway_service_token}
+volumes:
+  gateway_token:
+    external: true
+    name: ${GATEWAY_TOKEN_VOLUME:-loxilb-gateway-token}
+  instance_ca:
+    external: true
+    name: ${OAM_INSTANCE_CA_VOLUME:-loxilb-oam-instance-ca}
+  edge_tls:
+    external: true
+    name: ${EDGE_TLS_VOLUME:-loxilb-edge-tls}

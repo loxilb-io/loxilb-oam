@@ -5,8 +5,8 @@
 #
 #   deploy/compose/scripts/init-converged.sh
 #
-# It writes .env, generates the secrets and certificates, creates the host
-# paths, starts all three compose projects in the right order, verifies them, and
+# It writes .env, generates the secrets and certificates, prepares named volumes from protected host
+# seed files, starts all three compose projects in the right order, verifies them, and
 # optionally registers the local gateway in OAM.
 #
 # Safe to re-run: an existing .env is never overwritten without asking, and
@@ -93,6 +93,7 @@ would come up reporting itself healthy while the gateway sees no host
 interfaces at all. Run this on the target Linux node."
 
 command -v docker  >/dev/null || die "docker not found in PATH."
+command -v python3 >/dev/null || die "python3 not found (needed for safe volume provisioning)."
 command -v openssl >/dev/null || die "openssl not found in PATH (needed to generate secrets and certificates)."
 docker info >/dev/null 2>&1   || die "cannot talk to the Docker daemon. Is it running, and is your user in the docker group?"
 ok "docker present and the daemon is reachable"
@@ -117,6 +118,16 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
 fi
 
+# Explicit volume/image identities must survive interactive .env regeneration.
+PERSISTENCE_KEYS=(IGW_IMAGE_REF IGW_CONFIG_VOLUME IGW_TLS_VOLUME GATEWAY_TOKEN_VOLUME
+  AIGW_DB_PASSWORD_VOLUME AIGW_MGMT_DB_PASSWORD_VOLUME OAM_INSTANCE_CA_VOLUME
+  EDGE_TLS_VOLUME GATEWAY_AUDIT_VOLUME VOLUME_INIT_IMAGE IGW_TLS_SEED_DIR
+  OAM_INSTANCE_CA_SOURCE EDGE_TLS_SEED_DIR)
+declare -A PRESERVED_PERSISTENCE
+for key in "${PERSISTENCE_KEYS[@]}"; do
+  [ -z "${!key:-}" ] || PRESERVED_PERSISTENCE[$key]="${!key}"
+done
+
 # ── 2. existing .env ─────────────────────────────────────────────────────────
 REUSE_ENV=0
 if [ -f "$ENV_FILE" ]; then
@@ -135,6 +146,10 @@ if [ -f "$ENV_FILE" ]; then
     # a computed default (a different GW_HOST, say) invalidates the certificate
     # the gateway serves and every instance already registered against it.
     envget() { grep -m1 "^$2=" "$1" 2>/dev/null | cut -d= -f2- | sed 's/[[:space:]]*#.*$//' | sed 's/[[:space:]]*$//' || true; }
+    for key in "${PERSISTENCE_KEYS[@]}"; do
+      value="$(envget "$BK" "$key")"
+      [ -z "$value" ] || PRESERVED_PERSISTENCE[$key]="$value"
+    done
     PREV_GW_HOST="$(envget "$BK" GW_HOST)"
     PREV_EDGE_BIND_IP="$(envget "$BK" EDGE_BIND_IP)"
     PREV_EDGE_PORT="$(envget "$BK" EDGE_HTTPS_PORT)"
@@ -303,7 +318,7 @@ pin would be ignored and OAM's calls would hairpin out through the host NIC.
 Any name works — it never needs to resolve in public DNS."
 
 ask IGW_TAG "loxilb-inference-gateway image tag" "${PREV_IGW_TAG:-latest-u24}"
-ask IGW_CONFIG_DIR "Host directory for the gateway config snapshot" "${PREV_IGW_CONFIG_DIR:-/opt/loxilb/config}"
+ask IGW_CONFIG_DIR "Host seed/backup directory for the gateway config snapshot" "${PREV_IGW_CONFIG_DIR:-/opt/loxilb/config}"
 ask CONVERGED_PG_HOST_PORT "Loopback port for the shared PostgreSQL service" "${PREV_PG_HOST_PORT:-5432}"
 CONVERGED_PG_VOLUME="${PREV_PG_VOLUME:-loxilb-state-postgres-data}"
 
@@ -505,6 +520,11 @@ UI_TAG=$UI_TAG
 ENVEOF
 umask 022
 chmod 600 "$ENV_FILE"
+if [ "$REUSE_ENV" = 0 ]; then
+  for key in "${PERSISTENCE_KEYS[@]}"; do
+    [ -z "${PRESERVED_PERSISTENCE[$key]:-}" ] || printf '%s=%s\n' "$key" "${PRESERVED_PERSISTENCE[$key]}" >> "$ENV_FILE"
+  done
+fi
 ok ".env written (0600) — keep it and the secrets directory protected"
 
 fi  # end of "$REUSE_ENV" = 0
@@ -513,6 +533,9 @@ fi  # end of "$REUSE_ENV" = 0
 # Preserve existing files on every re-run: an accidental regeneration would
 # break either database access or the OAM-to-Gateway management channel.
 step "Gateway credential files"
+# Recover missing host seed credentials from existing persistent volumes before
+# generating anything. Existing values are compared, never silently replaced.
+./scripts/prepare-converged-volumes.py --restore-credentials
 SECRETS_DIR="$COMPOSE_DIR/secrets"
 mkdir -p "$SECRETS_DIR"
 chmod 700 "$SECRETS_DIR"
@@ -565,15 +588,15 @@ ensure_gateway_service_token_file() {
 ensure_gateway_service_token_file "$SECRETS_DIR/gateway_service_token"
 
 # ── 8. host paths and certificates ───────────────────────────────────────────
-step "Host directory for the gateway snapshot"
+step "Host seed directory for the gateway snapshot"
 if [ -d "$IGW_CONFIG_DIR" ]; then
   ok "$IGW_CONFIG_DIR exists"
 else
   $SUDO mkdir -p "$IGW_CONFIG_DIR" || die "could not create $IGW_CONFIG_DIR"
   ok "created $IGW_CONFIG_DIR"
 fi
-note "Without this bind mount the gateway's configuration survives a restart but"
-note "is lost on image upgrade, which recreates the container."
+note "This directory is the initial/migration source. The running gateway uses"
+note "IGW_CONFIG_VOLUME; later reruns never overwrite its existing state."
 
 step "Certificates"
 chmod +x "$COMPOSE_DIR"/scripts/*.sh 2>/dev/null || true
@@ -586,7 +609,7 @@ else
   fi
   ok "management CA + gateway certificate for $GW_HOST"
 fi
-note "certs/instance-ca/$GW_HOST/ mounts straight into the gateway — nothing is copied"
+note "Gateway leaf material is seeded into IGW_TLS_VOLUME; CA signing keys stay on the host"
 
 if [ "${EDGE_TLS_MODE:-reuse}" = 1 ]; then
   if [ -f "$COMPOSE_DIR/certs/edge/cert.pem" ] && ! confirm "An edge certificate already exists — regenerate it?" n; then
@@ -603,6 +626,9 @@ elif [ "${EDGE_TLS_MODE:-reuse}" = 2 ]; then
 Drop them in (leaf + intermediates concatenated in cert.pem) and re-run."
   ok "using the edge certificate you provided"
 fi
+
+step "Persistent named volumes"
+./scripts/prepare-converged-volumes.py
 
 if [ "$DO_START" = 0 ]; then
   step "Set up, not started (--no-start)"
@@ -874,12 +900,12 @@ printf '  %sUser%s      admin\n' "$B" "$N"
 printf '  %sPassword%s  %s\n' "$B" "$N" "$(grep -m1 '^OAM_DEFAULT_ADMIN_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
 printf '\n'
 note "Change the admin password after first login. Secrets live in .env (0600)"
-note "and secrets/ (0700; files 0600) — back both up somewhere safe."
+note "and protected seed files plus all named volumes — keep independent backups."
 note "SNAPSHOT_ENC_KEY cannot be recovered; without it stored snapshots cannot"
 note "be decrypted. Preserve gateway_service_token across every upgrade."
 printf '\n  %sUpgrading later%s\n' "$B" "$N"
 note "management only, traffic untouched:  docker compose ${MGMT_FILES[*]} up -d --no-deps oam-loxilb"
-note "gateway (a real traffic event):      docker compose ${DATA_FILES[*]} pull && docker compose ${DATA_FILES[*]} up -d"
+note "gateway (a real traffic event):      see PERSISTENT-UPGRADE.md; back up config before changing IGW_IMAGE_REF"
 note "database (explicit maintenance only): docker compose ${STATE_FILES[*]} up -d postgres"
 if [ "$FAIL" -ne 0 ]; then
   printf '\n  %sSome checks did not pass%s — see the warnings above and\n' "$YEL" "$N"
