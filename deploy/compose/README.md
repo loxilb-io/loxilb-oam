@@ -125,6 +125,15 @@ cross that link in clear text, so use it only on an access-controlled testbed,
 VPN, or trusted development LAN. See the dedicated section in
 [`docs/deployment-converged.md`](../../docs/deployment-converged.md).
 
+## Optional Keycloak and SIEM integrations
+
+External, operator-managed Keycloak and TLS syslog SIEM endpoints are the default.
+To deploy either dependency locally, use the separate opt-in Compose projects in
+[English integration guide](INTEGRATIONS.md) / [한국어 가이드](INTEGRATIONS.ko.md). They have independent databases/log volumes
+and are never started by the base bundle or `init-converged.sh`. Keycloak protects
+inference Bearer requests; OAM login remains a separate identity plane. The optional
+syslog-ng service is a durable collector, not a SIEM analytics UI.
+
 ## Configuration
 
 One `.env` file drives everything; the same key names carry over to the k8s

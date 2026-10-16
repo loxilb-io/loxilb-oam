@@ -2,3 +2,5 @@
 .env
 *.local
 /backups/
+/integrations/private/
+/integrations/trust/
