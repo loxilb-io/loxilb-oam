@@ -1,0 +1,14 @@
+# OPTIONAL data-plane overlay, for a controlled Gateway recreate/upgrade only.
+# docker compose -f docker-compose.dataplane.yml \
+#   -f docker-compose.integration-trust.yml up -d gateway
+# External IdP: place ONLY public CA certificates in the trust directory.
+services:
+  gateway:
+    environment:
+      SSL_CERT_DIR: /etc/ssl/certs:/run/integration-ca
+    volumes:
+      - type: bind
+        source: ${INTEGRATION_CA_DIR:-./integrations/trust}
+        target: /run/integration-ca
+        read_only: true
+        bind: {create_host_path: false}

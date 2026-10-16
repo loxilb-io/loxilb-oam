@@ -404,3 +404,7 @@ All variants are the same two `.env` knobs; only the values differ.
 - [`docs/container-image.md`](container-image.md) — the image itself: published
   tags, signature/SBOM verification, building your own, air-gapped mirroring.
 - [`SECURITY.md`](../SECURITY.md) — vulnerability reporting.
+
+## Optional identity provider and audit collector
+
+Use existing external Keycloak/SIEM endpoints by default. The [English integration guide](../deploy/compose/INTEGRATIONS.md) ([한국어](../deploy/compose/INTEGRATIONS.ko.md)) describes external wiring and separate opt-in Keycloak and TLS syslog-ng Compose projects, including trust, persistence, recovery and validation. These projects are independent of management/data/state lifecycle.

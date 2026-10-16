@@ -1,0 +1,38 @@
+# Optional TLS syslog collector; a receiver, not a SIEM analytics product.
+name: loxilb-siem
+services:
+  syslog-ng:
+    image: ${SYSLOG_NG_IMAGE:-balabit/syslog-ng:4.8.3@sha256:0956c0f2a94bc5ad4ff88e36ac1f3f59d5bae29c906555139f6633045f213ddf}
+    restart: unless-stopped
+    entrypoint: [/usr/sbin/syslog-ng]
+    command: [-F, --no-caps, --persist-file=/var/lib/syslog-ng/syslog-ng.persist]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - '${SIEM_BIND_IP:-127.0.0.1}:${SIEM_TLS_PORT:-16514}:6514'
+    volumes:
+      - type: bind
+        source: ./integrations/private/syslog-ng.conf
+        target: /etc/syslog-ng/syslog-ng.conf
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./integrations/private/siem.crt
+        target: /run/tls/server.crt
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./integrations/private/siem.key
+        target: /run/tls/server.key
+        read_only: true
+        bind: {create_host_path: false}
+      - siem_logs:/var/log/siem
+      - siem_state:/var/lib/syslog-ng
+    mem_limit: 256m
+volumes:
+  siem_logs:
+    external: true
+    name: ${SIEM_LOG_VOLUME:-loxilb-siem-logs}
+  siem_state:
+    external: true
+    name: ${SIEM_STATE_VOLUME:-loxilb-siem-state}
