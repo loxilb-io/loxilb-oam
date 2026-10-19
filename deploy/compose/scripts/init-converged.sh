@@ -15,6 +15,9 @@
 # Flags:
 #   -y, --yes        accept every default, prompt only for what has no default
 #       --no-start   set everything up but do not bring the stacks up
+#       --public-address HOST[,HOST]  add public/NAT/Floating console identities
+#       --gateway-connect-ip IPV4    select an actual host NIC for OAM → Gateway
+#       --refresh-edge-cert         renew the self-signed edge certificate
 #   -h, --help       this text
 #
 # Full explanation of every choice here: docs/deployment-converged.md
@@ -24,6 +27,10 @@ COMPOSE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$COMPOSE_DIR/.env"
 ASSUME_YES=0
 DO_START=1
+PUBLIC_ADDRESS=""
+GATEWAY_CONNECT_IP=""
+REFRESH_EDGE_CERT=0
+EDGE_CERT_CHANGED=0
 
 MGMT_FILES=(-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.converged.yml)
 DATA_FILES=(-f docker-compose.dataplane.yml)
@@ -73,7 +80,10 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -y|--yes)    ASSUME_YES=1 ;;
     --no-start)  DO_START=0 ;;
-    -h|--help)   sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --public-address) [ $# -ge 2 ] || die "--public-address needs a hostname/IP list"; PUBLIC_ADDRESS="$2"; shift ;;
+    --gateway-connect-ip) [ $# -ge 2 ] || die "--gateway-connect-ip needs a host NIC IPv4 address"; GATEWAY_CONNECT_IP="$2"; shift ;;
+    --refresh-edge-cert) REFRESH_EDGE_CERT=1 ;;
+    -h|--help)   sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *)           die "unknown argument: $1 (try --help)" ;;
   esac
   shift
@@ -95,6 +105,9 @@ interfaces at all. Run this on the target Linux node."
 command -v docker  >/dev/null || die "docker not found in PATH."
 command -v python3 >/dev/null || die "python3 not found (needed for safe volume provisioning)."
 command -v openssl >/dev/null || die "openssl not found in PATH (needed to generate secrets and certificates)."
+command -v ip >/dev/null || die "ip not found (install iproute2)."
+command -v curl >/dev/null || die "curl not found (needed for verified management probes)."
+command -v nsenter >/dev/null || die "nsenter not found (install util-linux)."
 docker info >/dev/null 2>&1   || die "cannot talk to the Docker daemon. Is it running, and is your user in the docker group?"
 ok "docker present and the daemon is reachable"
 
@@ -297,7 +310,7 @@ done
 step "Local gateway"
 note "The gateway runs in the host network namespace, so it has no compose DNS"
 note "name. GW_HOST is the name OAM registers it under AND its certificate's"
-note "SAN; the overlay pins that name to the Docker host-gateway address."
+note "SAN; the overlay pins that name to a real host NIC address, checked below."
 DEF_GW="gw.$(hostname -s 2>/dev/null || echo local)"
 ask GW_HOST "Name for the local gateway" "${PREV_GW_HOST:-$DEF_GW}"
 if [ -n "${PREV_GW_HOST:-}" ] && [ "$GW_HOST" != "$PREV_GW_HOST" ]; then
@@ -318,9 +331,9 @@ pin would be ignored and OAM's calls would hairpin out through the host NIC.
 Any name works — it never needs to resolve in public DNS."
 
 ask IGW_TAG "loxilb-inference-gateway image tag" "${PREV_IGW_TAG:-latest-u24}"
-ask IGW_CONFIG_DIR "Host seed/backup directory for the gateway config snapshot" "${PREV_IGW_CONFIG_DIR:-/opt/loxilb/config}"
+ask IGW_CONFIG_DIR "Host seed/backup directory for the gateway config snapshot" "${PREV_IGW_CONFIG_DIR:-${IGW_CONFIG_DIR:-/opt/loxilb/config}}"
 ask CONVERGED_PG_HOST_PORT "Loopback port for the shared PostgreSQL service" "${PREV_PG_HOST_PORT:-5432}"
-CONVERGED_PG_VOLUME="${PREV_PG_VOLUME:-loxilb-state-postgres-data}"
+CONVERGED_PG_VOLUME="${PREV_PG_VOLUME:-${CONVERGED_PG_VOLUME:-loxilb-state-postgres-data}}"
 
 step "Management plane images"
 warn "pin these to released versions in production; 'latest' is not reproducible"
@@ -587,6 +600,53 @@ ensure_gateway_service_token_file() {
 
 ensure_gateway_service_token_file "$SECRETS_DIR/gateway_service_token"
 
+# Existing .env files take this path too: never require regenerating credentials
+# just to add a Floating IP or repair an invalid Docker host-gateway assumption.
+get_network_value() { grep -m1 "^$1=" "$ENV_FILE" | cut -d= -f2- || true; }
+step "Public cloud / NAT / Floating IP access"
+note "The host cannot discover an inbound Floating IP reliably; enter the address"
+note "from your cloud console. It is an HTTPS identity, never a host bind address."
+note "Allow TCP $EDGE_HTTPS_PORT from administrator networks in the cloud firewall."
+if [ -z "$PUBLIC_ADDRESS" ]; then
+  PUBLIC_DEFAULT="$(get_network_value EDGE_PUBLIC_ADDRESSES)"; : "${PUBLIC_DEFAULT:=-}"
+  ask PUBLIC_ADDRESS "Public/Floating IP or DNS names, comma-separated ('-' for none)" "$PUBLIC_DEFAULT"
+fi
+# ask() needs a nonempty default for unattended --yes runs.
+PUBLIC_ADDRESS="${PUBLIC_ADDRESS:--}"
+NETWORK_PLAN="$(python3 scripts/converged-network.py configure \
+  --public-address "$PUBLIC_ADDRESS" --gateway-connect-ip "$GATEWAY_CONNECT_IP")" \
+  || die "invalid console identities or host NIC selection; no services were restarted."
+while IFS='=' read -r key value; do
+  case "$key" in
+    SITE_ADDRESS) SITE_ADDRESS="$value" ;;
+    SAN_LIST) SAN_LIST="$value" ;;
+    GW_CONNECT_IP) GW_CONNECT_IP="$value" ;;
+  esac
+done <<< "$NETWORK_PLAN"
+ok "OAM maps $GW_HOST to actual host NIC $GW_CONNECT_IP (not Docker's default bridge)"
+ok "console identities: $SITE_ADDRESS"
+EDGE_SEED_DIR="$(get_network_value EDGE_TLS_SEED_DIR)"
+: "${EDGE_SEED_DIR:=$COMPOSE_DIR/certs/edge}"
+[[ "$EDGE_SEED_DIR" = /* ]] || EDGE_SEED_DIR="$COMPOSE_DIR/$EDGE_SEED_DIR"
+if [ -L "$EDGE_SEED_DIR" ] || [ -L "$EDGE_SEED_DIR/cert.pem" ] || [ -L "$EDGE_SEED_DIR/key.pem" ]; then
+  die "edge certificate seed symlinks are refused; original material was preserved."
+fi
+if { [ -e "$EDGE_SEED_DIR/cert.pem" ] || [ -e "$EDGE_SEED_DIR/key.pem" ]; } \
+   && { [ ! -s "$EDGE_SEED_DIR/cert.pem" ] || [ ! -s "$EDGE_SEED_DIR/key.pem" ]; }; then
+  die "edge certificate seed has an incomplete pair; restore cert.pem and key.pem before renewal."
+fi
+if [ "$REFRESH_EDGE_CERT" = 1 ] && [ "$(get_network_value EDGE_TLS)" != 'tls /certs/edge/cert.pem /certs/edge/key.pem' ]; then
+  die "--refresh-edge-cert applies only to the file-based self-signed edge TLS mode."
+fi
+
+backup_edge_seed() {
+  local backup
+  backup="$COMPOSE_DIR/backups/edge-seed/$(date -u +%Y%m%dT%H%M%S)-$$"
+  mkdir -p "$backup"; chmod 700 "$backup"
+  [ ! -d "$EDGE_SEED_DIR" ] || cp -a "$EDGE_SEED_DIR/." "$backup/"
+  ok "previous edge seed backed up under backups/edge-seed/"
+}
+
 # ── 8. host paths and certificates ───────────────────────────────────────────
 step "Host seed directory for the gateway snapshot"
 if [ -d "$IGW_CONFIG_DIR" ]; then
@@ -612,22 +672,55 @@ fi
 note "Gateway leaf material is seeded into IGW_TLS_VOLUME; CA signing keys stay on the host"
 
 if [ "${EDGE_TLS_MODE:-reuse}" = 1 ]; then
-  if [ -f "$COMPOSE_DIR/certs/edge/cert.pem" ] && ! confirm "An edge certificate already exists — regenerate it?" n; then
+  if [ -f "$EDGE_SEED_DIR/cert.pem" ] && ! confirm "An edge certificate already exists — regenerate it?" n; then
     ok "keeping the existing edge certificate"
   else
-    CERTOUT="$(./scripts/generate-edge-certs.sh "$EDGE_NAME" "$SAN_LIST" 2>&1)" \
+    backup_edge_seed
+    CERTOUT="$(EDGE_TLS_SEED_DIR="$EDGE_SEED_DIR" ./scripts/generate-edge-certs.sh "$EDGE_NAME" "$SAN_LIST" 2>&1)" \
       || { printf '%s\n' "$CERTOUT" >&2; die "could not generate the edge certificate"; }
+    EDGE_CERT_CHANGED=1
     ok "edge certificate for $SAN_LIST"
     note "self-signed: browsers warn until certs/edge/cert.pem is trusted on each client"
   fi
 elif [ "${EDGE_TLS_MODE:-reuse}" = 2 ]; then
-  [ -f "$COMPOSE_DIR/certs/edge/cert.pem" ] && [ -f "$COMPOSE_DIR/certs/edge/key.pem" ] \
+  [ -f "$EDGE_SEED_DIR/cert.pem" ] && [ -f "$EDGE_SEED_DIR/key.pem" ] \
     || die "you chose to supply the edge certificate, but certs/edge/cert.pem and key.pem are not both there yet.
 Drop them in (leaf + intermediates concatenated in cert.pem) and re-run."
   ok "using the edge certificate you provided"
 fi
 
+# Check every identity even when the operator kept .env and existing certs.
+# Never replace a CA-issued/operator certificate with a generated one.
+if [ "$(get_network_value EDGE_TLS)" = 'tls /certs/edge/cert.pem /certs/edge/key.pem' ]; then
+  if ! python3 scripts/converged-network.py certificate || [ "$REFRESH_EDGE_CERT" = 1 ]; then
+    if [ -f "$EDGE_SEED_DIR/cert.pem" ] \
+       && ! python3 scripts/converged-network.py certificate --self-signed; then
+      die "The operator/CA certificate needs replacement with all console SANs. It was not overwritten."
+    fi
+    [ "$DO_START" = 1 ] || die "Edge renewal requires a full run to refresh its volume; rerun without --no-start."
+    if [ "$REFRESH_EDGE_CERT" != 1 ]; then
+      confirm "Generate a self-signed edge certificate covering all configured addresses?" y \
+        || die "console identity mismatch; certificate and services were preserved."
+    fi
+    backup_edge_seed
+    CERTOUT="$(EDGE_TLS_SEED_DIR="$EDGE_SEED_DIR" ./scripts/generate-edge-certs.sh "$EDGE_NAME" "$SAN_LIST" 2>&1)" \
+      || { printf '%s\n' "$CERTOUT" >&2; die "could not generate the edge certificate"; }
+    EDGE_CERT_CHANGED=1
+    python3 scripts/converged-network.py certificate || die "new edge certificate validation failed"
+  fi
+fi
+
 step "Persistent named volumes"
+if [ "$EDGE_CERT_CHANGED" = 1 ]; then
+  EDGE_VOLUME="$(get_network_value EDGE_TLS_VOLUME)"; : "${EDGE_VOLUME:=loxilb-edge-tls}"
+  if docker volume inspect "$EDGE_VOLUME" >/dev/null 2>&1; then
+    [ "$DO_START" = 1 ] || die "edge seed changed but an existing volume needs refresh; rerun without --no-start."
+    note "Refreshing the edge certificate volume; only Caddy is stopped."
+    docker compose "${MGMT_FILES[@]}" stop caddy
+    python3 scripts/prepare-converged-volumes.py --refresh edge-tls \
+      || die "edge TLS refresh failed; protected backups retained."
+  fi
+fi
 ./scripts/prepare-converged-volumes.py
 
 if [ "$DO_START" = 0 ]; then
@@ -807,6 +900,19 @@ else
   FAIL=1
 fi
 
+# This is the actual OAM network namespace, effective /etc/hosts, mounted public
+# CA and service-token file. Host loopback TLS checks alone cannot prove it.
+if $SUDO python3 scripts/converged-network.py probe; then
+  ok "OAM → Gateway verified: anonymous denied, authenticated version and ports HTTP 200"
+else
+  warn "OAM cannot manage the local Gateway; installation verification FAILED"; FAIL=1
+fi
+if python3 scripts/converged-network.py edge-probe; then
+  ok "all configured console identities serve UI and OAM health over verified TLS"
+else
+  warn "console identity/TLS/API verification FAILED"; FAIL=1
+fi
+
 # ── 11. register the gateway ─────────────────────────────────────────────────
 # Registration has to happen NOW, while OAM_DEFAULT_ADMIN_PASSWORD is still the
 # admin password. The moment an operator logs in and changes it — which the
@@ -835,7 +941,13 @@ for i in d if isinstance(d,list) else []:
   fi
 }
 
-if command -v curl >/dev/null && confirm "Register the local gateway in OAM now?" y; then
+# A correct existing registration needs no admin login. In particular, do not
+# suggest resetting a password merely because first-login setup changed it.
+REGISTERED_ENDPOINT="$(docker compose "${STATE_FILES[@]}" exec -T postgres sh -ec \
+  'PGPASSWORD="$POSTGRES_PASSWORD" psql -qAt -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT api_endpoint FROM loxilb_instances WHERE name = '\''local-gateway'\''"' 2>/dev/null || true)"
+if [ "$REGISTERED_ENDPOINT" = "https://$GW_HOST:8091/netlox/v1" ]; then
+  ok "'$GW_NAME' registration already matches the verified Gateway; existing admin credentials preserved"
+elif command -v curl >/dev/null && confirm "Register the local gateway in OAM now?" y; then
   ADMIN_IN_ENV="$(grep -m1 '^OAM_DEFAULT_ADMIN_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
   TOKEN="$("${CURL[@]}" -X POST "$API/login" -H 'Content-Type: application/json' \
       -d "{\"username\":\"admin\",\"password\":\"$ADMIN_IN_ENV\"}" 2>/dev/null \
@@ -882,7 +994,7 @@ if command -v curl >/dev/null && confirm "Register the local gateway in OAM now?
 fi
 
 # ── 12. summary ──────────────────────────────────────────────────────────────
-step "Done"
+if [ "$FAIL" -eq 0 ]; then step "Installation checks passed"; else step "Installation verification FAILED"; fi
 # SITE_ADDRESS may list several addresses; give each its own usable URL rather
 # than gluing the path onto the end of the joined string.
 __first=1
@@ -897,7 +1009,11 @@ for __s in "${__sites[@]}"; do
   fi
 done
 printf '  %sUser%s      admin\n' "$B" "$N"
-printf '  %sPassword%s  %s\n' "$B" "$N" "$(grep -m1 '^OAM_DEFAULT_ADMIN_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
+if [ "$REUSE_ENV" = 0 ]; then
+  printf '  %sPassword%s  %s\n' "$B" "$N" "$(grep -m1 '^OAM_DEFAULT_ADMIN_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
+else
+  note "Existing OAM credentials preserved; use your current login password."
+fi
 printf '\n'
 note "Change the admin password after first login. Secrets live in .env (0600)"
 note "and protected seed files plus all named volumes — keep independent backups."

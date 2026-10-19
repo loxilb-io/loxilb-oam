@@ -16,12 +16,14 @@ services:
   oam-loxilb:
     # The gateway runs in the host network namespace, so it has no name on any
     # compose network — `https://loxilb-gw:8091` can never resolve. Pin the
-    # gateway's certificate SAN to the Docker host-gateway address instead: the
+    # gateway's certificate SAN to an actual host NIC address instead: the
     # instance is registered as https://${GW_HOST}:8091/netlox/v1, byte-identical
     # to how a remote gateway is registered, but the traffic never leaves the
-    # bridge. The cert needs no extra SAN, and no hairpin through the host NIC.
+    # bridge. The initializer validates GW_CONNECT_IP and the complete OAM path.
+    # host-gateway is only a compatibility default for manually managed stacks;
+    # it can refer to a nonexistent docker0 on some hosts. Run init-converged.sh.
     extra_hosts:
-      - "${GW_HOST:?set GW_HOST to the gateway certificate SAN in .env}:host-gateway"
+      - "${GW_HOST:?set GW_HOST to the gateway certificate SAN in .env}:${GW_CONNECT_IP:-host-gateway}"
     environment:
       # Refuse to program an LB rule whose VIP would collide with the Caddy
       # edge. On a single-NIC host the gateway's eBPF datapath sits on the same

@@ -177,6 +177,14 @@ Re-running is safe: it offers to keep an existing `.env` and reuses existing
 certificates. `-y` accepts every default; `--no-start` sets up without bringing
 anything up.
 
+For public cloud / NAT / Floating IP access, see the matching
+[English](../deploy/compose/CONVERGED-CLOUD.md) and
+[Korean](../deploy/compose/CONVERGED-CLOUD.ko.md) procedures. The dedicated public
+address prompt also runs when keeping `.env`. `--public-address HOST[,HOST]`
+adds access identities without regenerating credentials. `GW_CONNECT_IP` selects
+a real host NIC address, and the final verification runs from OAM's actual
+network namespace with its mounted CA and service token.
+
 It refuses to guess about the decisions that matter — which address the console
 binds, what operators type in the browser, and **every other name or address
 they may also use** — because those set the certificate identity, the site
@@ -304,18 +312,21 @@ protocol `https`.
 
 The gateway is in the host network namespace, so it has **no name on any compose
 network** — `https://loxilb-gw:8091` can never resolve. The overlay instead pins
-`GW_HOST` to the Docker host-gateway address:
+`GW_HOST` to the actual host NIC address selected by the initializer:
 
 ```yaml
 extra_hosts:
-  - "${GW_HOST}:host-gateway"      # → 172.17.0.1 gw.example.internal in /etc/hosts
+  - "${GW_HOST}:${GW_CONNECT_IP:-host-gateway}"
 ```
 
 The instance is therefore registered exactly as a *remote* gateway would be, the
-certificate needs no Docker-specific SAN, and the call never leaves the bridge.
-Verified on a live node: from a container on the compose bridge,
-`https://gw.example.internal:8091` returns **200 with `ssl_verify_result 0`**,
-and the same call **fails** without `--cacert` — verification is genuinely on.
+certificate needs no IP SAN: the client continues to verify `GW_HOST`.
+The initializer writes a local NIC address to `GW_CONNECT_IP`; a NAT/Floating
+address is refused. `host-gateway` remains a compatibility fallback for manual
+Compose use, but Docker can resolve it to a nonexistent `docker0`. Run the
+initializer rather than relying on that fallback. Installation fails if the
+actual OAM path cannot reject anonymous management and return authenticated
+version/port responses over verified TLS.
 
 > Do not use a bare IP for `GW_HOST`. Go resolves an IP literal without
 > consulting `/etc/hosts`, so the pin is ignored and the call hairpins out
@@ -632,7 +643,7 @@ intentional fail-closed token mismatch.
 
 | Symptom | Check |
 |---|---|
-| Console unreachable from outside but fine from the host | An LB rule is hijacking the edge. `curl -s http://127.0.0.1:11111/netlox/v1/config/loadbalancer/all`, and set `OAM_RESERVED_ENDPOINTS`. |
+| Console unreachable from outside but fine from the host | Check cloud security groups, network ACLs and Floating IP mapping first. A local identity check does not prove external ingress. Also check management VIP/port collisions and `OAM_RESERVED_ENDPOINTS`. |
 | Both `:443` and `:8443` are published | `!override` missing from the overlay's `ports`. |
 | Browser gets a TLS error or 404 at the edge | `SITE_ADDRESS` must include `:${EDGE_HTTPS_PORT}`. |
 | `ERR_SSL_PROTOCOL_ERROR` when reaching the console **by address** (by name it works) | No `EDGE_SNI_FALLBACK`. An address sends no SNI, so Caddy selects no site and drops the handshake before any HTTP. Set `EDGE_SNI_FALLBACK=default_sni <primary-name>`, add the address to `SITE_ADDRESS`, and put it in the certificate as an `IP:` SAN. |
@@ -641,6 +652,7 @@ intentional fail-closed token mismatch.
 | OAM-proxied Gateway requests return 401/403 | Confirm both projects mount the same `GATEWAY_SERVICE_TOKEN_FILE`, the file is a regular 64-character lowercase hex token, and OAM health reports `gateway_auth_mode: service-token`. Recreate both projects after a rotation. Do not enable `--userservice`; it is a different identity plane. |
 | `docker compose $M down` leaves PostgreSQL and the Gateway running | Expected. They are independent `loxilb-state` and `loxilb-data` projects. Stop either only during an explicitly scheduled state/data maintenance event. |
 | Instance shows **Down** right after re-running the init script | `GW_HOST` changed, so the gateway now serves a certificate for the new name and OAM pins only that name — the registered host no longer resolves. Set the instance's Host to the current `GW_HOST` (`grep GW_HOST .env`), or re-run and keep the previous name. |
+| Instance shows **Down**, proxy calls return 504, but host loopback works | Check OAM's `/etc/hosts` and actual NIC addresses. `host-gateway` may point to a nonexistent default bridge. Rerun the updated initializer to populate `GW_CONNECT_IP` and verify the OAM path. Do not change the registration to the Floating IP or expose 8091 publicly. |
 | Browser shows a certificate-name error (`curl` exit 60) but `curl -k` works | The edge certificate's SAN list does not contain the name being used. Check it: `echo \| openssl s_client -connect <host>:8443 -servername <name> \| openssl x509 -noout -ext subjectAltName`. |
 | Certificate valid today, expired later, nothing changed | ACME renewal cannot run without `:80`/`:443` — see §4. |
 | Instance unreachable, `x509` in the OAM log | `GW_HOST` must equal the certificate SAN. Probe it: `openssl s_client -connect ${GW_HOST}:8091`. |
