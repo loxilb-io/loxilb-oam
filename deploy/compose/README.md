@@ -69,6 +69,15 @@ and authentication-aware verification:
 ```bash
 scripts/init-converged.sh          # -y for defaults, --no-start to set up only
 ```
+
+Public cloud / NAT / Floating IP installation and repair:
+[English](CONVERGED-CLOUD.md) · [한국어](CONVERGED-CLOUD.ko.md).
+Validation scope/results: [English](CONVERGED-CLOUD-VALIDATION.md) ·
+[한국어](CONVERGED-CLOUD-VALIDATION.ko.md).
+The initializer accepts public console addresses on fresh and existing installs,
+selects an actual host NIC for `GW_CONNECT_IP`, and verifies the OAM-to-Gateway
+path using the effective CA and service identity.
+
 Persistence is managed by named external volumes. See [PERSISTENT-UPGRADE.md](PERSISTENT-UPGRADE.md) for adoption, image upgrade, rollback and explicit certificate/token refresh. Protected host files are initial provisioning sources; changing them does not silently rotate an existing volume. [VALIDATION.md](VALIDATION.md) records the source/runtime checks and qualification limits.
 
 By hand:

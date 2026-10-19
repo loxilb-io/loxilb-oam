@@ -29,7 +29,9 @@ fi
 SAN="${2:-$DEFAULT_SAN}"
 DAYS="${3:-825}"
 
-DIR="$(cd "$(dirname "$0")/.." && pwd)/certs/edge"
+COMPOSE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+DIR="${EDGE_TLS_SEED_DIR:-$COMPOSE_DIR/certs/edge}"
+[[ "$DIR" = /* ]] || DIR="$COMPOSE_DIR/$DIR"
 mkdir -p "$DIR"
 
 openssl req -x509 -newkey rsa:2048 -nodes -days "$DAYS" \

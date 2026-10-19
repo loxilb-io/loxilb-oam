@@ -12,6 +12,19 @@ permissions:
   contents: read
 
 jobs:
+  compose-bootstrap:
+    name: Compose bootstrap regressions (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check bootstrap shell syntax
+        run: |
+          bash -n deploy/compose/scripts/init-converged.sh
+          bash -n deploy/compose/scripts/generate-edge-certs.sh
+      - name: Check network identities and seed custody
+        run: python3 -m unittest discover -s deploy/compose/scripts -p 'test_*.py' -v
+
   build-test:
     name: Build & Test
     runs-on: ubuntu-latest
