@@ -28,6 +28,16 @@
 
 	encode gzip zstd
 
+	# Match the UI container policy when the bundle serves its static assets
+	# directly. Keep scripts and API connections same-origin; Emotion needs
+	# inline styles, and the login page loads the approved Roboto font.
+	header {
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+	}
+
 	# OAM API: /api/oam/* → strip that prefix, forward as /oam/* to the API.
 	# (Matches the legacy nginx mapping: /api/oam/ → ${BACKEND}/oam/.)
 	handle_path /api/oam/* {
