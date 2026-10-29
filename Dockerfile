@@ -22,7 +22,7 @@ RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o loxilb-oam
     go build -trimpath -ldflags="-s -w" -o reset_admin ./cmd/reset_admin
 
 # ---- Runtime stage: minimal Alpine with just the binaries ----
-FROM alpine:3.21
+FROM alpine:3.24
 
 WORKDIR /app
 
