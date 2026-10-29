@@ -16,12 +16,14 @@ services:
   oam-loxilb:
     # The gateway runs in the host network namespace, so it has no name on any
     # compose network — `https://loxilb-gw:8091` can never resolve. Pin the
-    # gateway's certificate SAN to the Docker host-gateway address instead: the
+    # gateway's certificate SAN to an actual host NIC address instead: the
     # instance is registered as https://${GW_HOST}:8091/netlox/v1, byte-identical
     # to how a remote gateway is registered, but the traffic never leaves the
-    # bridge. The cert needs no extra SAN, and no hairpin through the host NIC.
+    # bridge. The initializer validates GW_CONNECT_IP and the complete OAM path.
+    # host-gateway is only a compatibility default for manually managed stacks;
+    # it can refer to a nonexistent docker0 on some hosts. Run init-converged.sh.
     extra_hosts:
-      - "${GW_HOST:?set GW_HOST to the gateway certificate SAN in .env}:host-gateway"
+      - "${GW_HOST:?set GW_HOST to the gateway certificate SAN in .env}:${GW_CONNECT_IP:-host-gateway}"
     environment:
       # Refuse to program an LB rule whose VIP would collide with the Caddy
       # edge. On a single-NIC host the gateway's eBPF datapath sits on the same
@@ -29,6 +31,38 @@ services:
       # is processed before netfilter — it would silently swallow the console
       # instead of failing to bind. See docs/deployment-converged.md §4.
       OAM_RESERVED_ENDPOINTS: ${OAM_RESERVED_ENDPOINTS:-}
+      # OAM and the Gateway share one dedicated machine credential. Keep its
+      # value out of the environment and Docker inspect; the init script
+      # creates the source file once and preserves it on every re-run.
+      # Literals are deliberate: the generic .env.example explicitly selects
+      # disabled mode for backward compatibility, but that must never override
+      # the authenticated converged contract when overlays are merged.
+      OAM_GATEWAY_AUTH_MODE: service-token
+      OAM_GATEWAY_SERVICE_TOKEN: ""
+      OAM_GATEWAY_SERVICE_TOKEN_FILE: /run/secrets/gateway_service_token
+      # In converged mode PostgreSQL belongs to the independent state project.
+      # Its `postgres` alias exists only on the shared internal network.
+      DB_HOST: postgres
+      DB_PORT: "5432"
+    depends_on: !reset []
+    networks:
+      - frontend
+      - database
+    # Override the base cert-tree bind: OAM gets only the public trust bundle.
+    volumes: !override
+      - oam_logs:/var/log
+      - type: volume
+        source: instance_ca
+        target: /etc/loxilb-oam/certs
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        source: gateway_token
+        target: /run/secrets
+        read_only: true
+        volume:
+          nocopy: true
     # Bound so a traffic spike on the data plane cannot be starved by, nor
     # starve, the management plane. The gateway itself is deliberately
     # unlimited: it is the workload this node exists to run.
@@ -39,11 +73,9 @@ services:
           memory: 512M
 
   postgres:
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1G
+    # The base bundle's database is disabled only for converged mode. The one
+    # PostgreSQL service is started from docker-compose.database.yml instead.
+    profiles: [bundled-database-disabled-in-converged]
 
   caddy:
     # `ports` MERGES by default when overlays are layered — without !override
@@ -54,6 +86,17 @@ services:
     # SITE_ADDRESS can name the port Caddy actually listens on and its site
     # block matches the Host header the browser sends. Converged mode publishes
     # HTTPS only: port 80 belongs to the data plane.
+    volumes: !override
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - type: volume
+        source: edge_tls
+        target: /certs/edge
+        read_only: true
+        volume:
+          nocopy: true
+      - ui_build:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
     ports: !override
       - "${EDGE_BIND_IP:-0.0.0.0}:${EDGE_HTTPS_PORT:-8443}:${EDGE_HTTPS_PORT:-8443}"
     deploy:
@@ -61,3 +104,19 @@ services:
         limits:
           cpus: "0.5"
           memory: 256M
+
+networks:
+  database:
+    external: true
+    name: ${CONVERGED_DB_NETWORK:-loxilb-converged-db}
+
+volumes:
+  gateway_token:
+    external: true
+    name: ${GATEWAY_TOKEN_VOLUME:-loxilb-gateway-token}
+  instance_ca:
+    external: true
+    name: ${OAM_INSTANCE_CA_VOLUME:-loxilb-oam-instance-ca}
+  edge_tls:
+    external: true
+    name: ${EDGE_TLS_VOLUME:-loxilb-edge-tls}

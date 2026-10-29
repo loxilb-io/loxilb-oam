@@ -28,8 +28,26 @@
 name: loxilb-data
 
 services:
+  gateway-audit-init:
+    # A new Docker volume root starts at 0755. The Gateway audit writer
+    # requires 0700 and otherwise refuses audited management operations.
+    image: ${IGW_IMAGE_REF:-${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}}
+    user: "0:0"
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ['chmod 700 /audit; test "$$(stat -c %a /audit)" = 700']
+    volumes:
+      - type: volume
+        source: gateway_audit
+        target: /audit
+        volume:
+          nocopy: true
+    restart: "no"
+
   gateway:
-    image: ${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:?pin IGW_TAG to a released version in .env}
+    image: ${IGW_IMAGE_REF:-${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}}
     container_name: loxilb-gateway
     # The gateway is a data plane: it attaches eBPF to host NICs and its L7
     # fullproxy binds VIPs in the host network namespace. Neither is possible
@@ -41,13 +59,17 @@ services:
     cap_add:
       - SYS_ADMIN
     restart: unless-stopped
+    depends_on:
+      gateway-audit-init:
+        condition: service_completed_successfully
     environment:
-      # Plaintext REST API on loopback only. The gateway's :11111 listener is
-      # unauthenticated by default, and in converged mode it would otherwise be
-      # published on the host's real address. This replaces the "firewall :11111"
+      # Plaintext REST API on loopback only. Management authentication still
+      # applies; the bind restriction adds host-level exposure control. This
+      # replaces the "firewall :11111"
       # advice in docs/instance-tls.md with a bind-level guarantee.
-      # Host-local Prometheus scrapes and loxicmd are unaffected; off-host
-      # tooling that expects :11111 (e.g. loxilb-mcp --target-url) is not.
+      # Host-local Prometheus and loxicmd can still use the endpoint with the
+      # mounted token; off-host tooling that expects :11111 (for example
+      # loxilb-mcp --target-url) cannot reach it.
       HOST: 127.0.0.1
       PORT: "11111"
       # Verified-TLS management listener — this is the one OAM talks to.
@@ -71,13 +93,72 @@ services:
       # Only --peer (BGP-peer-only) mode forces it back off; that mode has no
       # datapath, so it does not apply here.
       - --prometheus
+      # Legacy/local management profiles leave metrics anonymous under the
+      # Gateway's `auto` policy. Require the same bearer identity explicitly so
+      # tenant labels are not exposed through either listener.
+      - --metrics-auth=require
+      # Authenticate both REST listeners with the same dedicated service token
+      # OAM reads from its own read-only mount. This is intentionally
+      # --manualtoken, not --userservice: browser JWTs and Gateway user/session
+      # authentication remain separate identity planes.
+      - --manualtoken
+      - --manualtokenvalue=/run/secrets/gateway_service_token
+      # AI API keys and tenant quotas live in the shared PostgreSQL database,
+      # isolated in schema aigw under role aigwuser. The Gateway is in the host
+      # network namespace, so it reaches the state project's loopback-only port.
+      - --aikey-db-host=127.0.0.1
+      - --aikey-db-port=${CONVERGED_PG_HOST_PORT:-5432}
+      - --aikey-db-user=${AIGW_DB_USER:-aigwuser}
+      - --aikey-db-name=${DB_NAME:-loxioam}
+      - --aikey-db-password-file=/run/db-secrets/aigw_db_password
     volumes:
+      # Audit records must survive an image upgrade/container recreation.
+      - type: volume
+        source: gateway_audit
+        target: /var/log/loxilb/audit
+        volume:
+          nocopy: true
       - /dev/log:/dev/log
-      # Configuration snapshot. Without this bind mount the gateway's config
-      # survives a restart but is LOST on image upgrade (container recreate).
-      - ${IGW_CONFIG_DIR:-/opt/loxilb/config}:/etc/loxilb
-      # The management CA script already emits certs where loxilb expects them
-      # (server.crt / server.key), so on a converged node the instance
-      # certificate mounts straight in — nothing is copied between hosts.
-      #   scripts/generate-instance-certs.sh ${GW_HOST}
-      - ./certs/instance-ca/${GW_HOST:?set GW_HOST in .env}:/opt/loxilb/cert:ro
+      # Persistent config includes managed CA/client/server certificates and
+      # snapshot-node.secret. Seed once before startup; upgrades reuse the volume.
+      - type: volume
+        source: gateway_config
+        target: /etc/loxilb
+        volume:
+          nocopy: true
+      - type: volume
+        source: gateway_tls
+        target: /opt/loxilb/cert
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        source: gateway_token
+        target: /run/secrets
+        read_only: true
+        volume:
+          nocopy: true
+      - type: volume
+        source: aigw_password
+        target: /run/db-secrets
+        read_only: true
+        volume:
+          nocopy: true
+
+# Kept by ordinary down; include in retention and backup procedures.
+volumes:
+  gateway_audit:
+    external: true
+    name: ${GATEWAY_AUDIT_VOLUME:-loxilb-data_gateway_audit}
+  gateway_config:
+    external: true
+    name: ${IGW_CONFIG_VOLUME:-loxilb-gateway-config}
+  gateway_tls:
+    external: true
+    name: ${IGW_TLS_VOLUME:-loxilb-gateway-tls}
+  gateway_token:
+    external: true
+    name: ${GATEWAY_TOKEN_VOLUME:-loxilb-gateway-token}
+  aigw_password:
+    external: true
+    name: ${AIGW_DB_PASSWORD_VOLUME:-loxilb-aigw-db-password}

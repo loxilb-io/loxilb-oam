@@ -51,6 +51,10 @@ type InstanceSnapshot struct {
 	// recent restore attempt (the audit record). Only populated on the
 	// single-snapshot GET, not in lists.
 	LastRestoreResponse *string `json:"last_restore_response,omitempty"`
+	// LastRestoreComponents is the domain selection of the most recent
+	// restore attempt; absent when it restored the whole document. Like the
+	// response, only populated on the single-snapshot GET.
+	LastRestoreComponents []string `json:"last_restore_components,omitempty"`
 }
 
 // InstanceSnapshotSchedule is the per-instance scheduled-snapshot/retention row.
@@ -85,18 +89,28 @@ type RestoreSnapshotRequest struct {
 	// the one it was taken from (cross-instance restore). Defaults to the
 	// snapshot's own instance.
 	TargetInstanceID *int `json:"target_instance_id,omitempty"`
+	// Components limits the restore to the named snapshot domains (for
+	// example ["auditsink"]). The gateway wipes and applies those domains
+	// only; it replaces their state, it does not merge. Absent restores
+	// everything the document covers. When present it must name at least
+	// one domain: an empty list is refused, never read as "everything".
+	Components []string `json:"components,omitempty"`
 }
 
 // RestoreOutcome is OAM's envelope around the gateway's restore response.
 // GatewayResponse is the gateway's response body verbatim — no rewording.
 type RestoreOutcome struct {
-	SnapshotID           string          `json:"snapshot_id"`
-	InstanceID           int             `json:"instance_id"` // restore target
-	Mode                 string          `json:"mode"`
-	CrossInstance        bool            `json:"cross_instance,omitempty"`
-	PreRestoreSnapshotID string          `json:"pre_restore_snapshot_id,omitempty"`
-	GatewayStatus        int             `json:"gateway_status"`
-	GatewayResponse      json.RawMessage `json:"gateway_response" swaggertype:"object"`
+	SnapshotID           string   `json:"snapshot_id"`
+	InstanceID           int      `json:"instance_id"` // restore target
+	Mode                 string   `json:"mode"`
+	CrossInstance        bool     `json:"cross_instance,omitempty"`
+	Components           []string `json:"components,omitempty"` // the selection sent to the gateway; absent = whole document
+	PreRestoreSnapshotID string   `json:"pre_restore_snapshot_id,omitempty"`
+	GatewayStatus        int      `json:"gateway_status"`
+	// GatewayRetryAfter is the gateway's Retry-After header, when it sent
+	// one; the handler relays it as the response's own Retry-After.
+	GatewayRetryAfter string          `json:"gateway_retry_after,omitempty"`
+	GatewayResponse   json.RawMessage `json:"gateway_response" swaggertype:"object"`
 }
 
 // SnapshotScheduleRequest is the body of PUT /oam/instances/:id/snapshot-schedule.

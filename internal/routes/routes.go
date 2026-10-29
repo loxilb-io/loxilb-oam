@@ -15,7 +15,10 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
-func SetupRoutes(router *gin.Engine, db *sql.DB, handler *handlers.Handler, userService *services.UserService, alertService *services.AlertService) {
+// SetupRoutes registers the API and returns the rate limiter of its
+// credential endpoints, for routes registered elsewhere that also verify a
+// password and must draw on the same budget.
+func SetupRoutes(router *gin.Engine, db *sql.DB, handler *handlers.Handler, userService *services.UserService, alertService *services.AlertService) *middleware.RateLimiter {
 	// Handle preflight requests
 	router.Use(middleware.CORSMiddleware())
 
@@ -114,13 +117,51 @@ func SetupRoutes(router *gin.Engine, db *sql.DB, handler *handlers.Handler, user
 		protected.POST("/snapshots/:sid/restore", middleware.RequireCapability(userService, middleware.ActConfigWrite), handler.RestoreSnapshot)
 
 		// LoxiLB Proxy - Forward requests to LoxiLB instances (auth-only, no license gate).
-		// Method-gated: GET/HEAD/OPTIONS for all roles, mutating
-		// methods require gateway_write (admin/operator).
-		protected.Any("/loxilbs/:id/netlox/*path", middleware.RateLimit(proxyLimiter), middleware.RequireGatewayCapability(userService), handler.ProxyToLoxiLB)
+		// Gated by method and Gateway path: what a role may reach is decided
+		// by services.ClassifyGatewayRequest, and a path it does not list is
+		// admin-only.
+		protected.Any("/loxilbs/:id/netlox/*path", middleware.RateLimit(proxyLimiter), middleware.RequireGatewayAccess(userService), handler.ProxyToLoxiLB)
 
 		// LoxiLB Firmware Management — instance mutation, admin-only
 		protected.PUT("/loxilbs/:id/firmware", middleware.RequireCapability(userService, middleware.ActInstanceWrite), handler.UpdateLoxiLBInstanceFirmware)
 		protected.PUT("/loxilbs/:id/firmware/start", middleware.RequireCapability(userService, middleware.ActInstanceWrite), handler.StartLoxiLBInstanceFirmware)
 		protected.PUT("/loxilbs/:id/firmware/stop", middleware.RequireCapability(userService, middleware.ActInstanceWrite), handler.StoptLoxiLBInstanceFirmware)
+	}
+	return authLimiter
+}
+
+// SetupApplianceRoutes registers the whole-Appliance API under
+// /oam/v1/appliance. It is versioned in the path, unlike the routes above,
+// because its contract is still alpha and will change shape before it is
+// agreed.
+//
+// The routes exist in every deployment. One that is not an Appliance answers
+// them truthfully — every action unsupported, HOST_NOT_CONFIGURED — rather
+// than with 404, so a client needs no second way to learn that.
+//
+// authLimiter is the limiter of the login endpoint: authorizing an operation
+// verifies a password, so it is throttled as a login attempt is.
+func SetupApplianceRoutes(router *gin.Engine, userService *services.UserService, handler *handlers.ApplianceHandler, authLimiter *middleware.RateLimiter) {
+	appliance := router.Group("/oam/v1/appliance")
+	appliance.Use(middleware.TokenAuthMiddleware(userService))
+	{
+		appliance.GET("/capabilities", handler.Require(middleware.ActApplianceRead), handler.GetCapabilities)
+		appliance.GET("/status", handler.Require(middleware.ActApplianceRead), handler.GetStatus)
+
+		// Operations. Reading is open to every role, with the plan withheld
+		// from those who could not run it; planning checks the capability
+		// for the requested type inside the handler, since the type is in
+		// the body.
+		appliance.GET("/operations", handler.Require(middleware.ActApplianceRead), handler.ListOperations)
+		appliance.POST("/operations", handler.Require(middleware.ActApplianceRead), handler.PlanOperation)
+		appliance.GET("/operations/:operation_id", handler.Require(middleware.ActApplianceRead), handler.GetOperation)
+
+		// Acting on an operation. As with planning, the capability depends
+		// on the operation's type and is checked once it has been loaded.
+		appliance.POST("/operations/:operation_id/authorize", middleware.RateLimit(authLimiter),
+			handler.Require(middleware.ActApplianceRead), handler.AuthorizeOperation)
+		appliance.POST("/operations/:operation_id/submit", handler.Require(middleware.ActApplianceRead), handler.SubmitOperation)
+		appliance.POST("/operations/:operation_id/cancel", handler.Require(middleware.ActApplianceRead), handler.CancelOperation)
+		appliance.POST("/operations/:operation_id/reconcile", handler.Require(middleware.ActApplianceRead), handler.ReconcileOperation)
 	}
 }

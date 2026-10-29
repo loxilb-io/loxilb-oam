@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
+	"github.com/loxilb-io/loxilb-oam/internal/middleware"
 	"github.com/loxilb-io/loxilb-oam/internal/models"
 	"github.com/loxilb-io/loxilb-oam/internal/services"
 	"github.com/loxilb-io/loxilb-oam/internal/utils"
@@ -49,6 +50,20 @@ func NewHandler(userService *services.UserService, loxilbService *services.LoxiL
 	}
 }
 
+// invalidateProxyConnections drops pooled connections to managed instances.
+//
+// The proxy reuses connections, so a request issued after an instance endpoint
+// has been repointed — or after its container has been recreated behind the
+// same address — could otherwise be handed a connection to something that no
+// longer exists. Calling this on the mutation paths keeps that protection
+// while leaving the steady-state path free of a handshake per request.
+func (h *Handler) invalidateProxyConnections() {
+	if h.proxyService == nil {
+		return
+	}
+	h.proxyService.CloseIdleConnections()
+}
+
 // Login handles user login requests.
 // @Summary User login
 // @Description Authenticates a user and returns a JWT token with comprehensive license information if the credentials are valid.
@@ -61,6 +76,7 @@ func NewHandler(userService *services.UserService, loxilbService *services.LoxiL
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 429 {object} models.ErrorResponse "Too many failed login attempts"
 // @Failure 500 {object} models.ErrorResponse
+// @Failure 503 {object} models.ErrorResponse "Authentication storage unavailable; retry after 5 seconds"
 // @Router /oam/login [post]
 func (h *Handler) Login(c *gin.Context) {
 	var loginRequest models.LoginRequest
@@ -78,7 +94,8 @@ func (h *Handler) Login(c *gin.Context) {
 	isBlocked, remainingTime, err := h.userService.IsLoginBlocked(loginRequest.Username, clientIP, now)
 	if err != nil {
 		utils.LogError("Failed to check login block status: " + err.Error())
-		// Continue with login - don't fail on tracking errors
+		utils.AuthenticationUnavailable(c)
+		return
 	}
 
 	if isBlocked {
@@ -99,11 +116,21 @@ func (h *Handler) Login(c *gin.Context) {
 
 	// Validate user credentials using the service
 	user_id, _, valid, err := h.userService.ValidateUser(loginRequest.Username, loginRequest.Password)
+	if err != nil {
+		var validationErr *services.ValidationError
+		if !errors.As(err, &validationErr) || (validationErr.Type != "USER_NOT_FOUND" && validationErr.Type != "INVALID_PASSWORD") {
+			utils.LogError("Authentication store unavailable: " + err.Error())
+			utils.AuthenticationUnavailable(c)
+			return
+		}
+	}
 	if !valid || err != nil {
-		// Record failed login attempt
+		// Only definitive credential failures count toward lockout.
 		blockedUntil, recordErr := h.userService.RecordFailedLogin(loginRequest.Username, clientIP, now)
 		if recordErr != nil {
 			utils.LogError("Failed to record failed login attempt: " + recordErr.Error())
+			utils.AuthenticationUnavailable(c)
+			return
 		}
 
 		// Check if this failure triggered a lockout
@@ -122,33 +149,17 @@ func (h *Handler) Login(c *gin.Context) {
 			return
 		}
 
-		// Handle specific validation errors
-		if err != nil {
-			switch err.(*services.ValidationError).Type {
-			case "USER_NOT_FOUND":
-				utils.LogWarning("User not found: " + loginRequest.Username)
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
-			case "INVALID_PASSWORD":
-				utils.LogWarning("Invalid password for user: " + loginRequest.Username)
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
-			case "SYSTEM_ERROR":
-				utils.LogError("System error during validation: " + err.Error())
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-			default:
-				utils.LogError("Unknown validation error: " + err.Error())
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-			}
-		} else {
-			utils.LogWarning("Invalid credentials for user: " + loginRequest.Username)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
-		}
+		// Do not disclose whether the username or password was incorrect.
+		utils.LogWarning("Invalid credentials for user: " + loginRequest.Username)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
 		return
 	}
 
 	// Successful authentication - clear any login attempt records
 	if clearErr := h.userService.ClearLoginAttempts(loginRequest.Username, clientIP); clearErr != nil {
 		utils.LogError("Failed to clear login attempts: " + clearErr.Error())
-		// Don't fail the login on clearing errors
+		utils.AuthenticationUnavailable(c)
+		return
 	}
 
 	// Include role/user_id claims (informational — authz reads the DB)
@@ -164,10 +175,14 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 
-	err = h.userService.SaveToken(strconv.Itoa(user_id), token)
+	err = h.userService.SaveTokenForCredentials(user_id, loginRequest.Username, loginRequest.Password, token)
 	if err != nil {
+		if errors.Is(err, services.ErrInvalidPassword) || errors.Is(err, services.ErrUserNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid username or password"})
+			return
+		}
 		utils.LogError("Failed to save token: " + err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not save token"})
+		utils.AuthenticationUnavailable(c)
 		return
 	}
 
@@ -443,7 +458,9 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 
 		// Handle specific error types
 		switch {
-		case strings.Contains(err.Error(), "user not found"):
+		case errors.Is(err, services.ErrAdminDeletion):
+			c.JSON(http.StatusForbidden, gin.H{"error": "Cannot remove the last administrator"})
+		case errors.Is(err, services.ErrUserNotFound), strings.Contains(err.Error(), "user not found"):
 			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		case strings.Contains(err.Error(), "username already exists"):
 			c.JSON(http.StatusConflict, gin.H{"error": "Username already exists"})
@@ -510,8 +527,10 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 func (h *Handler) GetLoxiLBInstances(c *gin.Context) {
 	instances, err := h.loxilbService.FetchLoxiLBInstances()
 	if err != nil {
+		// The cause is logged, not returned: a driver error names tables,
+		// columns and the database host.
 		utils.LogError("Failed to fetch LoxiLB instances: " + err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch LoxiLB instances"})
 		return
 	}
 	utils.LogInfo("Fetched LoxiLB instances")
@@ -742,6 +761,10 @@ func (h *Handler) UpdateLoxiLBInstance(c *gin.Context) {
 		return
 	}
 
+	// The api_endpoint is rebuilt from host/port/protocol/version on every
+	// update, so any of those changing repoints the instance.
+	h.invalidateProxyConnections()
+
 	c.JSON(http.StatusOK, instance)
 }
 
@@ -768,6 +791,9 @@ func (h *Handler) DeleteLoxiLBInstance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	h.invalidateProxyConnections()
+
 	c.JSON(http.StatusOK, gin.H{"message": "Instance deleted"})
 }
 
@@ -834,6 +860,10 @@ func (h *Handler) UpdateLoxiLBInstanceFirmware(c *gin.Context) {
 		instance.Version = *firmwareRequest.Version
 	}
 
+	// The container behind this endpoint is being replaced; deferring the
+	// invalidation covers a partial failure that left it already torn down.
+	defer h.invalidateProxyConnections()
+
 	if err := h.loxilbService.UpdateFirmware(instance); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -881,6 +911,8 @@ func (h *Handler) StartLoxiLBInstanceFirmware(c *gin.Context) {
 		return
 	}
 
+	defer h.invalidateProxyConnections()
+
 	if err := h.loxilbService.StartFirmware(*instance); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -922,6 +954,8 @@ func (h *Handler) StoptLoxiLBInstanceFirmware(c *gin.Context) {
 		return
 	}
 
+	defer h.invalidateProxyConnections()
+
 	if err := h.loxilbService.StopFirmware(*instance); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -939,13 +973,17 @@ func (h *Handler) StoptLoxiLBInstanceFirmware(c *gin.Context) {
 // @Failure 500 {object} models.HealthCheckResponse
 // @Router /oam/health [get]
 func (h *Handler) HealthCheck(c *gin.Context) {
+	gatewayAuthMode := services.GatewayAuthModeDisabled
+	if h.proxyService != nil {
+		gatewayAuthMode = h.proxyService.GatewayAuthMode()
+	}
 	err := h.userService.PingDB()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "unhealthy"})
+		c.JSON(http.StatusInternalServerError, models.HealthCheckResponse{Status: "unhealthy", GatewayAuthMode: gatewayAuthMode})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "healthy"})
+	c.JSON(http.StatusOK, models.HealthCheckResponse{Status: "healthy", GatewayAuthMode: gatewayAuthMode})
 }
 
 func (h *Handler) GetLogsFromDB(c *gin.Context) {
@@ -1194,6 +1232,10 @@ func (h *Handler) CreateAlert(c *gin.Context) {
 	}
 
 	alertID, err := h.alertService.CreateAlert(alertReq)
+	if errors.Is(err, services.ErrInvalidAlert) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if err != nil {
 		utils.LogError("Failed to create alert: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1265,7 +1307,7 @@ func (h *Handler) GetActiveAlerts(c *gin.Context) {
 
 // AcknowledgeAlert handles acknowledging an alert
 // @Summary Acknowledge alert
-// @Description Acknowledges an alert by ID
+// @Description Acknowledges an alert by ID as the authenticated user. Body user_id must match the caller.
 // @Tags alerts
 // @Accept json
 // @Produce json
@@ -1274,6 +1316,8 @@ func (h *Handler) GetActiveAlerts(c *gin.Context) {
 // @Param Authorization header string true "Bearer token"
 // @Success 200 {object} models.AcknowledgeResponse
 // @Failure 400 {object} models.ErrorResponse
+// @Failure 401 {object} models.ErrorResponse
+// @Failure 403 {object} models.ErrorResponse
 // @Failure 500 {object} models.ErrorResponse
 // @Security BearerAuth
 // @Router /oam/alerts/{id}/acknowledge [put]
@@ -1290,7 +1334,16 @@ func (h *Handler) AcknowledgeAlert(c *gin.Context) {
 		return
 	}
 
-	ackTime, err := h.alertService.AcknowledgeAlert(alertID, ackReq.UserID)
+	caller := middleware.ResolveCaller(c, h.userService)
+	if caller == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	if ackReq.UserID != caller.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Acknowledgement must identify the authenticated user"})
+		return
+	}
+	ackTime, err := h.alertService.AcknowledgeAlert(alertID, caller.ID)
 	if err != nil {
 		utils.LogError("Failed to acknowledge alert: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1472,7 +1525,7 @@ func derefString(s *string) string {
 
 // ProxyToLoxiLB handles proxying requests to LoxiLB instances.
 // @Summary Proxy request to LoxiLB instance
-// @Description Forwards HTTP requests to the specified LoxiLB instance
+// @Description Forwards HTTP requests to the specified LoxiLB instance. Authorization depends on the method and on the Gateway path: see docs/proxy-functionality.md. A path with dot segments, empty segments or an encoded separator is refused with 400.
 // @Tags proxy
 // @Accept json
 // @Produce json
@@ -1485,9 +1538,12 @@ func derefString(s *string) string {
 // @Failure 401 {object} models.ErrorResponse
 // @Failure 403 {object} models.ErrorResponse
 // @Failure 404 {object} models.ErrorResponse
+// @Failure 405 {object} models.ErrorResponse "The proxy does not forward this method"
 // @Failure 409 {object} models.ErrorResponse
 // @Failure 500 {object} models.ErrorResponse
+// @Failure 502 {object} models.ErrorResponse "LoxiLB instance unreachable, reset, unresolvable, or TLS-rejected"
 // @Failure 503 {object} models.ErrorResponse
+// @Failure 504 {object} models.ErrorResponse "The instance did not answer within the proxy timeout"
 // @Security BearerAuth
 // @Router /oam/loxilbs/{id}/netlox/ [get]
 // @Router /oam/loxilbs/{id}/netlox/ [post]
@@ -1500,38 +1556,33 @@ func (h *Handler) ProxyToLoxiLB(c *gin.Context) {
 	instanceID, err := strconv.Atoi(instanceIDStr)
 	if err != nil {
 		utils.LogError("Invalid LoxiLB instance ID: " + instanceIDStr)
+		services.MarkOAMOrigin(c)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid LoxiLB instance ID"})
 		return
 	}
 
-	// Extract the target path (everything after /netlox/)
-	targetPath := c.Param("path")
-	if targetPath == "" {
-		utils.LogError("Missing target path for proxy request")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing target path"})
+	// The path was reduced to canonical form and authorized by
+	// RequireGatewayAccess. Forward that form and no other: reading the raw
+	// wildcard here would forward a path nobody authorized.
+	pathValue, _ := c.Get(middleware.CtxGatewayPath)
+	targetPath, ok := pathValue.(services.GatewayPath)
+	if !ok {
+		utils.LogError("Proxy request reached the handler without an authorized gateway path")
+		services.MarkOAMOrigin(c)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Proxy request failed"})
 		return
 	}
 
 	// Forward the request using the proxy service
 	err = h.proxyService.ForwardRequest(c, instanceID, targetPath)
 	if err != nil {
-		// Error handling with appropriate HTTP status codes
-		var reservedErr *services.ReservedEndpointError
-		switch {
-		// Surface the guard's own message: it names the offending VIP and the
-		// reservation it hit, which is what the operator needs to fix .env or
-		// pick another port. The generic default below would hide both.
-		case errors.As(err, &reservedErr):
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		case strings.Contains(err.Error(), "not found"):
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		case strings.Contains(err.Error(), "failed to connect"):
-			c.JSON(http.StatusBadGateway, gin.H{"error": "LoxiLB instance unreachable"})
-		case strings.Contains(err.Error(), "timeout"):
-			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "Request timeout"})
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Proxy request failed"})
-		}
+		// Classification is by error identity, not by error prose; see
+		// classifyProxyError for why the previous string matching was wrong.
+		status, message, detail := classifyProxyError(err)
+		// The instance never answered, or was never asked: this failure is
+		// OAM's, and is marked so rather than left to be inferred.
+		services.MarkOAMOrigin(c)
+		c.JSON(status, proxyErrorBody(message, detail))
 		return
 	}
 
@@ -1651,7 +1702,7 @@ func (h *Handler) UpdateAdminCredentials(c *gin.Context) {
 
 	// The token must exist in the server-side store or the auth middleware
 	// will reject it as revoked.
-	if err := h.userService.SaveToken(strconv.Itoa(adminUserID), newToken); err != nil {
+	if err := h.userService.SaveTokenForCredentials(adminUserID, req.NewUsername, req.NewPassword, newToken); err != nil {
 		utils.LogError("Failed to save new access token: " + err.Error())
 		c.JSON(http.StatusOK, models.AdminUpdateResponse{
 			Success: true,

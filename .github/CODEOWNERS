@@ -8,12 +8,21 @@
 # loxilb-io org, otherwise GitHub ignores them and warns. Confirm the roster for loxilb-oam before
 # enabling required review. A team (e.g. @loxilb-io/loxilb-oam-maintainers) may be used instead of
 # individual handles so membership can change without editing this file.
+#
+# Note on @loxilb-devel: it is an org-level shared development account with write access, not an
+# individual maintainer, so it is deliberately not listed in MAINTAINERS.md. The roster there
+# tracks people; this file tracks who must review. Do not "fix" the apparent mismatch by adding a
+# row for it to MAINTAINERS.md.
+#
+# Ownership does not accumulate across patterns — for any given file, only the LAST matching line
+# applies. That is why @loxilb-devel is repeated on the path rules below rather than being covered
+# by the `*` rule alone.
 
-*       @backguynn @inhogog2
+*       @backguynn @inhogog2 @loxilb-devel
 
 # CI/CD, release automation, and repo governance are the highest-value tamper
 # targets (a malicious workflow change can exfiltrate secrets or ship a
 # poisoned release). Call them out explicitly so a review is always required
 # on these paths even if the glob above is ever narrowed.
-/.github/        @backguynn @inhogog2 @NLX-SeokHwanKong
-/Dockerfile      @backguynn @inhogog2 @NLX-SeokHwanKong
+/.github/        @backguynn @inhogog2 @NLX-SeokHwanKong @loxilb-devel
+/Dockerfile      @backguynn @inhogog2 @NLX-SeokHwanKong @loxilb-devel

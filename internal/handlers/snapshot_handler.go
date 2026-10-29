@@ -11,6 +11,7 @@ package handlers
 // no OAM-side rewording (lesson from the legacy download-404 UX).
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,20 +41,29 @@ func callerUsername(c *gin.Context) string {
 // *services.GatewayError passes the gateway's status and body through.
 func writeSnapshotError(c *gin.Context, err error) {
 	var gwErr *services.GatewayError
-	switch {
-	case errors.As(err, &gwErr):
-		if gwErr.StatusCode == 0 {
-			// Gateway unreachable — connection error verbatim.
-			c.JSON(http.StatusBadGateway, gin.H{"error": gwErr.Body})
-			return
+	if errors.As(err, &gwErr) && gwErr.StatusCode != 0 {
+		// The gateway answered with an error; relay its status and body,
+		// marked as the Gateway's so the console does not read a relayed 401
+		// as the operator's own OAM session ending.
+		c.Header(services.ErrorOriginHeader, services.ErrorOriginGateway)
+		if gwErr.RetryAfter != "" {
+			c.Header("Retry-After", gwErr.RetryAfter)
 		}
-		// The gateway answered with an error; relay its status and body.
 		body := gwErr.Body
 		if strings.HasPrefix(strings.TrimSpace(body), "{") {
 			c.Data(gwErr.StatusCode, "application/json", []byte(body))
 		} else {
 			c.JSON(gwErr.StatusCode, gin.H{"error": body})
 		}
+		return
+	}
+
+	// Everything else is OAM's own failure, and is marked so.
+	services.MarkOAMOrigin(c)
+	switch {
+	case gwErr != nil:
+		// Gateway unreachable — connection error verbatim.
+		c.JSON(http.StatusBadGateway, gin.H{"error": gwErr.Body})
 	case errors.Is(err, services.ErrSnapshotNotFound), errors.Is(err, services.ErrInstanceNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	case errors.Is(err, services.ErrSnapshotPinned):
@@ -62,8 +72,11 @@ func writeSnapshotError(c *gin.Context, err error) {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": err.Error()})
 	case errors.Is(err, services.ErrSnapshotCorrupted):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
-	case errors.Is(err, services.ErrInvalidSnapshotDoc):
+	case errors.Is(err, services.ErrInvalidSnapshotDoc), errors.Is(err, services.ErrInvalidRestoreRequest):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, services.ErrGatewayServiceIdentityUnavailable):
+		// The same condition, and the same answer, as on the instance proxy.
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Gateway service identity unavailable"})
 	default:
 		utils.LogError("snapshot operation failed: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -254,13 +267,17 @@ func (h *Handler) UploadSnapshot(c *gin.Context) {
 
 // RestoreSnapshot handles POST /oam/snapshots/:sid/restore.
 // @Summary Restore a stored snapshot to a gateway
-// @Description Default mode is dry-run: the gateway validates and returns its plan without mutating anything. Commit first takes an automatic pre_restore safety snapshot of the target, then applies. The gateway's response is returned verbatim in gateway_response. Cross-instance restore is allowed and flagged with cross_instance=true.
+// @Description Default mode is dry-run: the gateway validates and returns its plan without mutating anything. Commit first takes an automatic pre_restore safety snapshot of the target (always a full capture), then applies. Cross-instance restore is allowed and flagged with cross_instance=true.
+// @Description
+// @Description components limits the restore to the named snapshot domains, which the gateway replaces (it does not merge). Omit it to restore everything the document covers. When present it must name at least one domain; an empty list, a malformed or repeated name, or a domain the document's included_domains does not list is refused with 400 before the gateway is called. Send the same components for the dry-run and for the commit. To undo a selected restore, restore the pre_restore snapshot with the same components.
+// @Description
+// @Description Reading the answer: 200 means the gateway answered, whatever it said. gateway_status is the gateway's HTTP status and gateway_response its body verbatim, so a refused or rolled-back restore is a 200 here with the refusal inside. For a commit, read gateway_response.result (ok, rolled-back, ROLLBACK-FAILED) and gateway_response.persisted: a restore can be applied and still report persisted=false. Any other status means OAM stopped before or while reaching the gateway. When the gateway sent Retry-After (for example 503 while another restore holds its configuration gate), it is relayed as this response's Retry-After header and as gateway_retry_after.
 // @Tags snapshots
 // @Accept json
 // @Produce json
 // @Param Authorization header string true "Bearer token"
 // @Param sid path string true "Snapshot ID (UUID)"
-// @Param request body models.RestoreSnapshotRequest false "mode: dry-run (default) | commit; optional target_instance_id"
+// @Param request body models.RestoreSnapshotRequest false "mode: dry-run (default) | commit; optional target_instance_id; optional components"
 // @Success 200 {object} models.RestoreOutcome
 // @Failure 400 {object} models.ErrorResponse
 // @Failure 401 {object} models.ErrorResponse
@@ -268,12 +285,17 @@ func (h *Handler) UploadSnapshot(c *gin.Context) {
 // @Failure 404 {object} models.ErrorResponse
 // @Failure 422 {object} models.ErrorResponse "Stored blob failed integrity verification (never sent to the gateway)"
 // @Failure 502 {object} models.ErrorResponse "Gateway unreachable (connection error passed through verbatim)"
+// @Failure 503 {object} models.ErrorResponse "OAM's gateway service identity is unavailable"
 // @Security BearerAuth
 // @Router /oam/snapshots/{sid}/restore [post]
 func (h *Handler) RestoreSnapshot(c *gin.Context) {
 	var req models.RestoreSnapshotRequest
 	if c.Request.ContentLength > 0 {
-		if err := c.ShouldBindJSON(&req); err != nil {
+		body, err := io.ReadAll(c.Request.Body)
+		if err == nil {
+			req, err = decodeRestoreRequest(body)
+		}
+		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
 			return
 		}
@@ -283,7 +305,32 @@ func (h *Handler) RestoreSnapshot(c *gin.Context) {
 		writeSnapshotError(c, err)
 		return
 	}
+	// The answer is 200 because the gateway answered; when it asked the
+	// caller to wait (a restore already holds its configuration gate), pass
+	// that on where a client looks for it.
+	if outcome.GatewayRetryAfter != "" {
+		c.Header("Retry-After", outcome.GatewayRetryAfter)
+	}
 	c.JSON(http.StatusOK, outcome)
+}
+
+// decodeRestoreRequest reads a restore request body. "components": null is
+// refused: decoded plainly it is indistinguishable from leaving the field
+// out, and a client that meant a selection and sent null would get the whole
+// document restored.
+func decodeRestoreRequest(body []byte) (models.RestoreSnapshotRequest, error) {
+	var req models.RestoreSnapshotRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return req, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return req, err
+	}
+	if raw, present := fields["components"]; present && req.Components == nil {
+		return req, fmt.Errorf("components must be a list of domain names, not %s; omit it to restore the whole document", raw)
+	}
+	return req, nil
 }
 
 // UpdateSnapshot handles PATCH /oam/snapshots/:sid.

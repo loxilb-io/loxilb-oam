@@ -2,22 +2,28 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/loxilb-io/loxilb-oam/internal/config"
-	"github.com/loxilb-io/loxilb-oam/internal/utils"
 	"io"
+	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/loxilb-io/loxilb-oam/internal/config"
+	"github.com/loxilb-io/loxilb-oam/internal/utils"
 )
 
 type ProxyService struct {
 	loxilbService *LoxiLBService
 	client        *http.Client
+	identity      GatewayServiceIdentity
 }
 
 // ProxyLogEntry represents a proxy request/response log entry
@@ -35,57 +41,140 @@ type ProxyLogEntry struct {
 	Error        string    `json:"error,omitempty"`
 }
 
-func NewProxyService(loxilbService *LoxiLBService) *ProxyService {
+// Sentinel and typed errors ForwardRequest returns, so the handler can
+// classify a proxy failure by inspecting the error rather than by matching
+// its prose.
+//
+// The prose-matching that preceded this was silently wrong: every failure of
+// client.Do — timeout, refused connection, DNS failure, TLS handshake — was
+// flattened to "failed to connect to LoxiLB instance" with the cause
+// discarded, so the handler's timeout branch could never be taken and a
+// request that merely exceeded the 10s client timeout was reported to the
+// operator as 502 "instance unreachable": a positive assertion that the
+// instance is down, which is not what a timeout means.
+var (
+	// ErrProxyReadRequestBody: the caller's body could not be read (400).
+	ErrProxyReadRequestBody = errors.New("failed to read request body")
+	// ErrProxyCreateRequest: the outbound request could not be constructed (500).
+	ErrProxyCreateRequest = errors.New("failed to create request")
+	// ErrProxyReadResponse: the instance answered but the body could not be
+	// read to completion (502) — a truncated or aborted response.
+	ErrProxyReadResponse = errors.New("failed to read response from LoxiLB instance")
+)
+
+// ProxyUpstreamError reports that the request left OAM but the transport to
+// the LoxiLB instance failed. Err is the original error from http.Client.Do,
+// preserved so the handler can tell a timeout from a refused connection from
+// a name-resolution or TLS failure. Unwrap makes errors.Is/errors.As reach
+// context.DeadlineExceeded, *net.DNSError, syscall.ECONNREFUSED and friends.
+type ProxyUpstreamError struct {
+	TargetURL string
+	Err       error
+}
+
+func (e *ProxyUpstreamError) Error() string {
+	return fmt.Sprintf("proxy request to LoxiLB instance at %s failed: %v", e.TargetURL, e.Err)
+}
+
+func (e *ProxyUpstreamError) Unwrap() error { return e.Err }
+
+// Timeout reports whether the underlying failure was a timeout, satisfying
+// the net.Error convention so callers may test it either way.
+func (e *ProxyUpstreamError) Timeout() bool {
+	var netErr net.Error
+	return errors.Is(e.Err, context.DeadlineExceeded) || (errors.As(e.Err, &netErr) && netErr.Timeout())
+}
+
+func NewProxyService(loxilbService *LoxiLBService) (*ProxyService, error) {
+	identity, err := GatewayServiceIdentityFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return NewProxyServiceWithGatewayIdentity(loxilbService, identity), nil
+}
+
+// NewProxyServiceWithGatewayIdentity wires an already validated identity so
+// proxy and snapshot clients can share one immutable startup configuration.
+func NewProxyServiceWithGatewayIdentity(loxilbService *LoxiLBService, identity GatewayServiceIdentity) *ProxyService {
 	// TLS posture for managed instances is centralized in config.InstanceTLSConfig
 	// (verify by default; CA-bundle or explicit-insecure opt-in via env).
-	// DisableKeepAlives prevents connection reuse issues when instance endpoints change.
+	//
+	// Connections are pooled. Keep-alives were previously disabled outright to
+	// avoid handing a request a connection to an instance endpoint that had
+	// since been replaced — a real hazard, but one that occurs only when an
+	// endpoint changes, while the cost (a fresh TCP, and for managed instances
+	// TLS, handshake) was paid on every request forever. Measured by the UI
+	// team, a tiny proxied response cost roughly twice the equivalent direct
+	// call. Disabling reuse also removed the buffer against transient
+	// connection-establishment failures: with every request dialling anew, any
+	// SYN loss surfaces to the operator as a 502.
+	//
+	// The hazard is now handled where it actually arises: CloseIdleConnections
+	// is called on the instance mutation paths (see the handlers for instance
+	// update/delete and the firmware start/stop/update operations).
 	tr := &http.Transport{
 		TLSClientConfig:     config.InstanceTLSConfig(),
-		DisableKeepAlives:   true, // Prevent connection pooling/reuse
-		MaxIdleConns:        0,    // No idle connection pooling
-		MaxIdleConnsPerHost: 0,    // No idle connections per host
-		IdleConnTimeout:     0,    // Close idle connections immediately
+		DisableKeepAlives:   config.ProxyKeepAlivesDisabled(),
+		MaxIdleConns:        proxyMaxIdleConns,
+		MaxIdleConnsPerHost: proxyMaxIdleConnsPerHost,
+		IdleConnTimeout:     proxyIdleConnTimeout,
 	}
 	client := &http.Client{
 		Transport: tr,
-		Timeout:   10 * time.Second,
+		Timeout:   config.ProxyRequestTimeout(),
 	}
 	return &ProxyService{
 		loxilbService: loxilbService,
 		client:        client,
+		identity:      identity,
 	}
 }
 
-// ForwardRequest forwards the request in c to targetPath on the LoxiLB instance
-// identified by instanceID.
-func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath string) error {
+// Outbound connection-pool budget for the instance proxy. An OAM manages a
+// small number of instances, so a per-host ceiling well above the expected
+// concurrent console traffic is enough to keep every request on a warm
+// connection without holding sockets open indefinitely.
+const (
+	proxyMaxIdleConns        = 100
+	proxyMaxIdleConnsPerHost = 8
+	proxyIdleConnTimeout     = 90 * time.Second
+)
+
+// CloseIdleConnections drops every pooled connection to managed instances.
+//
+// Call it whenever an instance endpoint may have been replaced — an instance
+// update or delete, or a firmware start/stop/update that recreates the
+// container behind the same address. The next request then dials afresh
+// instead of reusing a connection to a container that no longer exists. The
+// cost is one cold start on a rare event, rather than a handshake per
+// request, which is what disabling keep-alives outright used to charge.
+func (p *ProxyService) CloseIdleConnections() {
+	p.client.CloseIdleConnections()
+}
+
+// GatewayAuthMode returns the non-secret outbound authentication mode for
+// health/status reporting.
+func (p *ProxyService) GatewayAuthMode() string {
+	return p.identity.Mode()
+}
+
+// ForwardRequest forwards the request in c to path on the LoxiLB instance
+// identified by instanceID. path is the canonical path the caller was
+// authorized for; the outbound URL is built from it and from nothing else.
+func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, path GatewayPath) error {
 	startTime := time.Now()
 
 	// Fetch LoxiLB instance details
 	instance, err := p.loxilbService.FetchLoxiLBInstanceByID(instanceID)
 	if err != nil {
-		p.logProxyRequest(c, instanceID, "", "", 0, 404, time.Since(startTime).Milliseconds(), "LoxiLB instance not found")
-		return fmt.Errorf("LoxiLB instance not found")
+		p.logProxyRequest(c, instanceID, "", "", 0, 404, time.Since(startTime).Milliseconds(), fmt.Sprintf("LoxiLB instance not found: %v", err))
+		return fmt.Errorf("%w (id %d)", ErrInstanceNotFound, instanceID)
 	}
 
-	baseURL := strings.TrimSuffix(instance.ApiEndpoint, "/")
-
-	// Handle path overlap - if the target path starts with the version that's already in ApiEndpoint
-	// Extract version from ApiEndpoint (e.g., "v1" from "https://host:port/netlox/v1")
-	apiEndpointParts := strings.Split(baseURL, "/")
-	if len(apiEndpointParts) > 0 {
-		lastPart := apiEndpointParts[len(apiEndpointParts)-1]
-		// If target path starts with the same version (with or without leading slash), remove the version from baseURL
-		if strings.HasPrefix(targetPath, "/"+lastPart+"/") || strings.HasPrefix(targetPath, "/"+lastPart) {
-			baseURL = strings.TrimSuffix(baseURL, "/"+lastPart)
-		}
-	}
-
-	targetURL := fmt.Sprintf("%s/%s", baseURL, strings.TrimPrefix(targetPath, "/"))
-
-	// Preserve query parameters from original request
-	if c.Request.URL.RawQuery != "" {
-		targetURL += "?" + c.Request.URL.RawQuery
+	targetURL, err := gatewayTargetURL(instance.ApiEndpoint, path, c.Request.URL.RawQuery)
+	if err != nil {
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, "", 0, 500, time.Since(startTime).Milliseconds(), fmt.Sprintf("Failed to build target URL: %v", err))
+		return fmt.Errorf("%w: %w", ErrProxyCreateRequest, err)
 	}
 
 	// Read request body
@@ -93,8 +182,8 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	if c.Request.Body != nil {
 		requestBody, err = io.ReadAll(c.Request.Body)
 		if err != nil {
-			p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, 0, 400, time.Since(startTime).Milliseconds(), "Failed to read request body")
-			return fmt.Errorf("failed to read request body")
+			p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, 0, 400, time.Since(startTime).Milliseconds(), fmt.Sprintf("Failed to read request body: %v", err))
+			return fmt.Errorf("%w: %w", ErrProxyReadRequestBody, err)
 		}
 		// Restore body for potential re-reading
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
@@ -105,20 +194,28 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	// an L4 rule on the edge address:port is processed in eBPF ahead of
 	// netfilter, so once the gateway has accepted it there is no error to
 	// observe — only a console that stopped answering.
-	if err := checkReservedEndpoint(config.ReservedEndpoints(), c.Request.Method, targetPath, requestBody); err != nil {
+	if err := checkReservedEndpoint(config.ReservedEndpoints(), c.Request.Method, path.String(), requestBody); err != nil {
 		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), http.StatusConflict, time.Since(startTime).Milliseconds(), err.Error())
 		return err
 	}
 
-	// Create new request
-	req, err := http.NewRequest(c.Request.Method, targetURL, bytes.NewBuffer(requestBody))
+	// Create new request. It carries the caller's context, so a console that
+	// navigates away or hangs up stops the call to the instance instead of
+	// leaving it to run to the proxy timeout.
+	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL, bytes.NewBuffer(requestBody))
 	if err != nil {
-		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 500, time.Since(startTime).Milliseconds(), "Failed to create request")
-		return fmt.Errorf("failed to create request")
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 500, time.Since(startTime).Milliseconds(), fmt.Sprintf("Failed to create request: %v", err))
+		return fmt.Errorf("%w: %w", ErrProxyCreateRequest, err)
 	}
 
-	// Copy relevant headers (excluding hop-by-hop headers)
+	// Copy only explicitly safe end-to-end headers. In particular, browser
+	// Authorization/Cookie/API-key credentials must never cross the OAM user
+	// identity boundary into the Gateway management plane.
 	p.copyHeaders(c.Request.Header, req.Header)
+	if err := p.identity.Authorize(req); err != nil {
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), http.StatusServiceUnavailable, time.Since(startTime).Milliseconds(), "Gateway service identity unavailable")
+		return err
+	}
 
 	// Set content length if we have a body
 	if len(requestBody) > 0 {
@@ -128,23 +225,45 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	// Make the request
 	resp, err := p.client.Do(req)
 	if err != nil {
-		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 502, time.Since(startTime).Milliseconds(), fmt.Sprintf("Request failed: %v", err))
-		return fmt.Errorf("failed to connect to LoxiLB instance")
+		upstreamErr := &ProxyUpstreamError{TargetURL: targetURL, Err: err}
+		// Log the status the operator will actually be answered with. Logging
+		// 502 for a request that returns 504 would recreate, in the logs, the
+		// very confusion this change removes from the response.
+		loggedStatus := http.StatusBadGateway
+		if upstreamErr.Timeout() {
+			loggedStatus = http.StatusGatewayTimeout
+		}
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), loggedStatus, time.Since(startTime).Milliseconds(), fmt.Sprintf("Request failed: %v", err))
+		// Carry the cause across the boundary: the handler distinguishes a
+		// timeout (504) from an instance that is genuinely unreachable (502),
+		// and it can only do so if the original error survives.
+		return upstreamErr
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 502, time.Since(startTime).Milliseconds(), "Failed to read response body")
-		return fmt.Errorf("failed to read response")
+		p.logProxyRequest(c, instanceID, c.Request.URL.Path, targetURL, int64(len(requestBody)), 502, time.Since(startTime).Milliseconds(), fmt.Sprintf("Failed to read response body: %v", err))
+		return fmt.Errorf("%w: %w", ErrProxyReadResponse, err)
 	}
 
-	// Copy response headers
+	// Copy response headers, except the ones OAM itself is authoritative for.
 	for key, values := range resp.Header {
+		if !relayableGatewayResponseHeader(key) {
+			continue
+		}
 		for _, value := range values {
 			c.Header(key, value)
 		}
+	}
+	// Tell the console which hop produced a failure. A Gateway 401 means OAM's
+	// management credential was refused, not that the operator's OAM session
+	// ended; without this marker the console cannot tell the two apart and
+	// signs the operator out. Set, never copied: the upstream's own value was
+	// dropped above, so the Gateway cannot claim a different origin.
+	if resp.StatusCode >= http.StatusBadRequest {
+		c.Header(ErrorOriginHeader, ErrorOriginGateway)
 	}
 
 	// Log successful proxy request
@@ -157,26 +276,73 @@ func (p *ProxyService) ForwardRequest(c *gin.Context, instanceID int, targetPath
 	return nil
 }
 
+// ErrorOriginHeader marks which hop produced a proxied failure. The console
+// reads it to decide whether a 401 ends the operator's OAM session.
+const (
+	ErrorOriginHeader  = "X-Loxi-Error-Origin"
+	ErrorOriginGateway = "gateway"
+	// ErrorOriginOAM marks a failure OAM produced itself, so a client need
+	// not read a missing marker as one. The console ends the session on a
+	// 401 marked this way: never set it on a status relayed from elsewhere.
+	ErrorOriginOAM = "oam"
+)
+
+// MarkOAMOrigin marks the response being written as OAM's own failure.
+func MarkOAMOrigin(c *gin.Context) {
+	c.Header(ErrorOriginHeader, ErrorOriginOAM)
+}
+
+// relayableGatewayResponseHeader reports whether a Gateway response header may
+// be passed to the browser. Two families may not:
+//
+//   - Access-Control-*: CORS is OAM's policy, applied by CORSMiddleware before
+//     the proxy runs. Relaying the Gateway's values overwrote it, so every
+//     pass-through answered `Access-Control-Allow-Origin: *` no matter what
+//     OAM_ALLOWED_ORIGINS allowed, and dropped the headers OAM exposes.
+//   - the error-origin marker: only OAM can say which hop failed.
+func relayableGatewayResponseHeader(key string) bool {
+	canonical := http.CanonicalHeaderKey(key)
+	if strings.HasPrefix(canonical, "Access-Control-") {
+		return false
+	}
+	return canonical != ErrorOriginHeader
+}
+
+// safeGatewayRequestHeaders is an allowlist, rather than a denylist, because
+// new browser credentials must not become transitively trusted by Gateway.
+var safeGatewayRequestHeaders = map[string]bool{
+	"Accept":           true,
+	"Accept-Encoding":  true,
+	"Accept-Language":  true,
+	"Cache-Control":    true,
+	"Content-Encoding": true,
+	"Content-Type":     true,
+	"If-Match":         true,
+	"If-None-Match":    true,
+	"X-Correlation-Id": true,
+	"X-Request-Id":     true,
+}
+
+// GatewayRequestHeaders lists the request headers the proxy forwards, sorted.
+// The CORS policy allows exactly these from a cross-origin console: a header
+// the browser may not send is a header the proxy forwards for nobody.
+func GatewayRequestHeaders() []string {
+	headers := make([]string, 0, len(safeGatewayRequestHeaders))
+	for header := range safeGatewayRequestHeaders {
+		headers = append(headers, header)
+	}
+	sort.Strings(headers)
+	return headers
+}
+
 /*
-copyHeaders copies HTTP headers from source to destination, excluding hop-by-hop headers
+copyHeaders copies explicitly safe HTTP headers from source to destination.
 */
 func (p *ProxyService) copyHeaders(src, dst http.Header) {
-	// Headers that should not be forwarded
-	hopByHopHeaders := map[string]bool{
-		"Connection":          true,
-		"Keep-Alive":          true,
-		"Proxy-Authenticate":  true,
-		"Proxy-Authorization": true,
-		"Te":                  true,
-		"Trailers":            true,
-		"Transfer-Encoding":   true,
-		"Upgrade":             true,
-	}
-
 	for key, values := range src {
-		if !hopByHopHeaders[key] {
+		if safeGatewayRequestHeaders[http.CanonicalHeaderKey(key)] {
 			for _, value := range values {
-				dst.Add(key, value)
+				dst.Add(http.CanonicalHeaderKey(key), value)
 			}
 		}
 	}

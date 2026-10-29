@@ -5,6 +5,11 @@ plane — the **loxilb-ui** web console, the **loxilb-oam** API, and its Postgre
 database — on a single host with Docker Compose, behind a Caddy edge that
 serves the UI, proxies the API, and terminates TLS.
 
+This guide describes the standalone management bundle. In
+[converged single-node mode](deployment-converged.md), PostgreSQL moves to the
+independent `loxilb-state` project and one logical database is shared with the
+Gateway through isolated `public`, `aigw`, and `aigw_mgmt` schemas.
+
 ```
 browser ──HTTP/HTTPS──▶ caddy (edge, the only exposed service)
                           ├─ /            → static SPA (loxilb-ui)
@@ -101,6 +106,7 @@ Key reference (full comments in `.env.example`):
 | `SITE_ADDRESS`, `EDGE_TLS` | edge listen address + TLS mode (§4/§5) |
 | `EDGE_SNI_FALLBACK` | site to serve clients that send no SNI — required only when the edge is reached by IP (see Troubleshooting) |
 | `OAM_INSTANCE_CA_BUNDLE`, `OAM_INSTANCE_TLS_INSECURE` | TLS to managed LoxiLB instances (§6) |
+| `OAM_GATEWAY_AUTH_MODE`, `OAM_GATEWAY_SERVICE_TOKEN`, `OAM_GATEWAY_SERVICE_TOKEN_FILE` | Dedicated OAM-to-Gateway management identity; configure the raw value or preferred absolute file path, never both. `disabled` or fail-closed `service-token` |
 | `OAM_TAG`, `UI_TAG` | pinned image versions (Mode 2) |
 | `DB_HOST` | `postgres` = bundled DB; set a hostname to use an external database |
 
@@ -398,3 +404,7 @@ All variants are the same two `.env` knobs; only the values differ.
 - [`docs/container-image.md`](container-image.md) — the image itself: published
   tags, signature/SBOM verification, building your own, air-gapped mirroring.
 - [`SECURITY.md`](../SECURITY.md) — vulnerability reporting.
+
+## Optional identity provider and audit collector
+
+Use existing external Keycloak/SIEM endpoints by default. The [English integration guide](../deploy/compose/INTEGRATIONS.md) ([한국어](../deploy/compose/INTEGRATIONS.ko.md)) describes external wiring and separate opt-in Keycloak and TLS syslog-ng Compose projects, including trust, persistence, recovery and validation. These projects are independent of management/data/state lifecycle.

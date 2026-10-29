@@ -2,6 +2,8 @@
 package utils
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
 	"time"
@@ -32,16 +34,40 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// newTokenID returns an unpredictable 128-bit identifier for the JWT "jti"
+// claim.
+func newTokenID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // GenerateToken issues a signed JWT for the given user, expiring after
 // expirationMinutes. The role is recorded at issuance time for UI convenience
 // only; authorization is always re-resolved from the DB.
+//
+// Every token carries a random "jti". Without it the claims are fully
+// determined by (user, role, expiry-in-seconds), so two logins by the same
+// user within one second signed to the identical string — and the second
+// insert into the token store, where token_value is unique, failed the login.
+// Validation does not require the claim: tokens issued before it existed are
+// still looked up, and revoked, by their full value.
 func GenerateToken(username, role string, userID int, expirationMinutes int) (string, error) {
-	expiration := time.Now().Add(time.Duration(expirationMinutes) * time.Minute)
+	now := time.Now()
+	expiration := now.Add(time.Duration(expirationMinutes) * time.Minute)
+	tokenID, err := newTokenID()
+	if err != nil {
+		return "", err
+	}
 	claims := &Claims{
 		Username: username,
 		Role:     role,
 		UserID:   userID,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        tokenID,
+			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(expiration),
 		},
 	}

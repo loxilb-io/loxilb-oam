@@ -1,11 +1,12 @@
 package services
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"errors"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
@@ -28,19 +29,21 @@ func ConnectWithSecureTLS(dsn string, maxRetries int, backoff time.Duration, caC
 	rootCertPool := x509.NewCertPool()
 	pem, err := os.ReadFile(caCertFilePath)
 	if err != nil {
-		log.Fatalf("Failed to read CA certificate: %v", err)
+		return nil, fmt.Errorf("read database CA certificate: %w", err)
 	}
-	rootCertPool.AppendCertsFromPEM(pem)
+	if !rootCertPool.AppendCertsFromPEM(pem) {
+		return nil, errors.New("database CA file contains no certificates")
+	}
 
 	clientCert := make([]tls.Certificate, 1)
 	clientCert[0], err = tls.LoadX509KeyPair(caClientCertFilePath, caClientKeyFilePath)
 	if err != nil {
-		log.Fatalf("Failed to load client certificate: %v", err)
+		return nil, fmt.Errorf("load database client certificate: %w", err)
 	}
 
 	connConfig, err := pgx.ParseConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("invalid database DSN: %w", err)
+		return nil, errors.New("invalid database DSN")
 	}
 
 	connConfig.TLSConfig = &tls.Config{
@@ -55,37 +58,43 @@ func ConnectWithSecureTLS(dsn string, maxRetries int, backoff time.Duration, caC
 	// sslmode=prefer/allow leave a non-TLS fallback in place. Drop them.
 	connConfig.Fallbacks = nil
 
-	// Registered once: each call returns a new DSN string keyed to the config,
-	// so registering inside the retry loop would leak an entry per attempt.
-	secureDSN := stdlib.RegisterConnConfig(connConfig)
-
-	var db *sql.DB
-	for i := 0; i < maxRetries; i++ {
-		db, err = sql.Open("pgx", secureDSN)
-		if err == nil && db.Ping() == nil {
-			return db, nil
-		}
-		log.Printf("Retrying database connection (%d/%d)...", i+1, maxRetries)
-		time.Sleep(backoff)
-		backoff *= 2
-	}
-	return nil, fmt.Errorf("could not connect securely after %d retries: %w", maxRetries, err)
+	return connectPostgres(connConfig, maxRetries, backoff)
 }
 
 // ConnectWithRetry establishes a connection to a PostgreSQL database using the given DSN. It
 // retries up to maxRetries times, doubling backoff after each failed attempt, and returns the open
 // connection.
 func ConnectWithRetry(dsn string, maxRetries int, backoff time.Duration) (*sql.DB, error) {
-	var db *sql.DB
-	var err error
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, errors.New("invalid database DSN")
+	}
+	return connectPostgres(cfg, maxRetries, backoff)
+}
+
+// A failed Ping is the connection error; sql.OpenDB itself does no network I/O.
+// Close failed pools and keep no global registered DSN containing credentials.
+func connectPostgres(cfg *pgx.ConnConfig, maxRetries int, backoff time.Duration) (*sql.DB, error) {
+	if maxRetries <= 0 || backoff < 0 {
+		return nil, errors.New("invalid database retry policy")
+	}
+	var lastErr error
 	for i := 0; i < maxRetries; i++ {
-		db, err = sql.Open("pgx", dsn)
-		if err == nil && db.Ping() == nil {
+		db := sql.OpenDB(stdlib.GetConnector(*cfg))
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		lastErr = db.PingContext(ctx)
+		cancel()
+		if lastErr == nil {
 			return db, nil
 		}
-		log.Printf("Database connection failed, retrying in %v... (%d/%d)", backoff, i+1, maxRetries)
-		time.Sleep(backoff)
-		backoff *= 2
+		db.Close()
+		if i+1 < maxRetries {
+			time.Sleep(backoff)
+			// Saturate to avoid overflow on unusually large retry inputs.
+			if backoff <= time.Duration(1<<62)-1 {
+				backoff *= 2
+			}
+		}
 	}
-	return nil, fmt.Errorf("could not connect to database after %d retries: %w", maxRetries, err)
+	return nil, fmt.Errorf("database connection failed after %d attempt(s): %w", maxRetries, lastErr)
 }

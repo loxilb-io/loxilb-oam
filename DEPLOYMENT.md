@@ -49,6 +49,9 @@ to start** if the required secrets below are unset.
 | `OAM_TOKEN_TTL_MINUTES`                                | JWT / API-token lifetime in minutes. Read by the bare binary. In the container images the equivalent knob is `TOKEN_EXPIRATION`, which the entrypoint maps to `-token-expiration`. | `480` (8h) |
 | `OAM_INSTANCE_CA_BUNDLE`                               | PEM bundle trusted when connecting to managed LoxiLB instances (proxying and snapshots). Unset = system roots only. See [docs/instance-tls.md](docs/instance-tls.md). | — |
 | `OAM_INSTANCE_TLS_INSECURE`                            | Skip certificate verification on connections to managed instances. **Development only**; logs a startup warning. | `false` |
+| `OAM_GATEWAY_AUTH_MODE`                                | OAM-to-Gateway management authentication: `disabled` or `service-token`. The mode is reported by `/oam/health`. | `disabled` |
+| `OAM_GATEWAY_SERVICE_TOKEN`                            | Raw dedicated Gateway management token. Required in `service-token` mode; never use an OAM browser JWT. | — |
+| `OAM_GATEWAY_SERVICE_TOKEN_FILE`                       | Absolute path to a file containing the dedicated token. Preferred for containers/appliances; mutually exclusive with the raw value. | — |
 | `OAM_DOCKER_TLS` / `OAM_DOCKER_PORT` / `OAM_DOCKER_CERT_PATH` | TLS and connection settings for the Docker Engine API on instance hosts. `OAM_DOCKER_CERT_PATH` must contain `ca.pem`, `cert.pem`, `key.pem`. | `false` / `2375` / — |
 
 > **Removed:** OAuth login (`OAM_OAUTH_ENABLED`, `OAM_OAUTH_*_CLIENT_ID` /
@@ -95,6 +98,8 @@ The repository ships two distinct Compose deployments — do not mix them:
 |------|--------------|------------|
 | `docker-compose.yml` (repository root) | PostgreSQL + the OAM API over plain **HTTP**, built from local source | development, and API-only deployments |
 | [`deploy/compose/`](deploy/compose/) | the full management plane — UI + API + PostgreSQL behind a **Caddy TLS edge** | **production** ([guide](docs/deployment-compose.md)) |
+| `deploy/compose/docker-compose.database.yml` plus converged/data-plane files | one shared PostgreSQL database, local Gateway, and OAM/UI/edge in independent projects | converged single-node ([guide](docs/deployment-converged.md)) |
+| `deploy/compose/docker-compose.converged-local-ui.yml` (final overlay) | converged PostgreSQL + Gateway + OAM, with direct HTTP OAM and no remote UI/Caddy | trusted-testbed development with a local React UI ([guide](docs/deployment-converged.md#developer-variant-remote-converged-backend-local-ui-over-http)) |
 
 Running the published image directly — `docker run`, image tags, signature and
 SBOM verification, building your own image, air-gapped installs — is covered in
@@ -231,9 +236,12 @@ manifests is correct as-is.
 On first startup the PostgreSQL container runs `database/init/00-init-complete.sql`,
 which creates all tables (users, instances, tokens, logs, alerts,
 acknowledgments, login attempts, instance snapshots, and system config),
-performance indexes, and seed rows. For existing databases, apply the numbered
-files under `database/migrations/` in order. See
-[docs/oam-db.md](docs/oam-db.md) for the schema reference.
+performance indexes, and seed rows. That file is the schema baseline; later
+changes are migrations compiled into the server, which applies any that are
+pending each time it starts (`OAM_DB_MIGRATE`, default `auto`) and refuses a
+database newer than itself. See
+[docs/database-installation.md](docs/database-installation.md#upgrading-an-existing-database)
+and [docs/oam-db.md](docs/oam-db.md) for the schema reference.
 
 The schema is applied only on first boot of an **empty** data volume. To
 reinitialize, destroy the volume:

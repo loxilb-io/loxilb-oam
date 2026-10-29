@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -209,6 +210,47 @@ func TestGetUsersDBError(t *testing.T) {
 	r.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetLoxiLBInstancesEmptyIsEmptyArray(t *testing.T) {
+	h, mock, done := newTestHandler(t)
+	defer done()
+
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "host", "port", "protocol", "description", "version", "api_endpoint", "cimage", "ctag", "is_active", "created_at",
+		}))
+
+	r := gin.New()
+	r.GET("/oam/loxilbs", h.GetLoxiLBInstances)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/oam/loxilbs", nil))
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, "[]", rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "null")
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+// A failed query is a 500 with a fixed message — neither an empty success nor
+// the driver's error text.
+func TestGetLoxiLBInstancesDBErrorDoesNotLeakCause(t *testing.T) {
+	h, mock, done := newTestHandler(t)
+	defer done()
+
+	mock.ExpectQuery("SELECT (.+) FROM loxilb_instances").
+		WillReturnError(errors.New(`pq: relation "loxilb_instances" does not exist`))
+
+	r := gin.New()
+	r.GET("/oam/loxilbs", h.GetLoxiLBInstances)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/oam/loxilbs", nil))
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.JSONEq(t, `{"error":"Failed to fetch LoxiLB instances"}`, rec.Body.String())
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -57,15 +57,35 @@ All LoxiLB API calls can now be made through the OAM proxy using the following U
 
 - **Every** proxy request requires OAM authentication (a `Bearer` token from
   `POST /oam/login`). Unauthenticated requests get `401`.
-- Authorization is then gated **by HTTP method**:
+- Authorization is then decided **by HTTP method and Gateway path**. The proxy
+  speaks to the instance with OAM's own identity, so OAM decides here what
+  each OAM role may reach:
 
-  | Methods | Required capability | Roles allowed |
-  |---------|--------------------|---------------|
-  | `GET`, `HEAD`, `OPTIONS` | none beyond authentication | `admin`, `operator`, `viewer` |
-  | `POST`, `PUT`, `PATCH`, `DELETE`, … | `gateway_write` | `admin`, `operator` |
+  | Gateway path | Read (`GET`, `HEAD`) | Change (`POST`, `PUT`, `PATCH`, `DELETE`) |
+  |--------------|----------------------|-------------------------------------------|
+  | `/auth/*` | nobody | nobody |
+  | `/config/snapshot`, `/config/export`, `/config/restore`, `/config/import`, `/config/persist` | `admin` | `admin` |
+  | `/audit/status` | every role | — |
+  | other `/audit/*` | `admin`, `operator` | `admin` |
+  | `/logs`, `/log-archives` | `admin`, `operator` | `admin` |
+  | the other `/config/*` families (load balancers, endpoints, firewall, routes, …), `/status`, `/metrics`, `/meta`, `/version`, `/diagnostics`, `/nodegraph`, `/sni`, `/maintenance` | every role | `admin`, `operator` |
+  | anything else | `admin` | `admin` |
 
-  A `viewer` attempting any mutating call receives `403`. See
-  `RequireGatewayCapability` in `internal/middleware/rbac.go`.
+  A path that is not listed is admin-only, so an API a newer instance adds
+  does not become available to other roles on its own. The list is
+  `ClassifyGatewayRequest` in `internal/services/gateway_path.go`; the check
+  is `RequireGatewayAccess` in `internal/middleware/rbac.go`.
+
+  Gateway accounts and the Gateway's management token cannot be managed
+  through the proxy. Configuration snapshots are taken and restored with the
+  instance snapshot routes (`/oam/instances/{id}/snapshots`,
+  `/oam/snapshots/{sid}/restore`), which keep a safety copy and a record of
+  each restore.
+- The path is taken literally. The leading `/v1` is optional and one trailing
+  `/` is ignored; a path containing `.` or `..` segments, empty segments
+  (`//`), an encoded `/` or `\`, `?`, `#` or control characters is refused
+  with `400`. Matching is case-sensitive.
+- A refused request is answered by OAM. Nothing is sent to the instance.
 - The proxy authenticates *to* the LoxiLB instance only at the transport layer
   (TLS); it does not add application credentials to the forwarded request.
 - Access is not scoped per instance: a role that may write can write to **any**
@@ -95,23 +115,62 @@ All proxy requests are logged with the following information:
 
 ### Error Handling
 The proxy returns appropriate HTTP status codes:
-- `400 Bad Request` — invalid instance ID or missing path
+- `400 Bad Request` — invalid instance ID, or a path the proxy does not forward
 - `401 Unauthorized` — missing, expired, or revoked token
-- `403 Forbidden` — the role lacks `gateway_write` for a mutating method
+- `403 Forbidden` — the role may not send this method to this Gateway path
+- `405 Method Not Allowed` — a method the proxy does not forward
 - `404 Not Found` — LoxiLB instance not registered
 - `429 Too Many Requests` — per-IP rate limit exceeded
-- `502 Bad Gateway` — LoxiLB instance unreachable
-- `504 Gateway Timeout` — request timeout (10 seconds)
+- `502 Bad Gateway` — the instance could not be reached, or answered
+  incompletely. The message distinguishes a refused connection from a DNS
+  failure, a TLS rejection, and a reset.
+- `504 Gateway Timeout` — no answer within `OAM_PROXY_TIMEOUT`
+
+`502` and `504` are different claims and must not be read as the same one: a
+`504` says OAM gave up waiting, **not** that the instance is down. Each
+response also carries an additive `detail` field naming the cause.
+
+The full status/message contract, and why classifying these correctly matters
+to an operator, is in **[instance-proxy.md](instance-proxy.md)**.
+
+### Who answered
+A failed proxy response carries `X-Loxi-Error-Origin`, so a client does not
+have to guess which hop refused:
+
+- `gateway` — the instance answered with this status. Its status, body and
+  headers (including `Retry-After`) are relayed unchanged.
+- `oam` — OAM answered: a refusal above, the rate limit (`429` with
+  `Retry-After`), or a failure to reach the instance (`502`, `503`, `504`).
+
+A `401` marked `gateway` means the instance refused OAM's management
+credential, not that the caller's OAM session ended.
+
+A console served from another origin can read `X-Loxi-Error-Origin`,
+`Retry-After`, `X-Request-Id` and `X-Correlation-Id`, and may send the headers
+the proxy forwards (`If-Match`, `If-None-Match`, `X-Request-Id`,
+`X-Correlation-Id` among them).
+
+### Cancellation
+The call to the instance is tied to the caller's request. If the client
+disconnects before the instance answers, OAM stops waiting and abandons the
+call. A change the instance had already started is not undone by this.
 
 ### Supported HTTP Methods
-All methods are forwarded (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`,
-`OPTIONS`), subject to the method-based authorization above.
+`GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE` are forwarded, subject to
+the authorization above. `OPTIONS` is answered by OAM as a CORS preflight and
+never reaches the instance. Any other method gets `405`.
 
 ## Configuration
 
 ### Timeouts
-- Request timeout: 10 seconds
-- Connection timeout: 10 seconds
+- Request timeout: `OAM_PROXY_TIMEOUT`, default 10 seconds. Raise it if a
+  management call on a large configuration legitimately runs longer.
+
+### Connection reuse
+Connections to instances are pooled. The pool is invalidated whenever an
+instance endpoint may have moved — instance update or delete, and firmware
+update/start/stop. `OAM_PROXY_DISABLE_KEEPALIVES=true` restores
+dial-per-request. See [instance-proxy.md](instance-proxy.md).
 
 ### Request Limits
 - No size limits are imposed on request/response bodies by the proxy itself

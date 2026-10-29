@@ -1,0 +1,8 @@
+# Opt-in management overlay. Apply ONLY after owner migrations and runtime-role bootstrap.
+# Keep the independent state project's .env/DB_USER/DB_PASSWORD unchanged.
+services:
+  oam-loxilb:
+    environment:
+      DB_USER: ${OAM_APP_DB_USER:?set the dedicated runtime role}
+      DB_PASSWORD: ${OAM_APP_DB_PASSWORD:?set its private password}
+      OAM_DB_MIGRATE: check

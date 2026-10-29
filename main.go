@@ -17,9 +17,12 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"github.com/loxilb-io/loxilb-oam/database"
 	swaggerdocs "github.com/loxilb-io/loxilb-oam/docs"
+	"github.com/loxilb-io/loxilb-oam/internal/appliance"
 	"github.com/loxilb-io/loxilb-oam/internal/config"
 	"github.com/loxilb-io/loxilb-oam/internal/handlers"
+	"github.com/loxilb-io/loxilb-oam/internal/migrate"
 	"github.com/loxilb-io/loxilb-oam/internal/routes"
 	"github.com/loxilb-io/loxilb-oam/internal/services"
 	"github.com/loxilb-io/loxilb-oam/internal/utils"
@@ -68,6 +71,14 @@ func requireSecrets() {
 	if config.InstanceTLSInsecure() {
 		utils.LogWarning("SECURITY: OAM_INSTANCE_TLS_INSECURE=true — TLS verification is DISABLED for connections to managed LoxiLB instances (proxy + snapshots). Prefer OAM_INSTANCE_CA_BUNDLE in production.")
 	}
+	// Report a rejected proxy timeout rather than running on the fallback
+	// without saying so.
+	if err := config.ProxyRequestTimeoutError(); err != nil {
+		utils.LogWarning(fmt.Sprintf("CONFIG: %v — falling back to %s.", err, config.DefaultProxyRequestTimeout))
+	}
+	if config.ProxyKeepAlivesDisabled() {
+		utils.LogWarning("PERFORMANCE: OAM_PROXY_DISABLE_KEEPALIVES=true — every proxied instance request pays a fresh TCP/TLS handshake. Unset it unless a connection-reuse problem requires it.")
+	}
 	// A reserved list that failed to parse is worse than no list: the operator
 	// believes the management edge is protected from a colliding VIP when it is
 	// not. Refuse to start rather than run with a silently inert guard.
@@ -107,6 +118,7 @@ func main() {
 	sslKeyFile := flag.String("ssl-key-file", "./ssl/certs/server.key", "Path to SSL private key")
 
 	showVersion := flag.Bool("version", false, "Print the version and exit")
+	migrateOnly := flag.Bool("migrate", false, "Apply pending database migrations and exit")
 
 	flag.Parse()
 
@@ -124,8 +136,12 @@ func main() {
 
 	utils.LogInfo("Starting loxilb-oam " + version)
 
-	// Abort startup if any mandatory secret is unset.
-	requireSecrets()
+	// Abort startup if any mandatory secret is unset. -migrate only touches the
+	// schema, so whatever runs it (an installer, an update job) needs the
+	// database credential and nothing else.
+	if !*migrateOnly {
+		requireSecrets()
+	}
 
 	// The database password has no built-in default: require it via the
 	// -db-password flag or the DB_PASSWORD env var (OAM_DB_PASSWORD alias).
@@ -149,7 +165,8 @@ func main() {
 	}
 	if err != nil {
 		utils.LogError(fmt.Sprintf("Database connection failed (host=%s port=%s db=%s): %v", *dbHost, *dbPort, *dbName, err))
-		return
+		// Serving and migration startup both failed; supervisors must see failure.
+		os.Exit(1)
 	}
 	defer db.Close()
 
@@ -158,18 +175,40 @@ func main() {
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
+	// Bring the schema to the version this binary was built for before
+	// anything queries it. Starting against a schema that is behind, ahead or
+	// altered is refused here rather than discovered one failing query at a
+	// time.
+	if err := migrateSchema(db, *migrateOnly); err != nil {
+		utils.LogError("DATABASE: " + err.Error())
+		db.Close()
+		os.Exit(1)
+	}
+	if *migrateOnly {
+		return
+	}
+
 	// Initialize the services
 	userService := services.NewUserService(db)
 	loxiLBService := services.NewLoxiLBService(db)
 	logService := services.NewLogService(db)
 	alertService := services.NewAlertService(db)
-	proxyService := services.NewProxyService(loxiLBService)
-	snapshotService, err := services.NewSnapshotService(db, loxiLBService)
+	gatewayIdentity, err := services.GatewayServiceIdentityFromEnv()
+	if err != nil {
+		utils.LogError(fmt.Sprintf("SECURITY: invalid Gateway service identity configuration: %s", err))
+		db.Close()
+		os.Exit(1)
+	}
+	// The mode is safe to report; the token itself is never logged.
+	utils.LogInfo(fmt.Sprintf("Gateway service authentication mode: %s", gatewayIdentity.Mode()))
+	proxyService := services.NewProxyServiceWithGatewayIdentity(loxiLBService, gatewayIdentity)
+	snapshotService, err := services.NewSnapshotServiceWithGatewayIdentity(db, loxiLBService, gatewayIdentity)
 	if err != nil {
 		// A set-but-invalid SNAPSHOT_ENC_KEY must fail boot loudly rather
 		// than silently storing secret-bearing snapshots unencrypted.
 		utils.LogError(fmt.Sprintf("Failed to initialize snapshot service: %s", err))
-		return
+		db.Close()
+		os.Exit(1)
 	}
 	// pollingService := polling.NewPollingService(alertService, loxiLBService)
 
@@ -180,11 +219,26 @@ func main() {
 		expirationMinutes, err := strconv.Atoi(*expirationMinutesFlag)
 		if err != nil || expirationMinutes <= 0 {
 			utils.LogError(fmt.Sprintf("Invalid token expiration time: %s", *expirationMinutesFlag))
-			return
+			db.Close()
+			os.Exit(1)
 		}
 		config.TokenExpirationMinutes = expirationMinutes
 	}
 	handler := handlers.NewHandler(userService, loxiLBService, logService, alertService, proxyService, snapshotService, config.TokenExpirationMinutes)
+
+	// The Appliance host adapter, if this deployment has one. Unset is normal
+	// and means "not an Appliance"; half-set or unreadable is refused, so an
+	// Appliance cannot come up reporting that it has no host adapter.
+	applianceHost, err := appliance.HostClientFromEnv()
+	if err != nil {
+		utils.LogError("CONFIG: invalid Appliance host adapter configuration: " + err.Error())
+		os.Exit(1)
+	}
+	if applianceHost.Configured() {
+		utils.LogInfo("Appliance host adapter configured (" + appliance.HostSocketEnv + ").")
+	}
+	applianceService := appliance.NewService(applianceHost, db, version)
+	applianceHandler := handlers.NewApplianceHandler(applianceService, userService)
 
 	// First-time setup: create the bootstrap admin if needed. A fresh
 	// installation without an admin account is unusable (every login fails),
@@ -206,6 +260,13 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+
+	// Follow submitted Appliance operations in the host adapter's journal.
+	// This is also what picks up, after a restart, an operation that was
+	// recorded as submitted but never delivered.
+	if applianceHost.Configured() {
+		go applianceService.RunReconciler(ctx, appliance.ReconcileInterval)
+	}
 
 	// Periodically report database reachability.
 	//
@@ -252,7 +313,8 @@ func main() {
 		utils.LogInfo("OAM_TRUSTED_PROXIES is not set — X-Forwarded-For is ignored and the peer address is used as the client IP. If OAM runs behind a reverse proxy, set it to that proxy's address so rate limiting and login lockout see real client IPs.")
 	}
 
-	routes.SetupRoutes(router, db, handler, userService, alertService)
+	authLimiter := routes.SetupRoutes(router, db, handler, userService, alertService)
+	routes.SetupApplianceRoutes(router, userService, applianceHandler, authLimiter)
 
 	// Create HTTP/HTTPS server
 	port := fmt.Sprintf(":%s", *serverPort)
@@ -262,28 +324,74 @@ func main() {
 		Handler: router,
 	}
 	// Start HTTP or HTTPS based on the flag
+	serverErrors := make(chan error, 1)
 	go func() {
 		if *enableHTTPS {
 			utils.LogInfo(fmt.Sprintf("Starting HTTPS server on :%s", port))
 			if err := httpServer.ListenAndServeTLS(*sslCertFile, *sslKeyFile); err != nil && err != http.ErrServerClosed {
 				utils.LogError(fmt.Sprintf("[%s] Could not start HTTPS server: %s", time.Now().Format(time.RFC3339), err))
+				serverErrors <- err
 			}
 		} else {
 			utils.LogInfo(fmt.Sprintf("Starting HTTP server on :%s", *serverPort))
 			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				utils.LogError(fmt.Sprintf("[%s] Could not start HTTP server: %s", time.Now().Format(time.RFC3339), err))
+				serverErrors <- err
 			}
 		}
 	}()
 
 	// Handle graceful shutdown
-	<-signalChan
+	select {
+	case <-signalChan:
+	case <-serverErrors:
+		cancel()
+		httpServer.Close()
+		db.Close()
+		os.Exit(1)
+	}
 	utils.LogInfo("Shutdown signal received, shutting down server...")
 
 	cancel()
 	httpServer.Shutdown(ctx)
 	db.Close()
 	utils.LogInfo("Server gracefully stopped")
+}
+
+// migrateSchema applies or verifies the database schema according to
+// OAM_DB_MIGRATE. With force (the -migrate flag) it applies regardless of the
+// configured mode: the flag is the explicit request that "check" mode waits for.
+func migrateSchema(db *sql.DB, force bool) error {
+	mode, err := migrate.ModeFromEnv()
+	if err != nil {
+		return err
+	}
+	if force {
+		mode = migrate.ModeAuto
+	}
+	migrations, err := migrate.Load(database.BaselineVersion, database.BaselineSQL, database.Migrations, database.MigrationsDir)
+	if err != nil {
+		return fmt.Errorf("embedded migrations are invalid: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), config.DbMigrateTimeout)
+	defer cancel()
+	status, err := migrate.Run(ctx, db, migrations, mode)
+	if err != nil {
+		return fmt.Errorf("schema migration failed: %w", err)
+	}
+
+	switch {
+	case mode == migrate.ModeOff:
+		utils.LogWarning(migrate.ModeEnv + "=off — the database schema was neither migrated nor checked.")
+	case len(status.Applied) > 0:
+		utils.LogInfo(fmt.Sprintf("Database schema migrated to version %d (applied %v).", status.Version, status.Applied))
+	case status.Adopted:
+		utils.LogInfo(fmt.Sprintf("Existing database schema recorded as version %d.", status.Version))
+	default:
+		utils.LogInfo(fmt.Sprintf("Database schema is at version %d (up to date).", status.Version))
+	}
+	return nil
 }
 
 // setupInitialAdminIfNeeded creates the bootstrap admin account on a fresh

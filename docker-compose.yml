@@ -81,6 +81,7 @@ services:
       DB_HOST: ${DB_HOST:-postgres}
       DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${DB_NAME:-loxioam}
+      OAM_DB_MIGRATE: ${OAM_DB_MIGRATE:-auto}
       SERVER_PORT: 8080
       TOKEN_EXPIRATION: ${TOKEN_EXPIRATION:-480}
       # Snapshot at-rest encryption: base64-encoded 32-byte AES-256 key
@@ -89,6 +90,12 @@ services:
       SNAPSHOT_ENC_KEY: ${SNAPSHOT_ENC_KEY:-}
       # CORS allowlist (comma-separated). Unset => wildcard (development only).
       OAM_ALLOWED_ORIGINS: ${OAM_ALLOWED_ORIGINS:-}
+      # OAM user JWTs never cross into Gateway. Keep disabled only while
+      # Gateway management auth is disabled; service-token requires the
+      # dedicated secret below and fails closed when it is absent.
+      OAM_GATEWAY_AUTH_MODE: ${OAM_GATEWAY_AUTH_MODE:-disabled}
+      OAM_GATEWAY_SERVICE_TOKEN: ${OAM_GATEWAY_SERVICE_TOKEN:-}
+      OAM_GATEWAY_SERVICE_TOKEN_FILE: ${OAM_GATEWAY_SERVICE_TOKEN_FILE:-}
     ports:
       - "8080:8080"
     depends_on:

@@ -5,13 +5,16 @@ import "time"
 const (
 	MinPasswordLength = 9
 
-	DefaultLogLimit     = 10 // Default limit for log pagination
-	DefaultLogOffset    = 0  // Default offset for log pagination
-	LogFilePath         = "/var/log/loxioam.log"
-	MaxRetries          = 1
-	RetryDelay          = 2 * time.Second
-	DbRetryDelay        = 5 * time.Second
-	DbMaxRetries        = 1
+	DefaultLogLimit  = 10 // Default limit for log pagination
+	DefaultLogOffset = 0  // Default offset for log pagination
+	LogFilePath      = "/var/log/loxioam.log"
+	MaxRetries       = 1
+	RetryDelay       = 2 * time.Second
+	DbRetryDelay     = 5 * time.Second
+	DbMaxRetries     = 1
+	// DbMigrateTimeout bounds schema migration at startup, including the wait
+	// for another instance that is migrating the same database.
+	DbMigrateTimeout    = 5 * time.Minute
 	DbRetryBackoff      = 2 * time.Second
 	LoxilbContainerName = "loxilb"
 	LoxilbImage         = "ghcr.io/loxilb-io/loxilb"

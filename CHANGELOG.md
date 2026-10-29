@@ -19,7 +19,115 @@ image's `org.opencontainers.image.version` label.
 
 ## [Unreleased]
 
+### Added
+- Failures OAM itself produces on the instance proxy and the snapshot routes
+  (refusals, the rate limit, an instance that could not be reached) carry
+  `X-Loxi-Error-Origin: oam`. A client no longer has to read a missing marker
+  as "OAM".
+- A snapshot restore can be limited to chosen domains.
+  `POST /oam/snapshots/{sid}/restore` takes `components`, a list of snapshot
+  domain names (for example `["auditsink"]`); the gateway replaces those
+  domains and leaves the rest alone. Without it the whole document is restored,
+  as before. An empty list, a malformed or repeated name, or a domain the
+  document does not cover is refused with `400` before the gateway is called.
+  The selection is returned in the restore outcome and kept with the snapshot
+  as `last_restore_components` (schema version 4, applied at startup).
+- Appliance operations can be authorized, submitted, followed and cancelled
+  (**alpha**, `appliance-ops/v1alpha1`; the only host adapter is still the
+  fixture, which executes nothing). `POST …/operations/{id}/authorize`
+  verifies the caller's password — under the same lockout and rate limit as
+  login — and returns a one-use challenge bound to the operation, its plan,
+  the user and the session. `POST …/operations/{id}/submit` consumes it and
+  hands the operation to the host adapter; a backup needs no challenge.
+  `POST …/operations/{id}/cancel` and `…/reconcile` complete the set. Only one
+  operation can be active per installation. OAM follows the adapter's journal
+  every 2 seconds, delivers a submission the adapter missed (including across
+  an OAM restart) exactly once, and marks an operation the journal lost as
+  `RECOVERY_REQUIRED` instead of running it again. Every step is recorded in
+  `appliance_audit`. Adds schema migration `0003` (`appliance_challenges`,
+  `appliance_audit`, one-active-operation index). See
+  [docs/appliance-operations.md](docs/appliance-operations.md).
+- Appliance operations can be planned and read (**alpha**,
+  `appliance-ops/v1alpha1`). `POST /oam/v1/appliance/operations` validates a
+  backup, restore, update, rollback or reset request with the host adapter and
+  records the plan — what it would touch, the artifacts involved, and the
+  point past which it could not be cancelled — without executing anything.
+  The call is idempotent on a required `Idempotency-Key` header. Plans expire
+  after 15 minutes. `GET /oam/v1/appliance/operations` and
+  `…/operations/{id}` return them to every role, with the plan withheld from
+  roles that could not run that operation type. Adds schema migration `0002`
+  (`appliance_operations`), the first migration after the baseline.
+- Appliance status and capability discovery (**alpha**, contract
+  `appliance-ops/v1alpha1`, subject to change). `GET /oam/v1/appliance/capabilities`
+  reports, for each whole-Appliance action (backup, restore, update, rollback,
+  reset, diagnostics), three independent facts: whether the host adapter
+  supports it, whether it can run now and if not why, and whether the caller's
+  role may request it. `GET /oam/v1/appliance/status` reports product identity,
+  per-component liveness and readiness, and the database schema version; a
+  component that cannot be observed is `unknown`, never ready. No action can
+  be executed yet. A deployment without a host adapter — every deployment
+  today — answers with `HOST_NOT_CONFIGURED`. See
+  [docs/appliance-operations.md](docs/appliance-operations.md).
+- Seven capabilities for the Appliance lifecycle: `appliance_read` (every
+  role) and `appliance_backup`, `appliance_restore`, `appliance_update`,
+  `appliance_rollback`, `appliance_reset`, `appliance_diagnostics` (admin
+  only). None is implied by `config_write` or any existing capability.
+- `OAM_APPLIANCE_HOST_SOCKET` and `OAM_APPLIANCE_HOST_KEY_FILE` connect OAM to
+  an Appliance host adapter over a Unix socket with HMAC-signed requests.
+  `cmd/appliance-host-fixture` is a stand-in adapter for development; it
+  executes nothing and labels everything it returns as a fixture.
+- Versioned database migrations. The binary now carries the schema — the
+  baseline `database/init/00-init-complete.sql` as version 1, plus numbered
+  files under `database/migrations/postgres/` — and brings the database to it
+  at startup, recording progress in a new `schema_migrations` table. An empty
+  database is initialized by the server itself; a database created from the
+  baseline by an earlier release is adopted as version 1 without being
+  modified. The server refuses to start against a schema newer than the
+  binary (a downgrade) or one whose applied migrations were altered.
+  `OAM_DB_MIGRATE` selects `auto` (default), `check` (apply nothing, refuse to
+  start if a migration is pending) or `off`; `loxilb-oam -migrate` applies
+  pending migrations and exits. No migration beyond the baseline ships in this
+  release — the only change to an existing database is the new table.
+- Converged single-node deployment now uses one independent `loxilb-state`
+  PostgreSQL service and one `loxioam` database for OAM plus the Gateway's
+  isolated `aigw` and dormant `aigw_mgmt` schemas. The bundle includes the
+  idempotent Gateway bootstrap, file-backed Gateway database credentials,
+  source-drift validation, existing-volume adoption, and database → data →
+  management startup/verification automation.
+- The approved converged integration image defaults to
+  `ghcr.io/loxilb-io/loxilb-inference-gateway:latest-u24`; validation records
+  the resolved digest before promotion to an immutable release identity.
+- A dedicated `docker-compose.converged-local-ui.yml` developer overlay keeps
+  converged PostgreSQL, Gateway, and OAM on a remote testbed while disabling
+  the bundled UI and Caddy. It exposes OAM directly over HTTP with an explicit
+  local-development CORS allowlist and reserved-port protection.
+- `OAM_PROXY_TIMEOUT` bounds a single proxied request to a managed instance
+  (default `10s`). Raise it if an instance carries a large enough configuration
+  for a management call to run long, so a healthy instance is not reported as
+  timing out. An unparseable or non-positive value falls back to the default and
+  is reported at startup, rather than silently disabling the bound.
+- `OAM_PROXY_DISABLE_KEEPALIVES=true` restores a fresh connection per proxied
+  request. An escape hatch for a deployment that hits a connection-reuse problem
+  the invalidation points do not cover; it logs a startup warning because it
+  costs a handshake on every request.
+
 ### Changed — BREAKING
+- The instance proxy (`/oam/loxilbs/{id}/netlox/*`) now authorizes by Gateway
+  path as well as by method. Day-to-day configuration is unchanged: every role
+  reads it, `admin` and `operator` change it. What changes:
+  - `/auth/*` is not available through the proxy to any role.
+  - `/config/snapshot`, `/config/export`, `/config/restore`, `/config/import`
+    and `/config/persist` are `admin` only, reads included, matching the
+    instance snapshot routes.
+  - `/audit/*` changes are `admin` only; reading the audit policy and sinks
+    needs `admin` or `operator`. `/audit/status` stays readable by every role.
+  - `/logs` and `/log-archives` need `admin` or `operator`.
+  - A Gateway path OAM does not list is `admin` only.
+  - A path with `.` or `..` segments, empty segments, an encoded `/` or `\`,
+    `?`, `#` or control characters is refused with `400`; methods other than
+    `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE` get `405`.
+
+  The full table is in `docs/proxy-functionality.md`.
 - **The datastore is now PostgreSQL 18; MySQL is no longer supported.** There is
   no in-place upgrade: a MySQL deployment cannot be pointed at this release.
   Stand the stack up against an empty PostgreSQL database, then move any data
@@ -46,8 +154,64 @@ image's `org.opencontainers.image.version` label.
   - The MySQL-era migrations are retained unconverted under
     `database/migrations/legacy-mysql/` for historical reference only.
     `database/init/00-init-complete.sql` is the entire PostgreSQL schema.
+- **A proxied request that times out now answers `504`, where it previously
+  answered `502`.** A client that keys on `502` to mean "any proxy failure" must
+  also handle `504`. The two are different claims: `502` says the instance could
+  not be reached, `504` says it did not answer within `OAM_PROXY_TIMEOUT` — which
+  does not establish that it is down. Error responses additionally carry a
+  `detail` field naming the cause; `error` keeps its existing shape, and its
+  wording for the `502` case is unchanged.
+
+### Changed
+- Connections to managed instances are reused instead of dialled afresh on every
+  proxied request. Reuse was previously disabled outright to avoid handing a
+  request a connection to an endpoint that had since been replaced — a real
+  hazard, but one that arises only when an endpoint changes, while the cost was
+  paid on every request forever. A small proxied response measured roughly twice
+  the latency of the equivalent direct call. The pool is now invalidated where
+  the hazard actually occurs: instance update, instance delete, and firmware
+  update/start/stop, each of which can move the endpoint or recreate the
+  container behind it. Snapshot take/restore deliberately keeps reuse off, since
+  a handshake is not measurable against a 60s take or a 5-minute restore.
 
 ### Fixed
+- A console served from another origin could not read `Retry-After`,
+  `X-Request-Id`, `X-Correlation-Id`, `X-Snapshot-Checksum`,
+  `X-Content-Checksum` or `Content-Disposition`, because CORS exposed only the
+  error-origin marker; and could not send `If-Match`, `If-None-Match`,
+  `X-Request-Id` or `X-Correlation-Id`, which the instance proxy forwards.
+  The exposed list now includes the former and the allowed list every header
+  the proxy forwards. Same-origin deployments were not affected.
+- The instance proxy did not pass the caller's request context to the
+  instance, so a client that disconnected left the call running until the
+  proxy timeout. The call now stops with the caller. Snapshot take and restore
+  are deliberately not tied to the caller.
+- A gateway's `Retry-After` was dropped on snapshot take and restore. It is
+  relayed on a refused take, and on a restore as the response's `Retry-After`
+  header and `gateway_retry_after`.
+- Snapshot restore answered `500` when OAM's gateway service identity was
+  unavailable, where the instance proxy answers `503` for the same condition;
+  it now answers `503`. An invalid restore `mode` was reported as "invalid
+  snapshot document"; it is now reported as an invalid restore request.
+- Two logins by the same user within the same second no longer fail. The JWT
+  carried no unique identifier, so both signed to the identical string and the
+  second was rejected by the token store's unique key (`500 Could not save
+  token`). Every token now carries a random `jti` and an `iat`; concurrent
+  sessions are distinct and are revoked independently. Tokens issued before
+  this change stay valid and revocable until they expire.
+- `GET /oam/loxilbs` returns `[]`, not `null`, when no instance is registered.
+  A failed query is still an error, never an empty success.
+- `GET /oam/loxilbs` no longer returns the database driver's error text in its
+  `500` body; the cause is logged and the response carries a fixed message.
+- A Gateway failure relayed by the proxy, or by taking a snapshot, now
+  carries `X-Loxi-Error-Origin: gateway`, exposed to cross-origin consoles through
+  `Access-Control-Expose-Headers`. Without it the console could not tell a
+  Gateway refusing OAM's management credential (401) from the operator's own
+  session expiring, and signed the operator out a second after every login.
+  OAM sets the marker itself; a Gateway's own value is never relayed.
+- The proxy no longer relays the Gateway's `Access-Control-*` response
+  headers. They overwrote OAM's CORS policy, so every pass-through answered
+  `Access-Control-Allow-Origin: *` regardless of `OAM_ALLOWED_ORIGINS`.
 - The log-retrieval query could never succeed: it selected ten columns —
   `message` twice, plus a `create_at` column that does not exist — into a
   nine-column scan. It now selects the nine columns the reader actually expects.
@@ -64,8 +228,22 @@ image's `org.opencontainers.image.version` label.
 - Database credentials are URL-escaped when building the connection string. A
   password containing `@`, `/`, `:` or `?` previously produced an unparseable
   DSN that surfaced as a confusing authentication failure.
+- Every failure of a proxied instance request was reported to the operator as
+  `502 "LoxiLB instance unreachable"`, including a timeout — a positive assertion
+  that the instance is down, which a timeout does not establish. The proxy
+  flattened every transport failure into one string and discarded the cause, and
+  the handler then classified on that string; since no error it could return
+  contained the text `timeout`, the `504` branch was unreachable code. Failures
+  are now classified from the error itself, so a timeout, a refused connection, a
+  DNS failure, a TLS rejection and a reset are each reported distinctly. See
+  [docs/instance-proxy.md](docs/instance-proxy.md) for the full status contract.
 
 ### Security
+- The instance proxy decided on the HTTP method alone, while it reaches the
+  Gateway with OAM's own identity. It now decides on the Gateway path too, on
+  one canonical form of the path that is also the form forwarded, and resolves
+  the caller from the database for reads as well as writes. See the breaking
+  change above for what each role may reach.
 - The break-glass admin reset now actually revokes the account's tokens. It
   deleted from a `user_tokens` table that does not exist, so a stolen bearer
   token kept working for its full TTL while the CLI reported that all sessions

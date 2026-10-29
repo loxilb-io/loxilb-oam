@@ -25,8 +25,12 @@ func NewLoxiLBService(db *sql.DB) *LoxiLBService {
 
 // FetchLoxiLBInstances returns all LoxiLB instances from the database.
 func (s *LoxiLBService) FetchLoxiLBInstances() ([]models.LoxiLBInstance, error) {
-	var instances []models.LoxiLBInstance
+	// Non-nil so that "no instances" reaches the client as [] rather than null.
+	instances := []models.LoxiLBInstance{}
 	err := utils.RetryOperation(func() error {
+		// Start over on every attempt: rows scanned before a mid-read failure
+		// must not be returned a second time by the retry.
+		instances = instances[:0]
 		query := config.SelectLoxiLBInstancesQuery
 		rows, err := s.DB.Query(query)
 		if err != nil {
@@ -56,7 +60,10 @@ func (s *LoxiLBService) FetchLoxiLBInstances() ([]models.LoxiLBInstance, error) 
 
 		return nil
 	}, config.MaxRetries, config.RetryDelay)
-	return instances, err
+	if err != nil {
+		return nil, err
+	}
+	return instances, nil
 }
 
 // FetchLoxiLBInstanceByID returns the LoxiLB instance with the given ID.

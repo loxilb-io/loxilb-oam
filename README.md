@@ -95,6 +95,7 @@ startup if a required one is unset (there are no built-in fallback values).
 |----------|---------|---------|
 | `OAM_TOKEN_TTL_MINUTES` | `480` | JWT / API-token lifetime in minutes |
 | `OAM_INSTANCE_CA_BUNDLE` / `OAM_INSTANCE_TLS_INSECURE` | unset / `false` | Trust a private CA for managed-instance TLS, or (dev-only) skip verification |
+| `OAM_GATEWAY_AUTH_MODE` / `OAM_GATEWAY_SERVICE_TOKEN(_FILE)` | `disabled` / unset | OAM-to-Gateway management identity. Use `service-token` plus exactly one dedicated raw or file token source; the file form is preferred for containers. Missing/ambiguous credentials abort startup. Browser JWTs and `X-Api-Key` are never forwarded. |
 | `OAM_DOCKER_TLS` / `OAM_DOCKER_PORT` / `OAM_DOCKER_CERT_PATH` | `false` / `2375` / unset | TLS + connection settings for the Docker Engine API on instance hosts |
 
 ### CLI flags
@@ -117,6 +118,11 @@ Generate strong secrets with, e.g., `openssl rand -base64 48` (keys) and
   [`deploy/compose/`](deploy/compose/) runs the web console, this API, and PostgreSQL
   behind a Caddy TLS edge. Step-by-step operator guide:
   [docs/deployment-compose.md](docs/deployment-compose.md).
+- **Converged single node** — OAM and the inference Gateway share one PostgreSQL
+  database through isolated schemas and independent Compose lifecycles. See
+  [docs/deployment-converged.md](docs/deployment-converged.md). Its dedicated
+  local-UI developer overlay runs only the remote backend and exposes OAM on
+  plain HTTP for a React dev server on the developer workstation.
 - **API only** — `docker compose up -d` from the repository root runs PostgreSQL plus
   the service over plain HTTP. See [DEPLOYMENT.md](DEPLOYMENT.md).
 - **From source, against your own database** — see

@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/loxilb-io/loxilb-oam/internal/services"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -84,6 +86,7 @@ func RateLimit(rl *RateLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !rl.Allow(c.ClientIP()) {
 			c.Header("Retry-After", "1")
+			services.MarkOAMOrigin(c)
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": "Too many requests. Please slow down.",
 			})
