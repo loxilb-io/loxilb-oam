@@ -163,6 +163,10 @@ image's `org.opencontainers.image.version` label.
   wording for the `502` case is unchanged.
 
 ### Changed
+- Release images are signed with Cosign v3, which stores the signature as a
+  Sigstore bundle instead of the legacy `.sig` tag. Verify with Cosign v3 or
+  newer; Cosign v2 needs `--new-bundle-format`, otherwise it reports
+  `no signatures found`. See `docs/container-image.md`.
 - Connections to managed instances are reused instead of dialled afresh on every
   proxied request. Reuse was previously disabled outright to avoid handing a
   request a connection to an endpoint that had since been replaced — a real
