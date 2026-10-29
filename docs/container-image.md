@@ -101,6 +101,14 @@ echo "$GITHUB_TOKEN" | docker login ghcr.io -u <your-github-user> --password-std
 Every published image is Cosign-signed (keyless/OIDC) and carries SLSA
 build-provenance and SPDX SBOM attestations. Verify before deploying:
 
+> [!IMPORTANT]
+> Use **Cosign v3 or newer**. Releases are signed with Cosign v3, which stores
+> the signature as a Sigstore bundle attached to the image rather than as the
+> legacy `sha256-<digest>.sig` tag. Cosign v2's default `cosign verify` does not
+> look for bundles and reports `no signatures found` on a correctly signed image.
+> If you are pinned to Cosign v2, add `--new-bundle-format` to the command below.
+> Cosign v3 also verifies images signed before the switch.
+
 ```bash
 # 1. Signature — proves the image was built by this repo's release workflow.
 cosign verify ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7 \
