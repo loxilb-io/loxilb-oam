@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"io"
 	"log"
 	"log/syslog"
 	"os"
@@ -45,6 +46,21 @@ func LogToSyslog(priority syslog.Priority, message string) {
 	defer logger.Close()
 
 	logger.Write([]byte(funcName + ": " + message))
+}
+
+// LogStartupError logs like LogError and also writes to stderr, which is what
+// `docker logs` shows: when the log file is writable, LogError never reaches it.
+// Use it for what an operator must see at startup, not for routine errors.
+func LogStartupError(message string) {
+	pc, _, _, ok := runtime.Caller(1)
+	funcName := "unknown"
+	if ok {
+		funcName = runtime.FuncForPC(pc).Name()
+	}
+	errorLogger.Println(funcName + ": " + message)
+	if errorLogger.Writer() != io.Writer(os.Stderr) {
+		log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime).Println(funcName + ": " + message)
+	}
 }
 
 func LogError(message string) {

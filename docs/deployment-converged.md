@@ -243,7 +243,8 @@ server certificate. On a converged node the output directory mounts straight
 into the gateway — nothing is copied between hosts:
 
 ```bash
-scripts/generate-instance-certs.sh gw.example.internal   # = GW_HOST
+# The argument is GW_HOST.
+scripts/generate-instance-certs.sh gw.example.internal
 # → certs/instance-ca.pem                       (what OAM trusts)
 # → certs/instance-ca/gw.example.internal/server.{crt,key}  (mounted at /opt/loxilb/cert)
 ```
@@ -253,18 +254,23 @@ Minimum:
 
 ```bash
 GW_HOST=gw.example.internal
-EDGE_BIND_IP=192.168.0.8          # the management address
+# The management address.
+EDGE_BIND_IP=192.168.0.8
 EDGE_HTTPS_PORT=8443
 OAM_RESERVED_ENDPOINTS=192.168.0.8:8443
-IGW_TAG=v0.9.9.1-u24              # approved release image; record its digest
-CONVERGED_PG_HOST_PORT=5432       # published on 127.0.0.1 only
+# Approved release image; record its digest.
+IGW_TAG=v0.9.9.1-u24
+# Published on 127.0.0.1 only.
+CONVERGED_PG_HOST_PORT=5432
 CONVERGED_DB_NETWORK=loxilb-converged-db
 CONVERGED_PG_VOLUME=loxilb-state-postgres-data
 AIGW_DB_PASSWORD_FILE=./secrets/aigw_db_password
 AIGW_MGMT_DB_PASSWORD_FILE=./secrets/aigw_mgmt_db_password
 GATEWAY_SERVICE_TOKEN_FILE=./secrets/gateway_service_token
-SITE_ADDRESS=https://gw.example.internal:8443   # MUST carry the port
-EDGE_TLS=tls /certs/edge/cert.pem /certs/edge/key.pem   # see "ACME renewal" below
+# MUST carry the port.
+SITE_ADDRESS=https://gw.example.internal:8443
+# See "ACME renewal" below.
+EDGE_TLS=tls /certs/edge/cert.pem /certs/edge/key.pem
 OAM_INSTANCE_CA_BUNDLE=/etc/loxilb-oam/certs/instance-ca.pem
 OAM_INSTANCE_TLS_INSECURE=false
 OAM_GATEWAY_AUTH_MODE=service-token
@@ -388,11 +394,14 @@ air-gapped or on-prem node it is the normal case. Three things must line up, and
 missing any one of them presents as a bare TLS failure:
 
 ```bash
-scripts/generate-edge-certs.sh 203.0.113.10       # 1. cert with an IP: SAN
+# 1. cert with an IP: SAN
+scripts/generate-edge-certs.sh 203.0.113.10
 # .env:
 SITE_ADDRESS=https://203.0.113.10:8443
-EDGE_TLS=tls /certs/edge/cert.pem /certs/edge/key.pem   # 2. not ACME
-EDGE_SNI_FALLBACK=default_sni 203.0.113.10              # 3. no SNI for an IP
+# 2. not ACME
+EDGE_TLS=tls /certs/edge/cert.pem /certs/edge/key.pem
+# 3. no SNI for an IP
+EDGE_SNI_FALLBACK=default_sni 203.0.113.10
 ```
 
 1. **`IP:` SAN, never `DNS:`.** A dotted quad in a `DNS:` entry matches nothing
@@ -460,7 +469,8 @@ user is locked out. Always verify from off-host.
 before it reaches the gateway:
 
 ```bash
-OAM_RESERVED_ENDPOINTS=192.168.0.8:8443        # ip:port[/proto], comma-separated
+# ip:port[/proto], comma-separated
+OAM_RESERVED_ENDPOINTS=192.168.0.8:8443
 ```
 
 Set it to whatever the edge binds. Details:
@@ -550,7 +560,8 @@ an unconfigured gateway attaches to every interface it discovers. The dataplane
 compose file therefore ships:
 
 ```yaml
-command: ["--blacklist=^docker0$$|^br-|^veth"]   # $$ escapes compose interpolation
+# $$ escapes compose interpolation
+command: ["--blacklist=^docker0$$|^br-|^veth"]
 ```
 
 Measured on a live converged node with both compose bridges and four veths up:
@@ -581,12 +592,14 @@ on afterwards costs a data-plane restart. The second flag prevents metrics and
 tenant labels from bypassing the manual-token boundary. Confirm with:
 
 ```bash
+# Expect {"prometheus":true}
 curl --config <(printf 'header = "Authorization: Bearer %s"\n' \
   "$(cat secrets/gateway_service_token)") \
-  http://127.0.0.1:11111/netlox/v1/config/metrics   # {"prometheus":true}
+  http://127.0.0.1:11111/netlox/v1/config/metrics
+# Expect about 95 series
 curl --config <(printf 'header = "Authorization: Bearer %s"\n' \
   "$(cat secrets/gateway_service_token)") \
-  http://127.0.0.1:11111/netlox/v1/metrics | head   # ~95 series
+  http://127.0.0.1:11111/netlox/v1/metrics | head
 ```
 
 `POST /netlox/v1/config/metrics` toggles collection at runtime, but that state
@@ -611,9 +624,12 @@ S="-f docker-compose.database.yml"
 D="-f docker-compose.dataplane.yml"
 M="-f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.converged.yml"
 
-docker compose $M up -d --no-deps oam-loxilb   # upgrade OAM only — traffic untouched
-docker compose $M up -d --no-deps caddy        # upgrade the edge only
-docker compose $M down                         # SAFE: gateway and DB are separate projects
+# upgrade OAM only — traffic untouched
+docker compose $M up -d --no-deps oam-loxilb
+# upgrade the edge only
+docker compose $M up -d --no-deps caddy
+# SAFE: gateway and DB are separate projects
+docker compose $M down
 
 # gateway upgrade — a real traffic event, schedule it
 curl --config <(printf 'header = "Authorization: Bearer %s"\n' \

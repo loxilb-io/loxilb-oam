@@ -78,20 +78,29 @@ clean:
 	rm -f $(BINARY_NAME)
 	rm -f $(BINARY_UNIX)
 
+# Refuse the template password before building, and say what to set instead.
+define require_db_password
+$(if $(filter CHANGE_ME,$($(1))),@echo "refusing to run with the placeholder $(1)=CHANGE_ME. Set a real password: make $@ $(1)=..."; exit 1)
+endef
+
 # Run the application
 run:
+	$(call require_db_password,DB_PASSWORD)
 	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) -v
 	./$(BINARY_NAME) -db-user=$(DB_USER) -db-password=$(DB_PASSWORD) -db-host=$(DB_HOST) -db-port=$(DB_PORT) -db-name=$(DB_NAME) -token-expiration=$(TOKEN_EXPIRATION) -port=$(SERVER_PORT)
 
 run-https:
+	$(call require_db_password,DB_PASSWORD)
 	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) -v
 	nohup ./$(BINARY_NAME) -db-user=$(DB_USER) -db-password=$(DB_PASSWORD) -db-host=$(DB_HOST) -db-port=$(DB_PORT) -db-name=$(DB_NAME) -token-expiration=$(TOKEN_EXPIRATION) -port=$(SSL_SERVER_PORT) --enable-https=true --ssl-cert-file=./ssl/server_certs/server.crt --ssl-key-file=./ssl/server_certs/server.key > output.log 2>&1 &
 
 run-ssl:
+	$(call require_db_password,SSL_DB_PASSWORD)
 	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) -v
 	./$(BINARY_NAME) -db-user=$(SSL_DB_USER) -db-password=$(SSL_DB_PASSWORD) -db-host=$(SSL_DB_HOST) -db-port=$(SSL_DB_PORT) -db-name=$(SSL_DB_NAME) -token-expiration=$(SSL_TOKEN_EXPIRATION) -port=$(SSL_SERVER_PORT) -ssl-option=$(SSL_OPTION)
 
 run-aws:
+	$(call require_db_password,AWS_DB_PASSWORD)
 	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) -v
 	./$(BINARY_NAME) -db-user=$(AWS_DB_USER) -db-password=$(AWS_DB_PASSWORD) -db-host=$(AWS_DB_HOST) -db-port=$(AWS_DB_PORT) -db-name=$(AWS_DB_NAME) -token-expiration=$(AWS_TOKEN_EXPIRATION) -port=$(AWS_SERVER_PORT)
 
@@ -131,6 +140,7 @@ docker-push:
 
 # Run Docker container
 docker-run:
+	$(call require_db_password,DB_PASSWORD)
 	docker run -p $(SERVER_PORT):$(SERVER_PORT) \
 		-e DB_USER=$(DB_USER) \
 		-e DB_PASSWORD=$(DB_PASSWORD) \

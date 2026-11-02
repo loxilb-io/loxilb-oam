@@ -262,7 +262,7 @@ func NewSnapshotServiceWithGatewayIdentity(db *sql.DB, loxilbService *LoxiLBServ
 		}
 		s.encKey = key
 	} else {
-		utils.LogError("SNAPSHOT_ENC_KEY is not set — instance snapshots (which contain IPsec PSKs and certificate private keys) will be stored UNENCRYPTED in PostgreSQL. Set a 32-byte base64 key in production.")
+		utils.LogStartupError("SNAPSHOT_ENC_KEY is not set — instance snapshots (which contain IPsec PSKs and certificate private keys) will be stored UNENCRYPTED in PostgreSQL. Set a 32-byte base64 key in production.")
 	}
 	return s, nil
 }

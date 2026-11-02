@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,6 +27,76 @@ func TestStartupSupervisionHelper(_ *testing.T) {
 	os.Args = append([]string{"loxilb-oam"}, args...)
 	main()
 	os.Exit(0)
+}
+
+// These refusals come before any database connection, so no DSN is needed.
+func TestStartupRefusesPlaceholderSecrets(t *testing.T) {
+	const leakedComment = "# e.g. `openssl rand -base64 48`"
+	for _, tc := range []struct {
+		name, variable, value, want string
+	}{
+		{"jwt-comment", "OAM_JWT_SECRET", leakedComment, "OAM_JWT_SECRET"},
+		{"jwt-blank", "OAM_JWT_SECRET", "   ", "OAM_JWT_SECRET"},
+		{"admin-comment", "OAM_DEFAULT_ADMIN_PASSWORD", "# bootstrap admin; change after first login.", "OAM_DEFAULT_ADMIN_PASSWORD"},
+		{"admin-placeholder", "OAM_DEFAULT_ADMIN_PASSWORD", "CHANGE_ME", "OAM_DEFAULT_ADMIN_PASSWORD"},
+		{"gateway-token-placeholder", "OAM_GATEWAY_SERVICE_TOKEN", "CHANGE_ME", "OAM_GATEWAY_SERVICE_TOKEN"},
+		{"database-placeholder", "DB_PASSWORD", "CHANGE_ME", "database password"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			logOffset := startupLogSize()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStartupSupervisionHelper$")
+			cmd.Dir = t.TempDir()
+			cmd.Env = append(os.Environ(),
+				"OAM_STARTUP_TEST_HELPER=1", "OAM_STARTUP_TEST_ARGUMENTS=[]",
+				"DB_HOST=127.0.0.1", "DB_PORT=1", "DB_USER=oamuser", "DB_PASSWORD=startup-test-db-password",
+				"OAM_RESERVED_ENDPOINTS=", "OAM_GATEWAY_AUTH_MODE=disabled", "OAM_GATEWAY_SERVICE_TOKEN=",
+				"OAM_JWT_SECRET=startup-test-only-secret-32-bytes-long",
+				"OAM_DEFAULT_ADMIN_PASSWORD=Valid!Oam7462",
+				tc.variable+"="+tc.value)
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			if ctx.Err() != nil {
+				t.Fatal("startup on a placeholder secret stayed alive")
+			}
+			exit, ok := err.(*exec.ExitError)
+			if !ok || exit.ExitCode() != 1 {
+				t.Fatalf("expected exit1, got %v", err)
+			}
+			// stderr is what `docker logs` shows; the log file is not enough.
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("refusal on stderr does not name %q:\n%s", tc.want, stderr.String())
+			}
+			if n := strings.Count(stderr.String(), "placeholder or comment"); n != 1 {
+				t.Fatalf("refusal appears %d times on stderr, want 1:\n%s", n, stderr.String())
+			}
+			logged := stderr.String() + startupLogSince(logOffset)
+			if strings.TrimSpace(tc.value) != "" && strings.Contains(logged, tc.value) {
+				t.Fatal("refusal logged the secret value")
+			}
+		})
+	}
+}
+
+// utils logs to this file when it can open it, and to stderr otherwise.
+const startupLogFile = "/var/log/loxioam.log"
+
+func startupLogSize() int64 {
+	info, err := os.Stat(startupLogFile)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func startupLogSince(offset int64) string {
+	content, err := os.ReadFile(startupLogFile)
+	if err != nil || int64(len(content)) < offset {
+		return ""
+	}
+	return string(content[offset:])
 }
 
 func TestStartupFailuresReportNonzeroExit(t *testing.T) {

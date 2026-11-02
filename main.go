@@ -50,9 +50,9 @@ import (
 // answer for an untagged local build.
 var version = "dev"
 
-// requireSecrets aborts startup when a mandatory secret is unset. There are no
-// built-in fallbacks, so a misconfigured deployment fails fast instead of
-// silently running on a known credential.
+// requireSecrets aborts startup when a mandatory secret is unset or holds a
+// placeholder. There are no built-in fallbacks, so a misconfigured deployment
+// fails fast instead of silently running on a known credential.
 func requireSecrets() {
 	var missing []string
 	if utils.JWTSecretMissing() {
@@ -62,7 +62,18 @@ func requireSecrets() {
 		missing = append(missing, "OAM_DEFAULT_ADMIN_PASSWORD")
 	}
 	if len(missing) > 0 {
-		utils.LogError("SECURITY: required secret(s) not set: " + strings.Join(missing, ", ") + ". Set them in the environment before starting.")
+		utils.LogStartupError("SECURITY: required secret(s) not set: " + strings.Join(missing, ", ") + ". Set them in the environment before starting.")
+		os.Exit(1)
+	}
+	// The optional gateway token is checked only when set. Log names, never values.
+	var placeholders []string
+	for _, name := range []string{"OAM_JWT_SECRET", "OAM_DEFAULT_ADMIN_PASSWORD", "OAM_GATEWAY_SERVICE_TOKEN"} {
+		if v := os.Getenv(name); v != "" && config.SecretIsPlaceholder(v) {
+			placeholders = append(placeholders, name)
+		}
+	}
+	if len(placeholders) > 0 {
+		utils.LogStartupError("SECURITY: secret(s) hold a placeholder or comment instead of a real value: " + strings.Join(placeholders, ", ") + ". Set real values before starting.")
 		os.Exit(1)
 	}
 	if config.CORSUsingWildcard() {
@@ -83,7 +94,7 @@ func requireSecrets() {
 	// believes the management edge is protected from a colliding VIP when it is
 	// not. Refuse to start rather than run with a silently inert guard.
 	if err := config.ReservedEndpointsError(); err != nil {
-		utils.LogError("CONFIG: " + err.Error() + ". Fix OAM_RESERVED_ENDPOINTS before starting.")
+		utils.LogStartupError("CONFIG: " + err.Error() + ". Fix OAM_RESERVED_ENDPOINTS before starting.")
 		os.Exit(1)
 	}
 	if n := len(config.ReservedEndpoints()); n > 0 {
@@ -147,7 +158,11 @@ func main() {
 	// -db-password flag or the DB_PASSWORD env var (OAM_DB_PASSWORD alias).
 	dbPass := *dbPassword
 	if dbPass == "" {
-		utils.LogError("SECURITY: no database password provided. Set DB_PASSWORD or pass -db-password.")
+		utils.LogStartupError("SECURITY: no database password provided. Set DB_PASSWORD or pass -db-password.")
+		os.Exit(1)
+	}
+	if config.SecretIsPlaceholder(dbPass) {
+		utils.LogStartupError("SECURITY: the database password holds a placeholder or comment instead of a real value. Set DB_PASSWORD or pass -db-password.")
 		os.Exit(1)
 	}
 
@@ -164,7 +179,7 @@ func main() {
 		db, err = services.ConnectWithRetry(dsn, config.DbMaxRetries, config.DbRetryBackoff)
 	}
 	if err != nil {
-		utils.LogError(fmt.Sprintf("Database connection failed (host=%s port=%s db=%s): %v", *dbHost, *dbPort, *dbName, err))
+		utils.LogStartupError(fmt.Sprintf("Database connection failed (host=%s port=%s db=%s): %v", *dbHost, *dbPort, *dbName, err))
 		// Serving and migration startup both failed; supervisors must see failure.
 		os.Exit(1)
 	}
@@ -180,7 +195,7 @@ func main() {
 	// altered is refused here rather than discovered one failing query at a
 	// time.
 	if err := migrateSchema(db, *migrateOnly); err != nil {
-		utils.LogError("DATABASE: " + err.Error())
+		utils.LogStartupError("DATABASE: " + err.Error())
 		db.Close()
 		os.Exit(1)
 	}
@@ -195,7 +210,7 @@ func main() {
 	alertService := services.NewAlertService(db)
 	gatewayIdentity, err := services.GatewayServiceIdentityFromEnv()
 	if err != nil {
-		utils.LogError(fmt.Sprintf("SECURITY: invalid Gateway service identity configuration: %s", err))
+		utils.LogStartupError(fmt.Sprintf("SECURITY: invalid Gateway service identity configuration: %s", err))
 		db.Close()
 		os.Exit(1)
 	}
@@ -206,7 +221,7 @@ func main() {
 	if err != nil {
 		// A set-but-invalid SNAPSHOT_ENC_KEY must fail boot loudly rather
 		// than silently storing secret-bearing snapshots unencrypted.
-		utils.LogError(fmt.Sprintf("Failed to initialize snapshot service: %s", err))
+		utils.LogStartupError(fmt.Sprintf("Failed to initialize snapshot service: %s", err))
 		db.Close()
 		os.Exit(1)
 	}
@@ -218,7 +233,7 @@ func main() {
 	if *expirationMinutesFlag != "" {
 		expirationMinutes, err := strconv.Atoi(*expirationMinutesFlag)
 		if err != nil || expirationMinutes <= 0 {
-			utils.LogError(fmt.Sprintf("Invalid token expiration time: %s", *expirationMinutesFlag))
+			utils.LogStartupError(fmt.Sprintf("Invalid token expiration time: %s", *expirationMinutesFlag))
 			db.Close()
 			os.Exit(1)
 		}
@@ -231,7 +246,7 @@ func main() {
 	// Appliance cannot come up reporting that it has no host adapter.
 	applianceHost, err := appliance.HostClientFromEnv()
 	if err != nil {
-		utils.LogError("CONFIG: invalid Appliance host adapter configuration: " + err.Error())
+		utils.LogStartupError("CONFIG: invalid Appliance host adapter configuration: " + err.Error())
 		os.Exit(1)
 	}
 	if applianceHost.Configured() {
@@ -245,7 +260,7 @@ func main() {
 	// so abort startup instead of running in that state — most commonly hit
 	// when OAM_DEFAULT_ADMIN_PASSWORD does not meet the password policy.
 	if err := setupInitialAdminIfNeeded(userService); err != nil {
-		utils.LogError(fmt.Sprintf("SECURITY: failed to set up the initial admin account: %s. Fix the configuration (typically OAM_DEFAULT_ADMIN_PASSWORD — it must meet the account password policy) and restart.", err))
+		utils.LogStartupError(fmt.Sprintf("SECURITY: failed to set up the initial admin account: %s. Fix the configuration (typically OAM_DEFAULT_ADMIN_PASSWORD — it must meet the account password policy) and restart.", err))
 		os.Exit(1)
 	}
 
@@ -306,7 +321,7 @@ func main() {
 	// limiter and the login lockout, so gin's trust-everything default would
 	// let a caller forge a new identity per request and evade both.
 	if err := router.SetTrustedProxies(config.TrustedProxies); err != nil {
-		utils.LogError(fmt.Sprintf("Invalid OAM_TRUSTED_PROXIES value: %s", err))
+		utils.LogStartupError(fmt.Sprintf("Invalid OAM_TRUSTED_PROXIES value: %s", err))
 		os.Exit(1)
 	}
 	if len(config.TrustedProxies) == 0 {
@@ -329,13 +344,13 @@ func main() {
 		if *enableHTTPS {
 			utils.LogInfo(fmt.Sprintf("Starting HTTPS server on :%s", port))
 			if err := httpServer.ListenAndServeTLS(*sslCertFile, *sslKeyFile); err != nil && err != http.ErrServerClosed {
-				utils.LogError(fmt.Sprintf("[%s] Could not start HTTPS server: %s", time.Now().Format(time.RFC3339), err))
+				utils.LogStartupError(fmt.Sprintf("[%s] Could not start HTTPS server: %s", time.Now().Format(time.RFC3339), err))
 				serverErrors <- err
 			}
 		} else {
 			utils.LogInfo(fmt.Sprintf("Starting HTTP server on :%s", *serverPort))
 			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				utils.LogError(fmt.Sprintf("[%s] Could not start HTTP server: %s", time.Now().Format(time.RFC3339), err))
+				utils.LogStartupError(fmt.Sprintf("[%s] Could not start HTTP server: %s", time.Now().Format(time.RFC3339), err))
 				serverErrors <- err
 			}
 		}
