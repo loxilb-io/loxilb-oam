@@ -6,18 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Versioning
 
-loxilb-oam versions **in lockstep with [loxilb-io/loxilb](https://github.com/loxilb-io/loxilb)**
-and uses the same `vMAJOR.MINOR.PATCH[.BUILD]` scheme (e.g. `v0.9.8.7`). A given
-loxilb-oam release targets the loxilb release of the same version: run
-`loxilb-oam v0.9.8.7` against `loxilb v0.9.8.7`. Version numbers therefore track
-the loxilb release train rather than carrying independent semantic-versioning
-meaning about this repository's own API compatibility.
+loxilb-oam versions **in lockstep with
+[loxilb-inference-gateway](https://github.com/loxilb-io/loxilb-inference-gateway)
+and [loxilb-ui](https://github.com/loxilb-io/loxilb-ui)** and uses the same
+`vMAJOR.MINOR.PATCH[.BUILD]` scheme (e.g. `v0.9.9.1`). A given loxilb-oam release
+targets the gateway and console releases of the same version: run
+`loxilb-oam v0.9.9.1` with `loxilb-inference-gateway v0.9.9.1` and
+`loxilb-ui v0.9.9.1`. Version numbers therefore track that release train rather
+than carrying independent semantic-versioning meaning about this repository's own
+API compatibility. <!-- OWNER REVIEW PENDING -->
 
 The version is stamped into the binary at build time (`loxilb-oam -version`, the
 startup log, and the served OpenAPI spec all report it) and onto the container
 image's `org.opencontainers.image.version` label.
 
 ## [Unreleased]
+
+## [v0.9.9.1] - 2026-11-02
 
 ### Added
 - Failures OAM itself produces on the instance proxy and the snapshot routes
@@ -95,8 +100,20 @@ image's `org.opencontainers.image.version` label.
   source-drift validation, existing-volume adoption, and database → data →
   management startup/verification automation.
 - The approved converged integration image defaults to
-  `ghcr.io/loxilb-io/loxilb-inference-gateway:latest-u24`; validation records
-  the resolved digest before promotion to an immutable release identity.
+  `ghcr.io/loxilb-io/loxilb-inference-gateway:v0.9.9.1-u24`; validation records
+  the resolved digest before promotion to an immutable release identity. <!-- OWNER REVIEW PENDING -->
+- Optional local Keycloak (with its own PostgreSQL) and syslog-ng audit collector
+  Compose projects, selected independently and pinned by digest, for
+  installations without an existing Keycloak or TLS-syslog SIEM. The default
+  startup is unchanged. Keycloak protects inference Bearer requests; OAM login
+  stays separate. <!-- OWNER REVIEW PENDING -->
+- An opt-in restricted runtime database role for OAM
+  (`docker-compose.oam-app-db.yml`, `database/oam-app-db-bootstrap.sql`), so the
+  running service no longer has to use the database owner's credential. <!-- OWNER REVIEW PENDING -->
+- `init-converged.sh` asks for a public, NAT or Floating IP address on fresh and
+  existing installs and updates the site addresses, allowed origins and
+  certificate SANs. Operator and CA-issued certificates and existing credentials
+  are preserved. <!-- OWNER REVIEW PENDING -->
 - A dedicated `docker-compose.converged-local-ui.yml` developer overlay keeps
   converged PostgreSQL, Gateway, and OAM on a remote testbed while disabling
   the bundled UI and Caddy. It exposes OAM directly over HTTP with an explicit
@@ -112,6 +129,11 @@ image's `org.opencontainers.image.version` label.
   costs a handshake on every request.
 
 ### Changed — BREAKING
+- Existing converged deployments must prepare and adopt the external named
+  volumes before startup: Gateway configuration, TLS, service credentials and
+  edge TLS now live in named volumes that survive container and image
+  replacement, and protected host seeds are no longer runtime mounts. See
+  `deploy/compose/PERSISTENT-UPGRADE.md`. <!-- OWNER REVIEW PENDING -->
 - The instance proxy (`/oam/loxilbs/{id}/netlox/*`) now authorizes by Gateway
   path as well as by method. Day-to-day configuration is unchanged: every role
   reads it, `admin` and `operator` change it. What changes:
@@ -163,6 +185,15 @@ image's `org.opencontainers.image.version` label.
   wording for the `502` case is unchanged.
 
 ### Changed
+- Compose image defaults name this release instead of `latest`: `OAM_TAG` and
+  `UI_TAG` default to `v0.9.9.1`, and `IGW_TAG` to `v0.9.9.1-u24`, in
+  `docker-compose.yml`, `docker-compose.dataplane.yml`, `.env.example` and the
+  `init-converged.sh` prompts. An upgrade now requires changing the tags. Set
+  them to `latest` / `latest-u24` to follow the newest final release. <!-- OWNER REVIEW PENDING -->
+- A PostgreSQL outage no longer ends a live session: authenticated requests and
+  login answer `503` with `authentication_unavailable` and `Retry-After: 5`, and
+  the same token works once the database recovers. Missing, expired and revoked
+  tokens still answer `401`. <!-- OWNER REVIEW PENDING -->
 - Release images are signed with Cosign v3, which stores the signature as a
   Sigstore bundle instead of the legacy `.sig` tag. Verify with Cosign v3 or
   newer; Cosign v2 needs `--new-bundle-format`, otherwise it reports
@@ -179,6 +210,55 @@ image's `org.opencontainers.image.version` label.
   a handshake is not measurable against a 60s take or a 5-minute restore.
 
 ### Fixed
+- Fixed: a user's old sessions kept working after an administrator changed their
+  password — the update left issued tokens in place — the password change and
+  token revocation now commit together. <!-- OWNER REVIEW PENDING -->
+- Fixed: sessions from before initial administrator setup kept working after it
+  — setup did not revoke them — setup now revokes them in the same transaction. <!-- OWNER REVIEW PENDING -->
+- Fixed: a deleted user's token could still read protected routes — validation
+  checked only that the token existed and had not expired — a token now needs a
+  live user. <!-- OWNER REVIEW PENDING -->
+- Fixed: the only administrator could be demoted or removed, including by
+  concurrent requests, leaving nobody able to manage users — the check ran
+  outside the change — removing the last administrator is now refused with
+  `403`. <!-- OWNER REVIEW PENDING -->
+- Fixed: a login in flight during a password change could produce a usable
+  session afterwards — issuing the session was a separate step from checking the
+  password — issuance is now bound to the current credentials, and a concurrent
+  password replacement is never overwritten. <!-- OWNER REVIEW PENDING -->
+- Fixed: an operator could acknowledge an alert as another user, and a failed
+  write could leave it half recorded — the body's `user_id` was trusted and the
+  two writes were separate — a mismatched ID is refused with `403` and both
+  writes commit together. An invalid alert type or severity now answers `400`
+  instead of `500`. <!-- OWNER REVIEW PENDING -->
+- Fixed: OAM exited `0` when it could not reach its database, hiding the cause
+  (wrong CA or SAN, rejected credentials) — the connection error was discarded —
+  it now exits `1` and logs the real cause. <!-- OWNER REVIEW PENDING -->
+- Fixed: OAM exited `0` on invalid Gateway identity, snapshot key or token
+  lifetime settings, and kept running without serving when its HTTP listener or
+  HTTPS keypair failed — the errors did not reach the main process — both now
+  exit `1`. <!-- OWNER REVIEW PENDING -->
+- Fixed: Gateway audit records and OAM logs were lost when a container was
+  recreated — they lived in the container's writable layer — they now live in
+  persistent volumes. <!-- OWNER REVIEW PENDING -->
+- Fixed: a fresh converged install answered read requests but returned `503
+  audit_unavailable` on audited changes — the new audit volume started at mode
+  `0755` and the Gateway requires `0700` — a one-shot job now sets the mode
+  before the Gateway starts. <!-- OWNER REVIEW PENDING -->
+- Fixed: on cloud hosts `local-gateway` registered successfully but OAM calls to
+  it returned `504` — its hostname resolved to a nonexistent Docker bridge, and
+  host-loopback checks could not see that — setup now selects a real host
+  interface and verifies the connection from inside OAM's network namespace. <!-- OWNER REVIEW PENDING -->
+- Fixed: console pages served by the bundled Caddy edge lacked the security
+  headers of the standalone UI container, including the CSP — Caddy serves those
+  assets directly, bypassing the container's nginx policy — the edge now applies
+  the same policies. <!-- OWNER REVIEW PENDING -->
+- Fixed: every fresh deployment showed a `LoxiLB-Instance-1` reporting Down —
+  database init seeded a placeholder row pointing at a host that does not exist
+  — a new database starts with no instances. <!-- OWNER REVIEW PENDING -->
+- Fixed: the dev overlay failed for anyone who cloned only this repository — it
+  built the console from a sibling `loxilb-ui` checkout — it now uses the
+  `UI_IMAGE` / `UI_TAG` image in every mode. <!-- OWNER REVIEW PENDING -->
 - A console served from another origin could not read `Retry-After`,
   `X-Request-Id`, `X-Correlation-Id`, `X-Snapshot-Checksum`,
   `X-Content-Checksum` or `Content-Disposition`, because CORS exposed only the
@@ -243,6 +323,13 @@ image's `org.opencontainers.image.version` label.
   [docs/instance-proxy.md](docs/instance-proxy.md) for the full status contract.
 
 ### Security
+- OAM reaches the Gateway with its own service identity, separate from the
+  signed-in user, and strips browser `Authorization`, cookies and API keys
+  before proxying. Tokens can be supplied as a value or a file; the converged
+  bundle generates one and requires it. <!-- OWNER REVIEW PENDING -->
+- Refreshed `golang.org/x/crypto`, `golang.org/x/net` and related Go modules,
+  moved the module to Go 1.26, and upgraded Alpine runtime packages in the
+  image. <!-- OWNER REVIEW PENDING -->
 - The instance proxy decided on the HTTP method alone, while it reaches the
   Gateway with OAM's own identity. It now decides on the Gateway path too, on
   one canonical form of the path that is also the form forwarded, and resolves
@@ -317,5 +404,6 @@ image's `org.opencontainers.image.version` label.
   `OAM_DEFAULT_ADMIN_PASSWORD` and will not start. Use Docker Compose. See
   [k8s/README.md](k8s/README.md).
 
-[Unreleased]: https://github.com/loxilb-io/loxilb-oam/compare/v0.9.8.7...HEAD
+[Unreleased]: https://github.com/loxilb-io/loxilb-oam/compare/v0.9.9.1...HEAD
+[v0.9.9.1]: https://github.com/loxilb-io/loxilb-oam/compare/v0.9.8.7...v0.9.9.1
 [v0.9.8.7]: https://github.com/loxilb-io/loxilb-oam/releases/tag/v0.9.8.7

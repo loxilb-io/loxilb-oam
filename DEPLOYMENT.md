@@ -202,7 +202,7 @@ sudo update-ca-certificates
 > `OAM_DEFAULT_ADMIN_PASSWORD`, both of which are mandatory (see
 > [Required environment variables](#required-environment-variables)) — the
 > container aborts at startup and the Pod enters `CrashLoopBackOff`. The
-> production overlay also pins an image tag (`oam-loxilb:v0.9.8.7`) that is not
+> production overlay also pins an image tag (`oam-loxilb:v0.9.9.1`) that is not
 > published.
 >
 > They are retained as the starting point for a converged Kubernetes deployment

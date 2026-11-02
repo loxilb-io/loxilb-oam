@@ -37,19 +37,19 @@ AWS_TOKEN_EXPIRATION=1440
 AWS_SERVER_PORT=8080
 
 # ── Version ──────────────────────────────────────────────────────────────────
-# loxilb-oam versions in lockstep with loxilb-io/loxilb and uses the same
-# vMAJOR.MINOR.PATCH.BUILD scheme: loxilb-oam vX ships against loxilb vX.
+# loxilb-oam versions in lockstep with loxilb-inference-gateway and loxilb-ui and
+# uses the same vMAJOR.MINOR.PATCH.BUILD scheme: loxilb-oam vX ships with both at vX.
 # This is the single source of truth for a local build — it is stamped into the
 # binary (main.version), the OpenAPI spec, and the image's OCI version label.
 # A release build takes the version from the git tag instead (release.yml).
-#   make build VERSION=v0.9.8.8
-VERSION ?= v0.9.8.7
+#   make build VERSION=v0.9.9.1
+VERSION ?= v0.9.9.1
 LDFLAGS  = -X main.version=$(VERSION)
 
 # ── Container image (public releases go to GHCR) ─────────────────────────────
 # The published image is $(IMAGE):$(TAG) == $(REGISTRY)/$(IMAGE_NAME):$(TAG),
 # and TAG defaults to the version above. Override any part on the command line:
-#   make docker-build VERSION=v0.9.8.8
+#   make docker-build VERSION=v0.9.9.1
 #   make docker-build IMAGE_NAME=myorg/loxilb-oam REGISTRY=docker.io
 #   make docker-build docker-push TAG=latest
 REGISTRY   ?= ghcr.io

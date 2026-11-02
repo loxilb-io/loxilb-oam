@@ -41,7 +41,7 @@ import (
 
 // version is the release identifier, stamped at link time by the build:
 //
-//	go build -ldflags "-X main.version=v0.9.8.7"
+//	go build -ldflags "-X main.version=v0.9.9.1"
 //
 // It follows loxilb-io/loxilb's vMAJOR.MINOR.PATCH.BUILD scheme, in lockstep
 // with the loxilb release this build targets. `make build` stamps the Makefile's

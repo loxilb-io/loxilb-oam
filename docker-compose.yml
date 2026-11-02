@@ -66,7 +66,7 @@ services:
       args:
         # Release identifier compiled into the binary (`loxilb-oam -version`).
         # A source build is "dev" unless OAM_VERSION is set — set it to the
-        # release this tree corresponds to (e.g. OAM_VERSION=v0.9.8.7) when
+        # release this tree corresponds to (e.g. OAM_VERSION=v0.9.9.1) when
         # building an image you intend to keep.
         VERSION: ${OAM_VERSION:-dev}
     image: loxilb-oam:latest

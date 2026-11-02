@@ -12,10 +12,12 @@ provides centralized authentication, role-based access control, user management,
 instance lifecycle operations, configuration snapshots, and a management proxy
 for one or more LoxiLB instances, backed by PostgreSQL.
 
-**Version:** `v0.9.8.7`. loxilb-oam versions in lockstep with
-[loxilb](https://github.com/loxilb-io/loxilb) and uses the same
-`vMAJOR.MINOR.PATCH[.BUILD]` scheme — run loxilb-oam `v0.9.8.7` against loxilb
-`v0.9.8.7`. `loxilb-oam -version` reports the build's release identifier
+**Version:** `v0.9.9.1`. loxilb-oam versions in lockstep with
+[loxilb-inference-gateway](https://github.com/loxilb-io/loxilb-inference-gateway)
+and [loxilb-ui](https://github.com/loxilb-io/loxilb-ui) and uses the same
+`vMAJOR.MINOR.PATCH[.BUILD]` scheme — run loxilb-oam `v0.9.9.1` against
+loxilb-inference-gateway `v0.9.9.1` (image `v0.9.9.1-u24` on Ubuntu 24.04) and
+loxilb-ui `v0.9.9.1`. `loxilb-oam -version` reports the build's release identifier
 (`dev` for an unstamped local build); see [CHANGELOG.md](CHANGELOG.md).
 
 ## Features

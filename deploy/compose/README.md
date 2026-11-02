@@ -95,7 +95,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml \
 ```
 Linux only, and it needs its own `.env` section (`GW_HOST`, `EDGE_BIND_IP`,
 `OAM_RESERVED_ENDPOINTS`, `IGW_TAG`, `CONVERGED_PG_HOST_PORT`). The approved
-Gateway image is `ghcr.io/loxilb-io/loxilb-inference-gateway:latest-u24`; record
+Gateway image is `ghcr.io/loxilb-io/loxilb-inference-gateway:v0.9.9.1-u24`; record
 the resolved digest for reproducible test evidence. Read
 [`docs/deployment-converged.md`](../../docs/deployment-converged.md) first —
 co-locating the data plane changes the port, privilege and upgrade story.

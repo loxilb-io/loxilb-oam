@@ -33,15 +33,15 @@ verify it, how to run it standalone, and how to build your own.
 
 ### Tags
 
-Image tags are the release version, which follows
-[loxilb-io/loxilb](https://github.com/loxilb-io/loxilb): `vMAJOR.MINOR.PATCH`
-with an optional fourth build component. loxilb-oam versions in lockstep with
-loxilb — pair `loxilb-oam:v0.9.8.7` with `loxilb:v0.9.8.7`.
+Image tags are the release version: `vMAJOR.MINOR.PATCH` with an optional fourth
+build component. loxilb-oam versions in lockstep with loxilb-inference-gateway and
+loxilb-ui — pair `loxilb-oam:v0.9.9.1` with
+`loxilb-inference-gateway:v0.9.9.1-u24` and `loxilb-ui:v0.9.9.1`.
 
 | Tag form | Meaning |
 |----------|---------|
-| `v0.9.8.7` | An immutable release. **Use this in production.** |
-| `v0.9.8.7-rc.1`, `-alpha.`, `-beta.` | Prerelease. Published, but does **not** move `:latest`. |
+| `v0.9.9.1` | An immutable release. **Use this in production.** |
+| `v0.9.9.1-rc.1`, `-alpha.`, `-beta.` | Prerelease. Published, but does **not** move `:latest`. |
 | `latest` | The most recent *final* release. Convenient for a lab; untraceable for an upgrade — never pin production to it. |
 
 Publishing is gated: the release job targets the `release` GitHub Environment,
@@ -72,8 +72,8 @@ To confirm which version a container actually runs — the release is compiled
 into the binary, not just labelled:
 
 ```bash
-docker run --rm ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7 ./loxilb-oam -version
-# loxilb-oam v0.9.8.7
+docker run --rm ghcr.io/loxilb-io/loxilb-oam:v0.9.9.1 ./loxilb-oam -version
+# loxilb-oam v0.9.9.1
 ```
 
 An image built locally without a `VERSION` build-arg reports `dev`.
@@ -88,7 +88,7 @@ An image built locally without a `VERSION` build-arg reports `dev`.
 ## Pull and verify
 
 ```bash
-docker pull ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7
+docker pull ghcr.io/loxilb-io/loxilb-oam:v0.9.9.1
 ```
 
 If the pull returns `unauthorized`, the GHCR package is not public from your
@@ -111,15 +111,15 @@ build-provenance and SPDX SBOM attestations. Verify before deploying:
 
 ```bash
 # 1. Signature — proves the image was built by this repo's release workflow.
-cosign verify ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7 \
+cosign verify ghcr.io/loxilb-io/loxilb-oam:v0.9.9.1 \
   --certificate-identity-regexp '^https://github\.com/loxilb-io/loxilb-oam/\.github/workflows/release\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # 2. Build provenance (SLSA).
-gh attestation verify oci://ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7 --owner loxilb-io
+gh attestation verify oci://ghcr.io/loxilb-io/loxilb-oam:v0.9.9.1 --owner loxilb-io
 
 # 3. SBOM (SPDX) — also attached to the GitHub Release as sbom.spdx.json.
-gh attestation verify oci://ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7 --owner loxilb-io \
+gh attestation verify oci://ghcr.io/loxilb-io/loxilb-oam:v0.9.9.1 --owner loxilb-io \
   --predicate-type https://spdx.dev/Document
 ```
 
@@ -143,7 +143,7 @@ docker run -d --name loxilb-oam \
   -e OAM_ALLOWED_ORIGINS='https://oam.example.com' \
   -e DB_HOST=10.0.0.5 -e DB_PORT=5432 \
   -e DB_USER=oamuser -e DB_PASSWORD='…' -e DB_NAME=loxioam \
-  ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7
+  ghcr.io/loxilb-io/loxilb-oam:v0.9.9.1
 ```
 
 The server **fails fast** if `OAM_JWT_SECRET`, `OAM_DEFAULT_ADMIN_PASSWORD`, or
@@ -206,11 +206,11 @@ Forks, air-gapped builds, and patched releases all build from the same
 `Dockerfile`. The Makefile wraps it:
 
 ```bash
-make docker-build VERSION=v0.9.8.7                     # ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7
-make docker-build IMAGE_NAME=myorg/loxilb-oam REGISTRY=docker.io VERSION=v0.9.8.7
+make docker-build VERSION=v0.9.9.1                     # ghcr.io/loxilb-io/loxilb-oam:v0.9.9.1
+make docker-build IMAGE_NAME=myorg/loxilb-oam REGISTRY=docker.io VERSION=v0.9.9.1
 
 # Build, then push under a non-release tag (needs docker login):
-make docker-build docker-push VERSION=v0.9.8.7 TAG=v0.9.8.7-myorg.1
+make docker-build docker-push VERSION=v0.9.9.1 TAG=v0.9.9.1-myorg.1
 ```
 
 `docker-push` refuses release-shaped tags (`vX.Y.Z[.B]`, optional
@@ -226,13 +226,13 @@ above. To deliberately replace a published image anyway, add
 |---------------|---------|---------|
 | `REGISTRY` | `ghcr.io` | registry host |
 | `IMAGE_NAME` | `loxilb-io/loxilb-oam` | repository path |
-| `VERSION` | current release (`v0.9.8.7`) | release identifier — compiled into the binary and set as the OCI version label |
+| `VERSION` | current release (`v0.9.9.1`) | release identifier — compiled into the binary and set as the OCI version label |
 | `TAG` | `$(VERSION)` | image tag; override alone to name an image without changing the stamped version (e.g. `TAG=latest`) |
 
 Plain Docker, if you would rather not use Make:
 
 ```bash
-docker build --build-arg VERSION=v0.9.8.7 -t myorg/loxilb-oam:v0.9.8.7 .
+docker build --build-arg VERSION=v0.9.9.1 -t myorg/loxilb-oam:v0.9.9.1 .
 ```
 
 What the build does: stage 1 (`golang:1.26-alpine`) downloads modules in their
@@ -246,7 +246,7 @@ build context.
 Building for a non-amd64 host:
 
 ```bash
-docker buildx build --platform linux/arm64 -t myorg/loxilb-oam:v0.9.8.7-arm64 .
+docker buildx build --platform linux/arm64 -t myorg/loxilb-oam:v0.9.9.1-arm64 .
 ```
 
 This is a supported *build* — it is simply not something the project publishes
@@ -258,11 +258,11 @@ Move the image across the boundary by digest, keeping tags intact:
 
 ```bash
 # On a connected host
-docker pull ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7
-docker save ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7 | gzip > loxilb-oam-v0.9.8.7.tar.gz
+docker pull ghcr.io/loxilb-io/loxilb-oam:v0.9.9.1
+docker save ghcr.io/loxilb-io/loxilb-oam:v0.9.9.1 | gzip > loxilb-oam-v0.9.9.1.tar.gz
 
 # On the air-gapped host
-gunzip -c loxilb-oam-v0.9.8.7.tar.gz | docker load
+gunzip -c loxilb-oam-v0.9.9.1.tar.gz | docker load
 ```
 
 To serve it from an internal registry, retag and push, then override the image
@@ -270,8 +270,8 @@ name where the deployment reads it — `OAM_IMAGE` / `OAM_TAG` in the
 [`deploy/compose/`](../deploy/compose/) bundle's `.env`:
 
 ```bash
-docker tag ghcr.io/loxilb-io/loxilb-oam:v0.9.8.7 registry.internal/loxilb-oam:v0.9.8.7
-docker push registry.internal/loxilb-oam:v0.9.8.7
+docker tag ghcr.io/loxilb-io/loxilb-oam:v0.9.9.1 registry.internal/loxilb-oam:v0.9.9.1
+docker push registry.internal/loxilb-oam:v0.9.9.1
 ```
 
 Verify signatures on the connected side — Cosign and `gh attestation` both need
