@@ -217,6 +217,10 @@ image's `org.opencontainers.image.version` label.
   known string — `.env.example` has no inline comments, a blank secret stops
   Compose, and OAM refuses to start on a placeholder or comment in place of a
   secret. <!-- OWNER REVIEW PENDING -->
+- Fixed: a container that failed at startup showed nothing useful in `docker logs`,
+  only a non-zero exit — when `/var/log/loxioam.log` was writable, startup errors
+  went only there — startup-fatal errors and the unset `SNAPSHOT_ENC_KEY` report
+  now also go to stderr. <!-- OWNER REVIEW PENDING -->
 - Fixed: a user's old sessions kept working after an administrator changed their
   password — the update left issued tokens in place — the password change and
   token revocation now commit together. <!-- OWNER REVIEW PENDING -->
@@ -330,6 +334,9 @@ image's `org.opencontainers.image.version` label.
   [docs/instance-proxy.md](docs/instance-proxy.md) for the full status contract.
 
 ### Security
+- With `SNAPSHOT_ENC_KEY` unset, instance snapshots, which include IPsec keys and
+  certificate private keys, are stored unencrypted. OAM reports this at startup.
+  The key becomes required in the next minor release. <!-- OWNER REVIEW PENDING -->
 - OAM reaches the Gateway with its own service identity, separate from the
   signed-in user, and strips browser `Authorization`, cookies and API keys
   before proxying. Tokens can be supplied as a value or a file; the converged

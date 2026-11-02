@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -54,7 +55,9 @@ func TestStartupRefusesPlaceholderSecrets(t *testing.T) {
 				"OAM_JWT_SECRET=startup-test-only-secret-32-bytes-long",
 				"OAM_DEFAULT_ADMIN_PASSWORD=Valid!Oam7462",
 				tc.variable+"="+tc.value)
-			output, err := cmd.CombinedOutput()
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			err := cmd.Run()
 			if ctx.Err() != nil {
 				t.Fatal("startup on a placeholder secret stayed alive")
 			}
@@ -62,10 +65,14 @@ func TestStartupRefusesPlaceholderSecrets(t *testing.T) {
 			if !ok || exit.ExitCode() != 1 {
 				t.Fatalf("expected exit1, got %v", err)
 			}
-			logged := string(output) + startupLogSince(logOffset)
-			if !strings.Contains(logged, "SECURITY") || !strings.Contains(logged, tc.want) {
-				t.Fatalf("refusal does not name %q:\n%s", tc.want, logged)
+			// stderr is what `docker logs` shows; the log file is not enough.
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("refusal on stderr does not name %q:\n%s", tc.want, stderr.String())
 			}
+			if n := strings.Count(stderr.String(), "placeholder or comment"); n != 1 {
+				t.Fatalf("refusal appears %d times on stderr, want 1:\n%s", n, stderr.String())
+			}
+			logged := stderr.String() + startupLogSince(logOffset)
 			if strings.TrimSpace(tc.value) != "" && strings.Contains(logged, tc.value) {
 				t.Fatal("refusal logged the secret value")
 			}

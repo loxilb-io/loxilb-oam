@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -583,4 +584,35 @@ func TestRestoreCarriesTheGatewaysRetryAfter(t *testing.T) {
 	assert.Equal(t, 503, out.GatewayStatus)
 	assert.Equal(t, "5", out.GatewayRetryAfter)
 	assert.JSONEq(t, `{"code":503,"message":"config gate is busy"}`, string(out.GatewayResponse))
+}
+
+// stderr is what `docker logs` shows, so the report must reach it at startup.
+func TestUnsetSnapshotKeyReportedOnStderr(t *testing.T) {
+	capture := func(t *testing.T, key string) string {
+		t.Helper()
+		t.Setenv("SNAPSHOT_ENC_KEY", key)
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		original := os.Stderr
+		os.Stderr = w
+		defer func() { os.Stderr = original }()
+		if _, err := services.NewSnapshotServiceWithGatewayIdentity(nil, nil, services.GatewayServiceIdentity{}); err != nil {
+			t.Fatal(err)
+		}
+		w.Close()
+		output, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(output)
+	}
+	if output := capture(t, ""); !strings.Contains(output, "SNAPSHOT_ENC_KEY is not set") || !strings.Contains(output, "UNENCRYPTED") {
+		t.Fatalf("unset key not reported on stderr: %q", output)
+	}
+	validKey := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	if output := capture(t, validKey); strings.Contains(output, "SNAPSHOT_ENC_KEY") {
+		t.Fatalf("valid key reported on stderr: %q", output)
+	}
 }
