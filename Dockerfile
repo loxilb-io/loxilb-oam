@@ -49,6 +49,9 @@ LABEL org.opencontainers.image.title="loxilb-oam" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
 
+# Gin defaults to debug mode, which warns and dumps every route at startup.
+ENV GIN_MODE=release
+
 # Expose ports (HTTP and HTTPS)
 EXPOSE 8080 443
 

@@ -160,7 +160,8 @@ they are unset; always pin immutable versions — never use `latest` in
 production, or upgrades become untraceable):
 
 ```bash
-OAM_TAG=v0.9.9.1      # use the latest release of each repo
+# Use the latest release of each repo.
+OAM_TAG=v0.9.9.1
 UI_TAG=v0.9.9.1
 ```
 

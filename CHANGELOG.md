@@ -210,6 +210,9 @@ image's `org.opencontainers.image.version` label.
   a handshake is not measurable against a 60s take or a 5-minute restore.
 
 ### Fixed
+- Fixed: the OAM image logged Gin debug warnings and every API route at startup —
+  the image never set Gin's mode, so it ran in debug mode — the image now sets
+  `GIN_MODE=release`. <!-- OWNER REVIEW PENDING -->
 - Fixed: leaving `OAM_JWT_SECRET` or `OAM_DEFAULT_ADMIN_PASSWORD` blank in a `.env`
   copied from `deploy/compose/.env.example` did not stop the stack, and the
   converged stack failed with `invalid IP address` — Compose read the inline
