@@ -42,7 +42,7 @@ services:
 
   # ── OAM API ──────────────────────────────────────────────────────────────
   oam-loxilb:
-    image: ${OAM_IMAGE:-ghcr.io/loxilb-io/loxilb-oam}:${OAM_TAG:-latest}
+    image: ${OAM_IMAGE:-ghcr.io/loxilb-io/loxilb-oam}:${OAM_TAG:-v0.9.9.1}
     environment:
       # Required secrets — the server refuses to start without these.
       OAM_JWT_SECRET: ${OAM_JWT_SECRET:?set OAM_JWT_SECRET in .env}
@@ -100,7 +100,7 @@ services:
   # Copies the built SPA out of the loxilb-ui image into a shared volume that
   # Caddy serves. Runs to completion on every `up`, then exits.
   ui-assets:
-    image: ${UI_IMAGE:-ghcr.io/loxilb-io/loxilb-ui}:${UI_TAG:-latest}
+    image: ${UI_IMAGE:-ghcr.io/loxilb-io/loxilb-ui}:${UI_TAG:-v0.9.9.1}
     # The loxilb-ui image ships a custom ENTRYPOINT (nginx config templating +
     # self-signed cert + `nginx -t`) meant for standalone serving. We only want
     # the built SPA, so bypass that entrypoint and just copy assets out.

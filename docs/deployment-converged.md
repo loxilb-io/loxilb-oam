@@ -256,7 +256,7 @@ GW_HOST=gw.example.internal
 EDGE_BIND_IP=192.168.0.8          # the management address
 EDGE_HTTPS_PORT=8443
 OAM_RESERVED_ENDPOINTS=192.168.0.8:8443
-IGW_TAG=latest-u24                # approved integration image; record its digest
+IGW_TAG=v0.9.9.1-u24              # approved release image; record its digest
 CONVERGED_PG_HOST_PORT=5432       # published on 127.0.0.1 only
 CONVERGED_DB_NETWORK=loxilb-converged-db
 CONVERGED_PG_VOLUME=loxilb-state-postgres-data
@@ -272,9 +272,9 @@ OAM_GATEWAY_SERVICE_TOKEN=
 OAM_GATEWAY_SERVICE_TOKEN_FILE=/run/secrets/gateway_service_token
 ```
 
-`latest-u24` is the approved image for this integration cycle. Record the
-resolved repository digest in test evidence; replace it with an immutable
-release tag or digest for production promotion.
+`v0.9.9.1-u24` is the approved image for this release. Record the resolved
+repository digest in test evidence, and pin that digest with `IGW_IMAGE_REF` for
+production promotion.
 
 **5. Start the database and bootstrap Gateway roles before applications.** One
 PostgreSQL database (default `loxioam`) contains three isolated schemas:

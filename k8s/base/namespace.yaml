@@ -4,4 +4,4 @@ metadata:
   name: oam-loxilb
   labels:
     app: oam-loxilb
-    version: v0.9.8.7
+    version: v0.9.9.1

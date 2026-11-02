@@ -189,7 +189,7 @@ if [ "$REUSE_ENV" = 1 ]; then
   EDGE_NAME="$(printf '%s' "$SITE_ADDRESS" | sed 's/,.*//; s#^https\?://##; s/:[0-9]*$//')"
   EDGE_TLS_MODE="reuse"
   : "${EDGE_HTTPS_PORT:=8443}"; : "${IGW_CONFIG_DIR:=/opt/loxilb/config}"
-  : "${EDGE_BIND_IP:=0.0.0.0}"; : "${IGW_TAG:=latest-u24}"
+  : "${EDGE_BIND_IP:=0.0.0.0}"; : "${IGW_TAG:=v0.9.9.1-u24}"
   : "${CONVERGED_PG_HOST_PORT:=5432}"
   : "${CONVERGED_PG_VOLUME:=loxilb-state-postgres-data}"
   : "${SITE_ADDRESS:=https://${EDGE_BIND_IP}:${EDGE_HTTPS_PORT}}"
@@ -330,15 +330,15 @@ Go resolves an IP literal without consulting /etc/hosts, so the host-gateway
 pin would be ignored and OAM's calls would hairpin out through the host NIC.
 Any name works — it never needs to resolve in public DNS."
 
-ask IGW_TAG "loxilb-inference-gateway image tag" "${PREV_IGW_TAG:-latest-u24}"
+ask IGW_TAG "loxilb-inference-gateway image tag" "${PREV_IGW_TAG:-v0.9.9.1-u24}"
 ask IGW_CONFIG_DIR "Host seed/backup directory for the gateway config snapshot" "${PREV_IGW_CONFIG_DIR:-${IGW_CONFIG_DIR:-/opt/loxilb/config}}"
 ask CONVERGED_PG_HOST_PORT "Loopback port for the shared PostgreSQL service" "${PREV_PG_HOST_PORT:-5432}"
 CONVERGED_PG_VOLUME="${PREV_PG_VOLUME:-${CONVERGED_PG_VOLUME:-loxilb-state-postgres-data}}"
 
 step "Management plane images"
 warn "pin these to released versions in production; 'latest' is not reproducible"
-ask OAM_TAG "loxilb-oam image tag" "${PREV_OAM_TAG:-latest}"
-ask UI_TAG  "loxilb-ui image tag"  "${PREV_UI_TAG:-latest}"
+ask OAM_TAG "loxilb-oam image tag" "${PREV_OAM_TAG:-v0.9.9.1}"
+ask UI_TAG  "loxilb-ui image tag"  "${PREV_UI_TAG:-v0.9.9.1}"
 
 # ── 6. secrets ───────────────────────────────────────────────────────────────
 step "Generating secrets"

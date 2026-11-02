@@ -20,7 +20,7 @@ services:
       args:
         # Release identifier compiled into the binary (`loxilb-oam -version`).
         # A source build reports "dev" unless OAM_VERSION names the release the
-        # tree corresponds to (e.g. OAM_VERSION=v0.9.8.7).
+        # tree corresponds to (e.g. OAM_VERSION=v0.9.9.1).
         VERSION: ${OAM_VERSION:-dev}
     image: loxilb-oam:dev
     ports:

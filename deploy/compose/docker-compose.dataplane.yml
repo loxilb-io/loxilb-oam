@@ -31,7 +31,7 @@ services:
   gateway-audit-init:
     # A new Docker volume root starts at 0755. The Gateway audit writer
     # requires 0700 and otherwise refuses audited management operations.
-    image: ${IGW_IMAGE_REF:-${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}}
+    image: ${IGW_IMAGE_REF:-${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-v0.9.9.1-u24}}
     user: "0:0"
     network_mode: none
     cap_drop: [ALL]
@@ -47,7 +47,7 @@ services:
     restart: "no"
 
   gateway:
-    image: ${IGW_IMAGE_REF:-${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-latest-u24}}
+    image: ${IGW_IMAGE_REF:-${IGW_IMAGE:-ghcr.io/loxilb-io/loxilb-inference-gateway}:${IGW_TAG:-v0.9.9.1-u24}}
     container_name: loxilb-gateway
     # The gateway is a data plane: it attaches eBPF to host NICs and its L7
     # fullproxy binds VIPs in the host network namespace. Neither is possible
