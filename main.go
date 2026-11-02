@@ -50,9 +50,9 @@ import (
 // answer for an untagged local build.
 var version = "dev"
 
-// requireSecrets aborts startup when a mandatory secret is unset. There are no
-// built-in fallbacks, so a misconfigured deployment fails fast instead of
-// silently running on a known credential.
+// requireSecrets aborts startup when a mandatory secret is unset or holds a
+// placeholder. There are no built-in fallbacks, so a misconfigured deployment
+// fails fast instead of silently running on a known credential.
 func requireSecrets() {
 	var missing []string
 	if utils.JWTSecretMissing() {
@@ -63,6 +63,17 @@ func requireSecrets() {
 	}
 	if len(missing) > 0 {
 		utils.LogError("SECURITY: required secret(s) not set: " + strings.Join(missing, ", ") + ". Set them in the environment before starting.")
+		os.Exit(1)
+	}
+	// The optional gateway token is checked only when set. Log names, never values.
+	var placeholders []string
+	for _, name := range []string{"OAM_JWT_SECRET", "OAM_DEFAULT_ADMIN_PASSWORD", "OAM_GATEWAY_SERVICE_TOKEN"} {
+		if v := os.Getenv(name); v != "" && config.SecretIsPlaceholder(v) {
+			placeholders = append(placeholders, name)
+		}
+	}
+	if len(placeholders) > 0 {
+		utils.LogError("SECURITY: secret(s) hold a placeholder or comment instead of a real value: " + strings.Join(placeholders, ", ") + ". Set real values before starting.")
 		os.Exit(1)
 	}
 	if config.CORSUsingWildcard() {
@@ -148,6 +159,10 @@ func main() {
 	dbPass := *dbPassword
 	if dbPass == "" {
 		utils.LogError("SECURITY: no database password provided. Set DB_PASSWORD or pass -db-password.")
+		os.Exit(1)
+	}
+	if config.SecretIsPlaceholder(dbPass) {
+		utils.LogError("SECURITY: the database password holds a placeholder or comment instead of a real value. Set DB_PASSWORD or pass -db-password.")
 		os.Exit(1)
 	}
 

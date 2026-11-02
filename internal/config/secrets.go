@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Secrets are sourced entirely from the environment. There are no committed
@@ -62,6 +63,46 @@ var TokenExpirationMinutes = getenvIntDefault("OAM_TOKEN_TTL_MINUTES", 480)
 // users created by configuration import. Sourced from OAM_DEFAULT_ADMIN_PASSWORD;
 // there is no built-in fallback (see main.requireSecrets).
 var DefaultConfigPassword = os.Getenv("OAM_DEFAULT_ADMIN_PASSWORD")
+
+// placeholderSecrets are values documentation and templates use in place of a
+// real secret, compared after lowercasing and dropping everything but letters
+// and digits, so CHANGE_ME, change-me and "change me" are one entry.
+var placeholderSecrets = map[string]struct{}{
+	"changeme": {}, "ch4ngeme": {}, "replaceme": {}, "placeholder": {}, "example": {},
+	"secret": {}, "jwtsecret": {}, "yoursecret": {}, "password": {}, "passwd": {},
+	"yourpassword": {}, "token": {}, "yourtoken": {}, "todo": {}, "xxx": {}, "xxxx": {},
+}
+
+// SecretIsPlaceholder reports whether a configured secret value is not a secret
+// at all: blank, a shell-style comment that a dotenv parser took as the value
+// (`KEY=   # note` yields "# note"), a <template> marker, punctuation only, or a
+// known placeholder. It recognizes non-secrets; it does not measure strength.
+//
+// A value starting with # is refused only when it also holds whitespace, so a
+// generated password that merely begins with # keeps working across an upgrade.
+func SecretIsPlaceholder(value string) bool {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return true
+	}
+	if v[0] == '#' && strings.ContainsAny(v, " \t") {
+		return true
+	}
+	if v[0] == '<' && v[len(v)-1] == '>' {
+		return true
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(v) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return true
+	}
+	_, known := placeholderSecrets[b.String()]
+	return known
+}
 
 // AdminPasswordMissing reports whether OAM_DEFAULT_ADMIN_PASSWORD is unset.
 func AdminPasswordMissing() bool { return os.Getenv("OAM_DEFAULT_ADMIN_PASSWORD") == "" }

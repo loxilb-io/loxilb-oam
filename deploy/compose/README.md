@@ -100,6 +100,20 @@ the resolved digest for reproducible test evidence. Read
 [`docs/deployment-converged.md`](../../docs/deployment-converged.md) first —
 co-locating the data plane changes the port, privilege and upgrade story.
 
+`.env.example` deliberately leaves these blank. Compose refuses to render the
+stack, including `docker compose config`, until they are set:
+
+| Variable | Required by |
+|---|---|
+| `DB_PASSWORD` | base, database and converged stacks |
+| `OAM_JWT_SECRET` | base and converged stacks |
+| `OAM_DEFAULT_ADMIN_PASSWORD` | base and converged stacks |
+| `GW_HOST` | converged overlay |
+| `OAM_APP_DB_USER`, `OAM_APP_DB_PASSWORD` | `docker-compose.oam-app-db.yml` only |
+
+OAM also refuses to start on a placeholder or comment in place of a secret, such
+as `CHANGE_ME`.
+
 **Developer variant — converged backend with local UI, HTTP only.** Keep the
 shared PostgreSQL, Gateway, and OAM on the remote Linux testbed, but disable the
 bundled UI and Caddy. OAM is published directly over plain HTTP:

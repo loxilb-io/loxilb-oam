@@ -210,6 +210,13 @@ image's `org.opencontainers.image.version` label.
   a handshake is not measurable against a 60s take or a 5-minute restore.
 
 ### Fixed
+- Fixed: leaving `OAM_JWT_SECRET` or `OAM_DEFAULT_ADMIN_PASSWORD` blank in a `.env`
+  copied from `deploy/compose/.env.example` did not stop the stack, and the
+  converged stack failed with `invalid IP address` — Compose read the inline
+  comment after a blank value as the value, so the JWT secret became a publicly
+  known string — `.env.example` has no inline comments, a blank secret stops
+  Compose, and OAM refuses to start on a placeholder or comment in place of a
+  secret. <!-- OWNER REVIEW PENDING -->
 - Fixed: a user's old sessions kept working after an administrator changed their
   password — the update left issued tokens in place — the password change and
   token revocation now commit together. <!-- OWNER REVIEW PENDING -->
