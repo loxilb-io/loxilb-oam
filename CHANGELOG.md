@@ -22,6 +22,27 @@ image's `org.opencontainers.image.version` label.
 
 ## [Unreleased]
 
+### Changed
+- The OAM image's binaries keep their symbol table (built without `-s -w`), so the
+  image is about 10 MB larger. The release's vulnerability scan reads these exact
+  binaries and cannot rule out a vulnerable package in a stripped one.
+  <!-- OWNER REVIEW PENDING -->
+- The Compose edge server is pinned to `caddy:2.11.7-alpine` by digest instead of
+  the floating `caddy:2-alpine`; override it with `CADDY_IMAGE`.
+  <!-- OWNER REVIEW PENDING -->
+
+### Security
+- The release tarball and the image are built by one pinned Go toolchain
+  (go1.26.10, from `go.mod`; the image's build stage pinned by digest). Before, the
+  tarball used the newest Go and the image a floating `golang:1.26-alpine`, so the
+  two artifacts of one release could be built by different compilers.
+  <!-- OWNER REVIEW PENDING -->
+- A release is not published when `govulncheck -mode=binary` finds a vulnerable
+  function in any shipped binary (tarball or image) for which a fix exists.
+  <!-- OWNER REVIEW PENDING -->
+- `golang.org/x/net` v0.62.0 (GO-2026-6866, GO-2026-6860; neither was reachable
+  from OAM code). <!-- OWNER REVIEW PENDING -->
+
 ## [v0.9.9.1] - 2026-11-02
 
 ### Added
@@ -212,7 +233,7 @@ image's `org.opencontainers.image.version` label.
 ### Fixed
 - Fixed: the OAM image logged Gin debug warnings and every API route at startup —
   the image never set Gin's mode, so it ran in debug mode — the image now sets
-  `GIN_MODE=release`. <!-- OWNER REVIEW PENDING -->
+  `GIN_MODE=release`.
 - Fixed: leaving `OAM_JWT_SECRET` or `OAM_DEFAULT_ADMIN_PASSWORD` blank in a `.env`
   copied from `deploy/compose/.env.example` did not stop the stack, and the
   converged stack failed with `invalid IP address` — Compose read the inline

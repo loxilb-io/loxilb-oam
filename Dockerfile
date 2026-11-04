@@ -1,5 +1,7 @@
 # ---- Build stage: compile the binaries with the full Go toolchain ----
-FROM golang:1.26-alpine AS build
+# Same Go release as the `toolchain` line in go.mod, pinned by digest so the
+# image and the release tarball are built by one compiler.
+FROM golang:1.26.10-alpine@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS build
 
 WORKDIR /app
 
@@ -9,17 +11,20 @@ RUN go mod download
 
 # Copy the source and generate the Swagger docs (compiled into the binary).
 COPY . .
-RUN go install github.com/swaggo/swag/cmd/swag@latest && swag init
+RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6 && swag init
 
 # Release identifier, stamped into the binary and repeated on the OCI label.
 # Set by `make docker-build` / the release workflow (vMAJOR.MINOR.PATCH.BUILD,
 # in lockstep with loxilb-io/loxilb); an unset build honestly reports "dev".
 ARG VERSION=dev
 
-# Static binaries (CGO off so they run on a minimal base; -trimpath/-s -w shrink them).
+# Static binaries (CGO off so they run on a minimal base). The symbol table is
+# kept on purpose (no -s -w): the release gate scans these exact binaries with
+# `govulncheck -mode=binary`, which cannot rule out a vulnerable package in a
+# stripped binary and would report every advisory for each required module.
 ENV CGO_ENABLED=0
-RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o loxilb-oam . && \
-    go build -trimpath -ldflags="-s -w" -o reset_admin ./cmd/reset_admin
+RUN go build -trimpath -ldflags="-X main.version=${VERSION}" -o loxilb-oam . && \
+    go build -trimpath -o reset_admin ./cmd/reset_admin
 
 # ---- Runtime stage: minimal Alpine with just the binaries ----
 FROM alpine:3.24

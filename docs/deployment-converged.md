@@ -377,7 +377,7 @@ Pick one deliberately:
 |---|---|
 | **Operator-supplied cert** (`EDGE_TLS=tls /certs/edge/cert.pem ...`) | You own renewal. Certificate SANs must list every name and IP operators use — a name missing from the SAN is a hard browser error, not a warning. |
 | **Keep `:443` for the edge**, VIPs on a secondary address | ACME keeps working. Needs a spare IP (see below) — the recommended profile where one is available. |
-| **DNS-01 challenge** | Works with no inbound ports, but the stock `caddy:2-alpine` image has no DNS provider plugin; you must build a custom Caddy. |
+| **DNS-01 challenge** | Works with no inbound ports, but the stock Caddy image (`CADDY_IMAGE`) has no DNS provider plugin; you must build a custom Caddy. |
 
 If you are on a self-signed edge certificate, regenerate it with every name and
 address in the SAN list:

@@ -118,7 +118,7 @@ services:
 
   # ── Edge: static SPA + /api/oam proxy + TLS termination ──────────────────
   caddy:
-    image: caddy:2-alpine
+    image: ${CADDY_IMAGE:-caddy:2.11.7-alpine@sha256:e70b164da81ef698b3ad19af799ea6086ce6d9e48ed4079eb9fe26f6fbf14ee5}
     environment:
       # Edge listen address + TLS mode (the single edge knob pair; see .env).
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}

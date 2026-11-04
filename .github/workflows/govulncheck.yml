@@ -24,13 +24,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: One pinned Go toolchain (go.mod, Dockerfile, workflows)
+        run: bash .github/scripts/check-go-pin.sh
+
+      - name: Gate script regression tests
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
           cache: true
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
       - name: Run govulncheck (fixable-gate)
         # JSON mode never sets a non-zero "vuln found" exit itself, so any
