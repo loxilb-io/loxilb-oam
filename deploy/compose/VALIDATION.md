@@ -60,9 +60,12 @@ binaries and go1.27.3 for the release tarball binaries (`vcs.revision`
   ([#108](https://github.com/loxilb-io/loxilb-oam/issues/108)).
 - eBPF programs stay attached to the host NIC after the Gateway project is
   brought down. They were present before this test from an earlier run, and
-  identical programs were attached afterwards. This is Gateway behaviour.
+  identical programs were attached afterwards. This is Gateway behaviour,
+  tracked in
+  [loxilb-inference-gateway#539](https://github.com/loxilb-io/loxilb-inference-gateway/issues/539).
 - `caddy:2-alpine` is the only third-party image still referenced by a
-  floating tag.
+  floating tag. (Since pinned by digest, together with the bundled
+  PostgreSQL image, in [#109](https://github.com/loxilb-io/loxilb-oam/pull/109).)
 - Not covered: inference traffic and eBPF forwarding, HA, IPv6, upgrade from a
   previous release, external IdP/SIEM, and access from outside the host.
 
