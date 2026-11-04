@@ -30,6 +30,10 @@ image's `org.opencontainers.image.version` label.
 - The Compose edge server is pinned to `caddy:2.11.7-alpine` by digest instead of
   the floating `caddy:2-alpine`; override it with `CADDY_IMAGE`.
   <!-- OWNER REVIEW PENDING -->
+- The bundled PostgreSQL is pinned to the `postgres:18.6` build the v0.9.9.1
+  release smoke ran (by digest), instead of the bare tag that upstream rebuilds in
+  place; override it with `POSTGRES_IMAGE`. The Keycloak stack keeps its own pin.
+  <!-- OWNER REVIEW PENDING -->
 
 ### Security
 - The release tarball and the image are built by one pinned Go toolchain
