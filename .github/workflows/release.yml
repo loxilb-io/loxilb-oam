@@ -117,7 +117,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
           cache: true
 
       - name: Build binaries (linux/amd64)
@@ -160,6 +160,35 @@ jobs:
           load: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
           build-args: VERSION=${{ steps.ver.outputs.version }}
+
+      - name: govulncheck gate (binary mode) — blocks publish
+        # Scans the binaries this release ships: the tarball's, and the ones
+        # compiled inside the image. Fails on a vulnerable function present in
+        # a binary when a fixed version exists (govulncheck-gate.py --mode binary).
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:${{ steps.ver.outputs.version }}"
+          mkdir -p vulnscan/image
+          cid="$(docker create "$IMAGE")"
+          docker cp "$cid:/app/loxilb-oam" vulnscan/image/loxilb-oam
+          docker cp "$cid:/app/reset_admin" vulnscan/image/reset_admin
+          docker rm "$cid" >/dev/null
+          fail=0
+          for bin in loxilb-oam reset_admin vulnscan/image/loxilb-oam vulnscan/image/reset_admin; do
+            echo "== $bin: $(go version "$bin")"
+            # A stripped binary cannot be scanned precisely: refuse it, do not guess.
+            if ! go tool nm "$bin" >/dev/null 2>&1; then
+              echo "$bin has no symbol table (built with -s?); the binary scan needs it"; exit 1
+            fi
+            set +e
+            "$(go env GOPATH)/bin/govulncheck" -mode=binary -format json "$bin" > vulnscan/report.json 2> vulnscan/err
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then echo "govulncheck failed on $bin (exit $rc):"; cat vulnscan/err; exit 1; fi
+            python3 .github/scripts/govulncheck-gate.py --mode binary vulnscan/report.json || fail=1
+          done
+          rm -rf vulnscan
+          exit "$fail"
 
       - name: Trivy gate (CRITICAL + fixable) — blocks publish
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
