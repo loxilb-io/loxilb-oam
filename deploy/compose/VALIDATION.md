@@ -56,7 +56,8 @@ binaries and go1.27.3 for the release tarball binaries (`vcs.revision`
   `loxilb-mgmt`) collide with any other converged stack on the same host. The
   host held a stopped stack under those names; its volumes were backed up and
   restored byte for byte, and its container recreated from its own definition.
-  A second stack on one host is not supported until this is addressed.
+  A second stack on one host is not supported until this is addressed
+  ([#108](https://github.com/loxilb-io/loxilb-oam/issues/108)).
 - eBPF programs stay attached to the host NIC after the Gateway project is
   brought down. They were present before this test from an earlier run, and
   identical programs were attached afterwards. This is Gateway behaviour.
